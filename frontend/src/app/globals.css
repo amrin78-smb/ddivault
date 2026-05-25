@@ -1,0 +1,129 @@
+/* globals.css — DDIVault NexVault Design System */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --primary:        #C8102E;
+  --primary-dark:   #a00d24;
+  --primary-light:  #fef2f4;
+  --navy:           #1a2744;
+  --navy-dark:      #111b33;
+  --bg-primary:     #f8f8f8;
+  --bg-card:        #ffffff;
+  --border:         #e5e7eb;
+  --text-primary:   #111827;
+  --text-secondary: #374151;
+  --text-muted:     #6b7280;
+  --shadow-sm:      0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md:      0 4px 12px rgba(0,0,0,0.08);
+  --radius:         10px;
+  --sidebar-width:  220px;
+
+  /* Status colours */
+  --green:  #16a34a;
+  --yellow: #ca8a04;
+  --red:    #dc2626;
+  --blue:   #2563eb;
+  --orange: #ea580c;
+  --purple: #7c3aed;
+}
+
+[data-theme="dark"] {
+  --bg-primary:     #0f172a;
+  --bg-card:        #1e293b;
+  --border:         #334155;
+  --text-primary:   #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted:     #94a3b8;
+  --shadow-sm:      0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md:      0 4px 12px rgba(0,0,0,0.4);
+}
+
+html, body {
+  height: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; }
+th {
+  background: #f9fafb;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+[data-theme="dark"] th { background: #1a2744; }
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg-primary); }
+[data-theme="dark"] tr:hover td { background: rgba(255,255,255,0.03); }
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badge-green   { background: #dcfce7; color: #15803d; }
+.badge-yellow  { background: #fef9c3; color: #a16207; }
+.badge-red     { background: #fee2e2; color: #b91c1c; }
+.badge-blue    { background: #dbeafe; color: #1d4ed8; }
+.badge-gray    { background: #f3f4f6; color: #6b7280; }
+.badge-orange  { background: #ffedd5; color: #c2410c; }
+
+[data-theme="dark"] .badge-green  { background: #14532d; color: #86efac; }
+[data-theme="dark"] .badge-yellow { background: #422006; color: #fde047; }
+[data-theme="dark"] .badge-red    { background: #450a0a; color: #fca5a5; }
+[data-theme="dark"] .badge-blue   { background: #1e3a5f; color: #93c5fd; }
+[data-theme="dark"] .badge-gray   { background: #1f2937; color: #9ca3af; }
+
+/* Gauge colours */
+.gauge-green  { --gauge-color: #16a34a; }
+.gauge-yellow { --gauge-color: #ca8a04; }
+.gauge-red    { --gauge-color: #dc2626; }
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 0.2s ease; }
+
+/* Monospace for IPs/MACs */
+.mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+}

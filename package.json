@@ -1,0 +1,18 @@
+{
+  "name": "ddivault",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DDIVault — DNS, DHCP, IPAM monitoring for NexVault suite",
+  "main": "api/server.js",
+  "scripts": {
+    "api": "node api/server.js",
+    "collector": "node collector/collector.js",
+    "schema": "psql -U ddivault_user -d ddivault -f scripts/schema.sql"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}
