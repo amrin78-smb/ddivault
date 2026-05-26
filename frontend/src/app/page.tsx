@@ -4,6 +4,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
+import IPAMTab    from '@/components/IPAMTab';
+import DHCPTab    from '@/components/DHCPTab';
+import DNSTab     from '@/components/DNSTab';
+import ServersTab from '@/components/ServersTab';
 import {
   RadialBarChart, RadialBar, PieChart, Pie, Cell,
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -84,7 +88,7 @@ interface Subnet {
   used_ips: number;
 }
 
-type Tab = 'dashboard' | 'scopes' | 'leases' | 'ipam' | 'dns' | 'events' | 'servers' | 'settings';
+type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'settings';
 
 // ── Shared styles ─────────────────────────────────────────────
 const CARD: React.CSSProperties = {
@@ -584,161 +588,6 @@ function LeasesTab() {
 }
 
 // ════════════════════════════════════════════════════════════
-// TAB: IPAM
-// ════════════════════════════════════════════════════════════
-function IPAMTab() {
-  const [subnets, setSubnets] = useState<Subnet[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm]       = useState({ network: '', prefix_length: '24', name: '', description: '', gateway: '', vlan_id: '', site: '', owner: '' });
-  const { toast } = useToast();
-
-  const load = () => api('/subnets').then(d => setSubnets(d.data || []));
-  useEffect(() => { load(); }, []);
-
-  const save = async () => {
-    try {
-      await api('/subnets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-      toast('Subnet added', 'success');
-      setShowAdd(false);
-      setForm({ network: '', prefix_length: '24', name: '', description: '', gateway: '', vlan_id: '', site: '', owner: '' });
-      load();
-    } catch (e: any) {
-      toast(e.message, 'error');
-    }
-  };
-
-  const del = async (id: number) => {
-    if (!confirm('Delete this subnet?')) return;
-    await api(`/subnets/${id}`, { method: 'DELETE' });
-    toast('Subnet deleted', 'info');
-    load();
-  };
-
-  const totalIps = (prefix: number) => Math.pow(2, 32 - prefix) - 2;
-
-  return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700 }}>IPAM — Subnet Management</h2>
-        <button onClick={() => setShowAdd(true)} style={{ ...btnStyle, background: '#C8102E', color: '#fff', border: 'none' }}>
-          + Add Subnet
-        </button>
-      </div>
-
-      {/* Subnet heatmap */}
-      <div style={{ ...CARD, marginBottom: 12 }}>
-        <div style={TITLE}>Subnet Utilization Heatmap</div>
-        <div style={MUTED}>Each cell = one subnet · Color by utilization</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-          {subnets.map(s => {
-            const total = totalIps(s.prefix_length);
-            const used  = parseInt(String(s.used_ips)) || 0;
-            const pct   = total > 0 ? (used / total) * 100 : 0;
-            return (
-              <div key={s.id} title={`${s.network}/${s.prefix_length} — ${s.name || ''}\n${used}/${total} IPs (${pct.toFixed(1)}%)`}
-                style={{ width: 48, height: 48, borderRadius: 6, background: pctColor(pct), opacity: 0.2 + (pct / 100) * 0.8,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'opacity 0.2s' }}
-                onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1.1)'; }}
-                onMouseLeave={e => { e.currentTarget.style.opacity = String(0.2 + (pct / 100) * 0.8); e.currentTarget.style.transform = 'scale(1)'; }}
-              >
-                <span style={{ fontSize: 9, color: '#fff', fontWeight: 700 }}>{Math.round(pct)}%</span>
-              </div>
-            );
-          })}
-          {subnets.length === 0 && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>No subnets added yet</span>}
-        </div>
-      </div>
-
-      {/* Subnet table */}
-      <div style={CARD}>
-        <table>
-          <thead>
-            <tr>
-              <th>Network</th>
-              <th>Name</th>
-              <th>Gateway</th>
-              <th>VLAN</th>
-              <th>Site</th>
-              <th>Owner</th>
-              <th>Used IPs</th>
-              <th>% Used</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {subnets.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No subnets configured</td></tr>}
-            {subnets.map(s => {
-              const total = totalIps(s.prefix_length);
-              const used  = parseInt(String(s.used_ips)) || 0;
-              const pct   = total > 0 ? (used / total) * 100 : 0;
-              return (
-                <tr key={s.id}>
-                  <td className="mono">{s.network}/{s.prefix_length}</td>
-                  <td>{s.name || '—'}</td>
-                  <td className="mono">{s.gateway || '—'}</td>
-                  <td>{s.vlan_id || '—'}</td>
-                  <td>{s.site || '—'}</td>
-                  <td>{s.owner || '—'}</td>
-                  <td>{used} / {total}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, minWidth: 50 }}>
-                        <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: pctColor(pct), borderRadius: 3 }} />
-                      </div>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: pctColor(pct), minWidth: 36 }}>{pct.toFixed(1)}%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <button onClick={() => del(s.id)} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add subnet modal */}
-      {showAdd && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ ...CARD, width: 480 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700 }}>Add Subnet</div>
-              <button onClick={() => setShowAdd(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-muted)' }}>✕</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {[
-                { key: 'network', label: 'Network (e.g. 192.168.1.0)', full: true },
-                { key: 'prefix_length', label: 'Prefix Length (/24)' },
-                { key: 'name', label: 'Name' },
-                { key: 'gateway', label: 'Gateway IP' },
-                { key: 'vlan_id', label: 'VLAN ID' },
-                { key: 'site', label: 'Site' },
-                { key: 'owner', label: 'Owner' },
-                { key: 'description', label: 'Description', full: true },
-              ].map(f => (
-                <div key={f.key} style={f.full ? { gridColumn: '1 / -1' } : {}}>
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{f.label}</label>
-                  <input
-                    value={(form as any)[f.key]}
-                    onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                    style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
-                  />
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowAdd(false)} style={btnStyle}>Cancel</button>
-              <button onClick={save} style={{ ...btnStyle, background: '#C8102E', color: '#fff', border: 'none' }}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
 // TAB: DNS
 // ════════════════════════════════════════════════════════════
 function DNSTab() {
@@ -1175,14 +1024,13 @@ const btnStyle: React.CSSProperties = {
 // SIDEBAR + MAIN APP
 // ════════════════════════════════════════════════════════════
 const SIDEBAR_ITEMS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'dashboard', label: 'Dashboard',     icon: '◉' },
-  { id: 'scopes',    label: 'DHCP Scopes',   icon: '⬡' },
-  { id: 'leases',    label: 'Lease Tracker', icon: '📋' },
-  { id: 'ipam',      label: 'IPAM',          icon: '🗺' },
-  { id: 'dns',       label: 'DNS',           icon: '🌐' },
+  { id: 'dashboard', label: 'Dashboard',      icon: '◉' },
+  { id: 'scopes',    label: 'DHCP',           icon: '⬡' },
+  { id: 'ipam',      label: 'IPAM',           icon: '🗺' },
+  { id: 'dns',       label: 'DNS',            icon: '🌐' },
   { id: 'events',    label: 'Events & Alerts', icon: '🔔' },
-  { id: 'servers',   label: 'Known Servers', icon: '🖥' },
-  { id: 'settings',  label: 'Settings',      icon: '⚙' },
+  { id: 'servers',   label: 'Known Servers',  icon: '🖥' },
+  { id: 'settings',  label: 'Settings',       icon: '⚙' },
 ];
 
 export default function DDIVaultApp() {
@@ -1245,8 +1093,7 @@ export default function DDIVaultApp() {
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
           <ErrorBoundary name={tab}>
             {tab === 'dashboard' && <DashboardTab onNavigate={setTab} />}
-            {tab === 'scopes'    && <ScopesTab />}
-            {tab === 'leases'    && <LeasesTab />}
+            {tab === 'scopes'    && <DHCPTab />}
             {tab === 'ipam'      && <IPAMTab />}
             {tab === 'dns'       && <DNSTab />}
             {tab === 'events'    && <EventsTab />}

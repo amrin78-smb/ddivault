@@ -5,6 +5,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.loc
 const { Pool } = require('pg');
 const ps        = require('./powershellRunner');
 const dhcp      = require('./dhcpReader');
+const { decrypt } = require('./credStore');
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err.message, err.stack);
@@ -40,21 +41,38 @@ const lastLogEventTime = {};
 function log(msg)  { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`); }
 
-// Validate an IP address string — returns true only if it looks like a real IP
 function isValidIp(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
   if (!trimmed || trimmed.includes('x') || trimmed.includes('X')) return false;
-  // Basic IPv4 check
   return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(trimmed);
 }
 
 async function getActiveServers() {
   const result = await db.query(
-    `SELECT id, hostname, ip_address::text as ip_address, role
+    `SELECT id, hostname, ip_address::text as ip_address, role,
+            auth_mode, ps_username, ps_password, winrm_port, winrm_https
      FROM ddi_servers WHERE is_active = TRUE ORDER BY id`
   );
-  return result.rows;
+  // Decrypt passwords
+  return result.rows.map(row => ({
+    ...row,
+    ps_password: row.ps_password ? decrypt(row.ps_password) : null,
+  }));
+}
+
+/**
+ * Build auth object for powershellRunner — uses per-server config,
+ * falls back to .env.local globals if not set on server.
+ */
+function serverAuth(server) {
+  return {
+    auth_mode:   server.auth_mode   || process.env.PS_AUTH_MODE || 'kerberos',
+    ps_username: server.ps_username || process.env.PS_USERNAME   || null,
+    ps_password: server.ps_password || process.env.PS_PASSWORD   || null,
+    winrm_port:  server.winrm_port  || 5985,
+    winrm_https: server.winrm_https || false,
+  };
 }
 
 /**
@@ -106,11 +124,12 @@ async function updateServerStatus(serverId, status, errorMsg) {
 
 async function collectScopeStats(server) {
   if (server.role === 'dns') return;
-  const ip = server.ip_address;
-  log(`[Scopes] Polling ${ip} (id=${server.id})...`);
+  const ip   = server.ip_address;
+  const auth = serverAuth(server);
+  log(`[Scopes] Polling ${ip} (id=${server.id}, mode=${auth.auth_mode})...`);
 
-  const stats  = ps.getDhcpScopeStats(ip);
-  const scopes = ps.getDhcpScopes(ip);
+  const stats  = ps.getDhcpScopeStats(ip, auth);
+  const scopes = ps.getDhcpScopes(ip, auth);
 
   if (!stats || !stats.length) {
     warn(`[Scopes] No data from ${ip} — WinRM not reachable or DHCP role not installed`);
@@ -195,10 +214,11 @@ async function collectScopeStats(server) {
 
 async function syncLeases(server) {
   if (server.role === 'dns') return;
-  const ip = server.ip_address;
+  const ip   = server.ip_address;
+  const auth = serverAuth(server);
   log(`[Leases] Syncing from ${ip}...`);
 
-  const leases = ps.getDhcpLeases(ip);
+  const leases = ps.getDhcpLeases(ip, auth);
   if (!leases || !leases.length) {
     warn(`[Leases] No leases from ${ip}`);
     return;
@@ -299,10 +319,11 @@ async function tailDhcpLog(server) {
 
 async function syncDns(server) {
   if (server.role === 'dhcp') return;
-  const ip = server.ip_address;
+  const ip   = server.ip_address;
+  const auth = serverAuth(server);
   log(`[DNS] Syncing zones from ${ip}...`);
 
-  const zones = ps.getDnsZones(ip);
+  const zones = ps.getDnsZones(ip, auth);
   if (!zones || !zones.length) {
     warn(`[DNS] No zones from ${ip}`);
     return;
@@ -324,7 +345,7 @@ async function syncDns(server) {
 
     const zoneDbId = res.rows[0]?.id;
     if (zoneDbId && !zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary') {
-      const records = ps.getDnsRecords(ip, zone.ZoneName);
+      const records = ps.getDnsRecords(ip, zone.ZoneName, auth);
       if (records && records.length) {
         for (const rec of records) {
           await db.query(

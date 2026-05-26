@@ -587,10 +587,18 @@ app.put('/api/alert-rules/:id', async (req, res) => {
   }
 });
 
-// ── Servers ───────────────────────────────────────────────────
+// ── Servers (enhanced with auth) ──────────────────────────────
 app.get('/api/servers', async (req, res) => {
   try {
-    const rows = await db.query('SELECT * FROM ddi_servers ORDER BY created_at DESC');
+    const rows = await db.query(
+      `SELECT id, hostname, ip_address::text as ip_address, role, description,
+              is_active, last_polled, poll_status, poll_error,
+              auth_mode, ps_username, winrm_port, winrm_https,
+              winrm_test_ok, winrm_tested_at, notes,
+              created_at, updated_at
+       FROM ddi_servers ORDER BY created_at DESC`
+    );
+    // Never return ps_password to frontend
     res.json({ data: rows.rows });
   } catch (err) {
     console.error('[API] servers error:', err.message);
@@ -600,12 +608,28 @@ app.get('/api/servers', async (req, res) => {
 
 app.post('/api/servers', async (req, res) => {
   try {
-    const { hostname, ip_address, role, description } = req.body;
+    const {
+      hostname, ip_address, role, description,
+      auth_mode, ps_username, ps_password,
+      winrm_port, winrm_https, notes,
+    } = req.body;
     if (!hostname && !ip_address) return res.status(400).json({ error: 'hostname or ip_address required' });
+
+    const encryptedPass = ps_password ? encryptCred(ps_password) : null;
+
     const result = await db.query(
-      `INSERT INTO ddi_servers (hostname, ip_address, role, description)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [hostname || null, ip_address || null, role || 'both', description || null]
+      `INSERT INTO ddi_servers
+         (hostname, ip_address, role, description, auth_mode, ps_username, ps_password,
+          winrm_port, winrm_https, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, hostname, ip_address::text, role, description,
+                 auth_mode, ps_username, winrm_port, winrm_https, notes, is_active, created_at`,
+      [
+        hostname || null, ip_address || null, role || 'both', description || null,
+        auth_mode || 'kerberos', ps_username || null, encryptedPass,
+        parseInt(winrm_port || '5985'), winrm_https === true,
+        notes || null,
+      ]
     );
     res.json({ data: result.rows[0] });
   } catch (err) {
@@ -617,13 +641,38 @@ app.post('/api/servers', async (req, res) => {
 app.put('/api/servers/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { hostname, ip_address, role, description, is_active } = req.body;
+    const {
+      hostname, ip_address, role, description, is_active,
+      auth_mode, ps_username, ps_password,
+      winrm_port, winrm_https, notes,
+    } = req.body;
+
+    // Only re-encrypt password if a new one was provided
+    let encryptedPass = undefined;
+    if (ps_password && ps_password !== '••••••••') {
+      encryptedPass = encryptCred(ps_password);
+    }
+
     const result = await db.query(
-      `UPDATE ddi_servers SET hostname=$1, ip_address=$2, role=$3,
-              description=$4, is_active=$5, updated_at=NOW()
-       WHERE id=$6 RETURNING *`,
-      [hostname || null, ip_address || null, role || 'both',
-       description || null, is_active !== false, id]
+      `UPDATE ddi_servers SET
+         hostname=$2, ip_address=$3, role=$4, description=$5,
+         is_active=$6, auth_mode=$7, ps_username=$8,
+         ${encryptedPass !== undefined ? 'ps_password=$9,' : ''}
+         winrm_port=${encryptedPass !== undefined ? '$10' : '$9'},
+         winrm_https=${encryptedPass !== undefined ? '$11' : '$10'},
+         notes=${encryptedPass !== undefined ? '$12' : '$11'},
+         updated_at=NOW()
+       WHERE id=$1
+       RETURNING id, hostname, ip_address::text, role, description,
+                 auth_mode, ps_username, winrm_port, winrm_https,
+                 winrm_test_ok, winrm_tested_at, notes, is_active`,
+      encryptedPass !== undefined
+        ? [id, hostname||null, ip_address||null, role||'both', description||null,
+           is_active !== false, auth_mode||'kerberos', ps_username||null,
+           encryptedPass, parseInt(winrm_port||'5985'), winrm_https===true, notes||null]
+        : [id, hostname||null, ip_address||null, role||'both', description||null,
+           is_active !== false, auth_mode||'kerberos', ps_username||null,
+           parseInt(winrm_port||'5985'), winrm_https===true, notes||null]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json({ data: result.rows[0] });
@@ -635,11 +684,40 @@ app.put('/api/servers/:id', async (req, res) => {
 
 app.delete('/api/servers/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    await db.query('DELETE FROM ddi_servers WHERE id = $1', [id]);
+    await db.query('DELETE FROM ddi_servers WHERE id=$1', [parseInt(req.params.id)]);
     res.json({ success: true });
   } catch (err) {
     console.error('[API] server delete error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test WinRM connection for a server
+app.post('/api/servers/:id/test-connection', async (req, res) => {
+  try {
+    const id  = parseInt(req.params.id);
+    const serverData = await getServerWithAuth(id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    console.log(`[API] Testing WinRM connection to ${ip} (mode=${auth.auth_mode})...`);
+    const result = psWrite.testWinRM(ip, auth);
+
+    // Update test result in DB
+    await db.query(
+      `UPDATE ddi_servers SET winrm_test_ok=$2, winrm_tested_at=NOW(), poll_error=$3 WHERE id=$1`,
+      [id, result.ok, result.error || null]
+    );
+
+    res.json({
+      ok:         result.ok,
+      latency_ms: result.latencyMs,
+      error:      result.error,
+      server_ip:  ip,
+      auth_mode:  auth.auth_mode,
+    });
+  } catch (err) {
+    console.error('[API] test connection error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -669,6 +747,623 @@ app.post('/api/settings', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[API] settings update error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — Supernets ─────────────────────────────────────────
+app.get('/api/ipam/supernets', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT s.*,
+         COUNT(sub.id) as subnet_count,
+         COALESCE(SUM(sub.total_hosts),0) as total_hosts,
+         COALESCE(SUM(sub.used_hosts),0)  as used_hosts,
+         COALESCE(SUM(sub.free_hosts),0)  as free_hosts
+       FROM ipam_supernets s
+       LEFT JOIN ipam_subnets sub ON sub.supernet_id = s.id
+       GROUP BY s.id
+       ORDER BY s.network`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] supernets error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/ipam/supernets', async (req, res) => {
+  try {
+    const { network, prefix_length, name, description, site } = req.body;
+    if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
+    const result = await db.query(
+      `INSERT INTO ipam_supernets (network, prefix_length, name, description, site)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (network, prefix_length) DO UPDATE SET
+         name=EXCLUDED.name, description=EXCLUDED.description, site=EXCLUDED.site, updated_at=NOW()
+       RETURNING *`,
+      [network, parseInt(prefix_length), name||null, description||null, site||null]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('[API] supernet create error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/ipam/supernets/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM ipam_supernets WHERE id=$1', [parseInt(req.params.id)]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] supernet delete error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — Subnets (enhanced) ────────────────────────────────
+app.get('/api/ipam/subnets', async (req, res) => {
+  try {
+    const supernet_id = req.query.supernet_id;
+    const params = [];
+    let where = '';
+    if (supernet_id) {
+      params.push(parseInt(supernet_id));
+      where = 'WHERE s.supernet_id = $1';
+    }
+    const rows = await db.query(
+      `SELECT s.*,
+         sn.name as supernet_name,
+         sn.network::text as supernet_network,
+         sn.prefix_length as supernet_prefix,
+         (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id) as ip_count,
+         (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id AND a.status = 'dhcp') as dhcp_count,
+         (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id AND a.status = 'unknown') as unknown_count,
+         (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id AND a.status = 'reserved') as reserved_count
+       FROM ipam_subnets s
+       LEFT JOIN ipam_supernets sn ON sn.id = s.supernet_id
+       ${where}
+       ORDER BY s.network`,
+      params
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] ipam subnets error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/ipam/subnets', async (req, res) => {
+  try {
+    const { network, prefix_length, name, description, gateway, vlan_id,
+            site, owner, supernet_id, location, notes } = req.body;
+    if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
+    const totalHosts = Math.max(0, Math.pow(2, 32 - parseInt(prefix_length)) - 2);
+    const result = await db.query(
+      `INSERT INTO ipam_subnets
+         (network, prefix_length, name, description, gateway, vlan_id, site, owner,
+          supernet_id, location, notes, is_managed, total_hosts, free_hosts)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,$12,$12)
+       ON CONFLICT (network, prefix_length) DO UPDATE SET
+         name=EXCLUDED.name, description=EXCLUDED.description,
+         gateway=EXCLUDED.gateway, vlan_id=EXCLUDED.vlan_id,
+         site=EXCLUDED.site, owner=EXCLUDED.owner,
+         supernet_id=EXCLUDED.supernet_id, location=EXCLUDED.location,
+         notes=EXCLUDED.notes, updated_at=NOW()
+       RETURNING *`,
+      [network, parseInt(prefix_length), name||null, description||null,
+       gateway||null, vlan_id?parseInt(vlan_id):null, site||null, owner||null,
+       supernet_id?parseInt(supernet_id):null, location||null, notes||null, totalHosts]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('[API] ipam subnet create error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/ipam/subnets/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes } = req.body;
+    const result = await db.query(
+      `UPDATE ipam_subnets SET
+         name=$2, description=$3, gateway=$4, vlan_id=$5, site=$6, owner=$7,
+         supernet_id=$8, location=$9, notes=$10, updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [id, name||null, description||null, gateway||null,
+       vlan_id?parseInt(vlan_id):null, site||null, owner||null,
+       supernet_id?parseInt(supernet_id):null, location||null, notes||null]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('[API] ipam subnet update error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/ipam/subnets/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM ipam_subnets WHERE id=$1', [parseInt(req.params.id)]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] ipam subnet delete error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — IP Addresses ───────────────────────────────────────
+app.get('/api/ipam/subnets/:id/addresses', async (req, res) => {
+  try {
+    const id     = parseInt(req.params.id);
+    const status = req.query.status || '';
+    const params = [id];
+    let where = 'WHERE a.subnet_id = $1';
+    if (status) { params.push(status); where += ` AND a.status = $${params.length}`; }
+    const rows = await db.query(
+      `SELECT a.*, l.lease_expiry, l.address_state
+       FROM ipam_addresses a
+       LEFT JOIN dhcp_leases l ON l.id = a.dhcp_lease_id
+       ${where}
+       ORDER BY a.ip_address`,
+      params
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] ip addresses error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reserve an IP
+app.post('/api/ipam/subnets/:id/addresses/:ip/reserve', async (req, res) => {
+  try {
+    const subnetId  = parseInt(req.params.id);
+    const ip        = req.params.ip;
+    const { description, owner, reserved_by } = req.body;
+    await db.query(
+      `INSERT INTO ipam_addresses
+         (subnet_id, ip_address, status, description, owner, is_reserved, reserved_by, reserved_at)
+       VALUES ($1,$2,'reserved',$3,$4,TRUE,$5,NOW())
+       ON CONFLICT (subnet_id, ip_address) DO UPDATE SET
+         status='reserved', description=EXCLUDED.description, owner=EXCLUDED.owner,
+         is_reserved=TRUE, reserved_by=EXCLUDED.reserved_by, reserved_at=NOW(), updated_at=NOW()`,
+      [subnetId, ip, description||null, owner||null, reserved_by||'admin']
+    );
+    await db.query(
+      `INSERT INTO ipam_audit (ip_address, subnet_id, action, new_status, performed_by, notes)
+       VALUES ($1,$2,'reserved','reserved',$3,$4)`,
+      [ip, subnetId, reserved_by||'admin', description||null]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] reserve ip error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Release a reserved IP
+app.post('/api/ipam/subnets/:id/addresses/:ip/release', async (req, res) => {
+  try {
+    const subnetId = parseInt(req.params.id);
+    const ip       = req.params.ip;
+    await db.query(
+      `UPDATE ipam_addresses SET
+         status='available', is_reserved=FALSE, reserved_by=NULL, reserved_at=NULL, updated_at=NOW()
+       WHERE subnet_id=$1 AND ip_address=$2`,
+      [subnetId, ip]
+    );
+    await db.query(
+      `INSERT INTO ipam_audit (ip_address, subnet_id, action, old_status, new_status, performed_by)
+       VALUES ($1,$2,'released','reserved','available','admin')`,
+      [ip, subnetId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] release ip error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — Scan ───────────────────────────────────────────────
+const { scanSubnet, scanAllSubnets } = require('../collector/ipamScanner');
+const scanningSubnets = new Set(); // prevent concurrent scans of same subnet
+
+app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (scanningSubnets.has(id)) {
+      return res.status(409).json({ error: 'Scan already in progress for this subnet' });
+    }
+    const subnetRes = await db.query(
+      'SELECT id, network::text, prefix_length, name FROM ipam_subnets WHERE id=$1', [id]
+    );
+    if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
+    const subnet = subnetRes.rows[0];
+    // Run scan async — don't block the HTTP response
+    res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });
+    scanningSubnets.add(id);
+    scanSubnet(subnet)
+      .catch(err => console.error('[API] scan error:', err.message))
+      .finally(() => scanningSubnets.delete(id));
+  } catch (err) {
+    console.error('[API] scan start error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/ipam/scan-all', async (req, res) => {
+  try {
+    res.json({ success: true, message: 'Full IPAM scan started' });
+    scanAllSubnets().catch(err => console.error('[API] scan-all error:', err.message));
+  } catch (err) {
+    console.error('[API] scan-all error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const subnet = await db.query(
+      'SELECT scan_status, last_scanned, total_hosts, used_hosts, free_hosts, unknown_hosts FROM ipam_subnets WHERE id=$1',
+      [id]
+    );
+    const lastJob = await db.query(
+      `SELECT * FROM ipam_scan_jobs WHERE subnet_id=$1 ORDER BY started_at DESC LIMIT 1`, [id]
+    );
+    // Live IP counts from ipam_addresses
+    const counts = await db.query(
+      `SELECT status, COUNT(*) as count FROM ipam_addresses WHERE subnet_id=$1 GROUP BY status`, [id]
+    );
+    const countMap = {};
+    for (const r of counts.rows) countMap[r.status] = parseInt(r.count);
+    res.json({
+      scanning:   scanningSubnets.has(id),
+      subnet:     subnet.rows[0] || {},
+      last_job:   lastJob.rows[0] || null,
+      ip_counts:  countMap,
+      scanned_so_far: Object.values(countMap).reduce((a, b) => a + b, 0),
+    });
+  } catch (err) {
+    console.error('[API] scan status error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Global scan status — all subnets currently scanning
+app.get('/api/ipam/scan-status', async (req, res) => {
+  try {
+    const scanning = [...scanningSubnets];
+    const jobs = scanning.length > 0 ? await db.query(
+      `SELECT j.*, s.network::text, s.prefix_length, s.name, s.total_hosts
+       FROM ipam_scan_jobs j
+       JOIN ipam_subnets s ON s.id = j.subnet_id
+       WHERE j.subnet_id = ANY($1) AND j.status = 'running'
+       ORDER BY j.started_at DESC`,
+      [scanning]
+    ) : { rows: [] };
+    // Also get all subnet scan states
+    const allSubnets = await db.query(
+      `SELECT id, network::text, prefix_length, name, scan_status, last_scanned,
+              total_hosts, used_hosts, free_hosts, unknown_hosts
+       FROM ipam_subnets WHERE is_managed=TRUE ORDER BY network`
+    );
+    res.json({
+      active_scans: scanning.length,
+      scanning_ids: scanning,
+      jobs: jobs.rows,
+      subnets: allSubnets.rows,
+    });
+  } catch (err) {
+    console.error('[API] global scan status error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — VLANs ─────────────────────────────────────────────
+app.get('/api/ipam/vlans', async (req, res) => {
+  try {
+    const rows = await db.query('SELECT * FROM ipam_vlans ORDER BY vlan_id');
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] vlans error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/ipam/vlans', async (req, res) => {
+  try {
+    const { vlan_id, name, description, site } = req.body;
+    if (!vlan_id) return res.status(400).json({ error: 'vlan_id required' });
+    const result = await db.query(
+      `INSERT INTO ipam_vlans (vlan_id, name, description, site)
+       VALUES ($1,$2,$3,$4) ON CONFLICT (vlan_id) DO UPDATE SET
+         name=EXCLUDED.name, description=EXCLUDED.description, site=EXCLUDED.site
+       RETURNING *`,
+      [parseInt(vlan_id), name||null, description||null, site||null]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('[API] vlan create error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/ipam/vlans/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM ipam_vlans WHERE id=$1', [parseInt(req.params.id)]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] vlan delete error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — Audit ─────────────────────────────────────────────
+app.get('/api/ipam/audit', async (req, res) => {
+  try {
+    const limit = safeLimit(req.query.limit);
+    const ip    = (req.query.ip || '').trim();
+    const params = [limit];
+    let where = '';
+    if (ip) { params.push(ip); where = `WHERE ip_address = $${params.length}`; }
+    const rows = await db.query(
+      `SELECT * FROM ipam_audit ${where} ORDER BY created_at DESC LIMIT $1`,
+      params
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] ipam audit error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── DNS Management (write operations) ────────────────────────
+const psWrite = require('../collector/powershellRunner');
+const { encrypt: encryptCred, decrypt: decryptCred } = require('../collector/credStore');
+
+/**
+ * Load a server row and build auth object for PS runner.
+ */
+async function getServerWithAuth(serverId) {
+  const result = await db.query('SELECT * FROM ddi_servers WHERE id=$1', [parseInt(serverId)]);
+  if (!result.rows.length) return null;
+  const row = result.rows[0];
+  return {
+    ip:   row.ip_address,
+    auth: {
+      auth_mode:   row.auth_mode   || 'kerberos',
+      ps_username: row.ps_username || null,
+      ps_password: row.ps_password ? decryptCred(row.ps_password) : null,
+      winrm_port:  row.winrm_port  || 5985,
+      winrm_https: row.winrm_https || false,
+    },
+    row,
+  };
+}
+
+// Get DNS server list from ddi_servers
+app.get('/api/dns/servers', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled
+       FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ORDER BY hostname`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] dns servers error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add DNS record — runs PowerShell on the actual DNS server
+app.post('/api/dns/records', async (req, res) => {
+  try {
+    const { server_id, zone_name, hostname, record_type, record_data, ttl, preference } = req.body;
+    if (!server_id || !zone_name || !hostname || !record_type || !record_data) {
+      return res.status(400).json({ error: 'server_id, zone_name, hostname, record_type, record_data required' });
+    }
+
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip: serverIp, auth } = serverData;
+
+    let ok = false;
+    const ttlSec = parseInt(ttl || '3600');
+
+    switch (record_type.toUpperCase()) {
+      case 'A':     ok = psWrite.addDnsARecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'CNAME': ok = psWrite.addDnsCNameRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'PTR':   ok = psWrite.addDnsPtrRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'MX':    ok = psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, parseInt(preference||'10'), ttlSec, auth); break;
+      case 'TXT':   ok = psWrite.addDnsTxtRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      default: return res.status(400).json({ error: `Unsupported record type: ${record_type}` });
+    }
+
+    if (!ok) return res.status(500).json({ error: 'PowerShell command failed — check WinRM and DNS server role' });
+
+    // Store in our DB too
+    const zoneRes = await db.query('SELECT id FROM dns_zones WHERE zone_name=$1 AND server_id=$2', [zone_name, parseInt(server_id)]);
+    if (zoneRes.rows.length) {
+      await db.query(
+        `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT DO NOTHING`,
+        [zoneRes.rows[0].id, hostname, record_type.toUpperCase(), record_data, ttlSec]
+      );
+    }
+
+    res.json({ success: true, message: `${record_type} record created: ${hostname} → ${record_data}` });
+  } catch (err) {
+    console.error('[API] dns add record error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete DNS record
+app.delete('/api/dns/records', async (req, res) => {
+  try {
+    const { server_id, zone_name, hostname, record_type, record_data } = req.body;
+    if (!server_id || !zone_name || !hostname || !record_type) {
+      return res.status(400).json({ error: 'server_id, zone_name, hostname, record_type required' });
+    }
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const ok = psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
+    if (!ok) return res.status(500).json({ error: 'PowerShell delete failed — check WinRM permissions' });
+
+    // Remove from DB
+    await db.query(
+      `DELETE FROM dns_records WHERE hostname=$1 AND record_type=$2 AND record_data=$3
+       AND zone_id IN (SELECT id FROM dns_zones WHERE zone_name=$4 AND server_id=$5)`,
+      [hostname, record_type, record_data||'', zone_name, parseInt(server_id)]
+    ).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] dns delete record error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add DNS zone
+app.post('/api/dns/zones', async (req, res) => {
+  try {
+    const { server_id, zone_name, zone_type, replication_scope } = req.body;
+    if (!server_id || !zone_name) return res.status(400).json({ error: 'server_id and zone_name required' });
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const ok = psWrite.addDnsZone(serverData.ip, zone_name, zone_type || 'Primary', replication_scope || 'Domain', serverData.auth);
+    if (!ok) return res.status(500).json({ error: 'Zone creation failed — check WinRM and DNS server role' });
+
+    await db.query(
+      `INSERT INTO dns_zones (server_id, zone_name, zone_type, is_reverse, is_ds_integrated)
+       VALUES ($1,$2,$3,FALSE,TRUE) ON CONFLICT (server_id, zone_name) DO NOTHING`,
+      [parseInt(server_id), zone_name, zone_type || 'Primary']
+    );
+
+    res.json({ success: true, message: `Zone ${zone_name} created` });
+  } catch (err) {
+    console.error('[API] dns add zone error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete DNS zone
+app.delete('/api/dns/zones/:id', async (req, res) => {
+  try {
+    const zoneRes = await db.query(
+      `SELECT z.*, s.ip_address::text as server_ip, s.auth_mode, s.ps_username,
+              s.ps_password, s.winrm_port, s.winrm_https
+       FROM dns_zones z JOIN ddi_servers s ON s.id = z.server_id WHERE z.id=$1`,
+      [parseInt(req.params.id)]
+    );
+    if (!zoneRes.rows.length) return res.status(404).json({ error: 'Zone not found' });
+    const zone = zoneRes.rows[0];
+    const auth = {
+      auth_mode: zone.auth_mode || 'kerberos',
+      ps_username: zone.ps_username || null,
+      ps_password: zone.ps_password ? decryptCred(zone.ps_password) : null,
+      winrm_port: zone.winrm_port || 5985,
+      winrm_https: zone.winrm_https || false,
+    };
+
+    const ok = psWrite.removeDnsZone(zone.server_ip, zone.zone_name, auth);
+    if (!ok) return res.status(500).json({ error: 'Zone deletion failed on DNS server' });
+
+    await db.query('DELETE FROM dns_zones WHERE id=$1', [zone.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] dns delete zone error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS server stats
+app.get('/api/dns/stats/:serverId', async (req, res) => {
+  try {
+    const serverRes = await db.query('SELECT ip_address::text as ip FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
+    if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
+    const stats = psWrite.getDnsServerStats(serverRes.rows[0].ip);
+    res.json({ data: stats || {} });
+  } catch (err) {
+    console.error('[API] dns stats error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── DHCP Reservation — write via PowerShell ───────────────────
+app.post('/api/dhcp/reservations', async (req, res) => {
+  try {
+    const { server_id, scope_id, ip_address, mac_address, name, description } = req.body;
+    if (!server_id || !scope_id || !ip_address || !mac_address) {
+      return res.status(400).json({ error: 'server_id, scope_id, ip_address, mac_address required' });
+    }
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const ok = psWrite.addDhcpReservation(serverData.ip, scope_id, ip_address, mac_address, name || ip_address, serverData.auth);
+    if (!ok) return res.status(500).json({ error: 'DHCP reservation failed — check WinRM and DHCP server role' });
+
+    // Update lease record to show it is now reserved
+    await db.query(
+      `UPDATE dhcp_leases SET address_state='Reservation', hostname=COALESCE($3, hostname)
+       WHERE server_id=$1 AND ip_address=$2`,
+      [parseInt(server_id), ip_address, name || null]
+    ).catch(() => {});
+
+    // Log to audit
+    await db.query(
+      `INSERT INTO ipam_audit (ip_address, action, new_status, hostname, mac_address, performed_by, notes)
+       VALUES ($1,'reserved','reserved',$2,$3,'admin',$4)`,
+      [ip_address, name||null, mac_address, description||null]
+    ).catch(() => {});
+
+    res.json({ success: true, message: `Reservation created: ${ip_address} → ${mac_address}` });
+  } catch (err) {
+    console.error('[API] dhcp reservation error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Remove DHCP reservation
+app.delete('/api/dhcp/reservations', async (req, res) => {
+  try {
+    const { server_id, scope_id, ip_address } = req.body;
+    if (!server_id || !scope_id || !ip_address) {
+      return res.status(400).json({ error: 'server_id, scope_id, ip_address required' });
+    }
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const ok = psWrite.removeDhcpReservation(serverData.ip, scope_id, ip_address, serverData.auth);
+    if (!ok) return res.status(500).json({ error: 'Removal failed on DHCP server' });
+
+    await db.query(
+      `UPDATE dhcp_leases SET address_state='Active' WHERE server_id=$1 AND ip_address=$2`,
+      [parseInt(server_id), ip_address]
+    ).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] dhcp remove reservation error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all reservations for a scope
+app.get('/api/dhcp/reservations/:serverId/:scopeId', async (req, res) => {
+  try {
+    const serverRes = await db.query('SELECT ip_address::text as ip FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
+    if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
+    const reservations = psWrite.getDhcpReservations(serverRes.rows[0].ip, req.params.scopeId);
+    res.json({ data: reservations || [] });
+  } catch (err) {
+    console.error('[API] dhcp reservations error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
