@@ -515,10 +515,10 @@ function SettingsTab() {
           <div style={{ ...TITLE, marginBottom: 12 }}>About</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
             <div><strong>DDIVault</strong> v1.0.0</div>
-            <div style={{ color: 'var(--text-muted)' }}>Part of the NexVault network intelligence suite</div>
+            <div style={{ color: 'var(--text-muted)' }}>Part of the NocVault network intelligence suite</div>
             <div style={{ marginTop: 8 }}>API Port: 3007 · App Port: 3006</div>
             <div style={{ marginTop: 4 }}>
-              <a href="http://192.168.6.111:3000/launcher" style={{ color: '#C8102E', textDecoration: 'none' }}>← NexVault Hub</a>
+              <a href="http://192.168.6.111:3000/launcher" style={{ color: '#C8102E', textDecoration: 'none' }}>← NocVault Hub</a>
             </div>
           </div>
         </div>

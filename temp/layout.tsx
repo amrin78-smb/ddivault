@@ -6,7 +6,7 @@ import { ToastProvider } from '@/components/Toast';
 
 export const metadata: Metadata = {
   title: 'DDIVault — DNS · DHCP · IPAM',
-  description: 'DNS, DHCP, and IP Address Management monitoring for NexVault',
+  description: 'DNS, DHCP, and IP Address Management monitoring for NocVault',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

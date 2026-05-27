@@ -50,7 +50,7 @@ function runPS(serverIp, script, auth, returnRaw) {
   let psCmd;
 
   if (mode === 'local') {
-    // Run directly on this machine — only works if NexVault IS the target server
+    // Run directly on this machine — only works if NocVault IS the target server
     psCmd = `powershell.exe -NonInteractive -NoProfile -Command "try { ${safeScript} } catch { Write-Error $_.Exception.Message; exit 1 }"`;
 
   } else if (mode === 'credential') {
@@ -70,7 +70,7 @@ function runPS(serverIp, script, auth, returnRaw) {
       `} catch { Write-Error $_.Exception.Message; exit 1 }" `;
 
   } else {
-    // kerberos — use current Windows identity (NexVault service account)
+    // kerberos — use current Windows identity (NocVault service account)
     const portOpt  = port !== 5985 ? ` -Port ${port}` : '';
     const httpsOpt = useHttps ? ' -UseSSL' : '';
     psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +

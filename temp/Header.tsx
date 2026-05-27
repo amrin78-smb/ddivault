@@ -13,7 +13,7 @@ export function Header({ collectorOnline }: HeaderProps) {
   const { data: session } = useSession();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
-  const hubUrl = process.env.NEXT_PUBLIC_NETVAULT_HUB_URL || 'http://192.168.6.111:3000';
+  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000';
 
   const userName    = session?.user?.name  || session?.user?.email || 'User';
   const userEmail   = session?.user?.email || '';
@@ -190,7 +190,7 @@ export function Header({ collectorOnline }: HeaderProps) {
                   <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                   <polyline points="9 22 9 12 15 12 15 22"/>
                 </svg>
-                NexVault Hub
+                NocVault Hub
               </a>
 
               <button
