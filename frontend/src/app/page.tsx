@@ -95,21 +95,21 @@ const CARD: React.CSSProperties = {
   background: 'var(--bg-card)',
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius)',
-  padding: 16,
   boxShadow: 'var(--shadow-sm)',
+  padding: '20px 24px',
 };
 
 const TITLE: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: 14,
   fontWeight: 600,
   color: 'var(--text-primary)',
   marginBottom: 4,
 };
 
 const MUTED: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 12,
   color: 'var(--text-muted)',
-  marginBottom: 12,
+  marginBottom: 14,
 };
 
 // ── Utilization colour helper ─────────────────────────────────
@@ -172,22 +172,35 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   ] : [];
 
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Page header */}
+      <div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.4px' }}>Dashboard</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 3 }}>Infrastructure overview</div>
+      </div>
 
       {/* KPI tiles */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14 }}>
         {kpiTiles.map((t, i) => (
-          <div key={i} style={CARD}>
-            <div style={{ fontSize: 28, fontWeight: 700, color: t.color, lineHeight: 1 }}>{t.value}</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 4 }}>{t.label}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{t.sub}</div>
+          <div key={i} style={{
+            ...CARD, padding: '20px 24px',
+            transition: 'box-shadow 0.2s, transform 0.2s',
+            cursor: 'default',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.boxShadow = 'var(--shadow-md)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+            onMouseLeave={e => { e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.transform = 'none'; }}
+          >
+            <div style={{ fontSize: 36, fontWeight: 800, color: t.color, lineHeight: 1, letterSpacing: '-1px' }}>{t.value}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{t.label}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{t.sub}</div>
           </div>
         ))}
       </div>
 
       {/* Scope gauges */}
-      <div style={CARD}>
-        <div style={TITLE}>Scope Utilization</div>
+      <div style={{ ...CARD, padding: '20px 24px' }}>
+        <div style={{ ...TITLE }}>Scope Utilization</div>
         <div style={{ ...MUTED }}>Live — updates every 30s · Click scope to view leases</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
           {scopes.length === 0 && (
@@ -227,10 +240,10 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
       </div>
 
       {/* Alerts + Recent events */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>
 
         {/* Active alerts */}
-        <div style={CARD}>
+        <div style={{ ...CARD, padding: '20px 24px' }}>
           <div style={TITLE}>Active Alerts</div>
           <div style={MUTED}>{alerts.length} unacknowledged</div>
           {alerts.length === 0 ? (
@@ -263,7 +276,7 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
         </div>
 
         {/* Recent events */}
-        <div style={CARD}>
+        <div style={{ ...CARD, padding: '20px 24px' }}>
           <div style={TITLE}>Recent DHCP Events</div>
           <div style={MUTED}>Last 10 events from DHCP log</div>
           <table>
@@ -325,379 +338,6 @@ function EventTypeBadge({ type }: { type: string }) {
 
 // ════════════════════════════════════════════════════════════
 // TAB: DHCP SCOPES
-// ════════════════════════════════════════════════════════════
-function ScopesTab() {
-  const [scopes, setScopes] = useState<Scope[]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [leases, setLeases] = useState<Lease[]>([]);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api('/scopes').then(d => { setScopes(d.data || []); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
-
-  const toggleScope = async (scopeId: string) => {
-    if (expanded === scopeId) { setExpanded(null); return; }
-    setExpanded(scopeId);
-    const d = await api(`/scopes/${encodeURIComponent(scopeId)}/leases?limit=100`);
-    setLeases(d.data || []);
-  };
-
-  const filtered = useMemo(() => {
-    if (!search) return scopes;
-    const q = search.toLowerCase();
-    return scopes.filter(s =>
-      s.scope_id?.includes(q) || s.name?.toLowerCase().includes(q) ||
-      s.start_range?.includes(q) || s.end_range?.includes(q)
-    );
-  }, [scopes, search]);
-
-  return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>DHCP Scopes</h2>
-        <input
-          placeholder="Search scopes..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 6,
-            background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13, width: 220,
-          }}
-        />
-      </div>
-
-      <div style={CARD}>
-        <table>
-          <thead>
-            <tr>
-              <th>Scope ID</th>
-              <th>Name</th>
-              <th>Range</th>
-              <th>Total</th>
-              <th>In Use</th>
-              <th>Free</th>
-              <th>Reserved</th>
-              <th>% Used</th>
-              <th>State</th>
-              <th>Lease</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No scopes found</td></tr>}
-            {filtered.map(sc => (
-              <>
-                <tr key={sc.id} onClick={() => toggleScope(sc.scope_id)} style={{ cursor: 'pointer' }}>
-                  <td className="mono">{sc.scope_id}</td>
-                  <td style={{ fontWeight: 500 }}>{sc.name || '—'}</td>
-                  <td className="mono" style={{ fontSize: 11 }}>{sc.start_range} – {sc.end_range}</td>
-                  <td>{sc.total_ips}</td>
-                  <td>{sc.in_use}</td>
-                  <td style={{ color: sc.free < 10 ? '#dc2626' : 'inherit' }}>{sc.free}</td>
-                  <td>{sc.reserved}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, minWidth: 60 }}>
-                        <div style={{ height: '100%', width: `${Math.min(100, parseFloat(String(sc.percent_used)))}%`, background: pctColor(parseFloat(String(sc.percent_used))), borderRadius: 3, transition: 'width 0.3s' }} />
-                      </div>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: pctColor(parseFloat(String(sc.percent_used))), minWidth: 36 }}>
-                        {parseFloat(String(sc.percent_used)).toFixed(1)}%
-                      </span>
-                    </div>
-                  </td>
-                  <td><span className={`badge ${sc.state === 'Active' ? 'badge-green' : 'badge-gray'}`}>{sc.state}</span></td>
-                  <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{sc.lease_duration || '—'}</td>
-                </tr>
-                {expanded === sc.scope_id && (
-                  <tr key={`${sc.id}-leases`}>
-                    <td colSpan={10} style={{ background: 'var(--bg-primary)', padding: 0 }}>
-                      <div style={{ padding: '12px 16px' }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>
-                          Active leases in {sc.scope_id} ({leases.length} shown)
-                        </div>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>IP Address</th>
-                              <th>Hostname</th>
-                              <th>MAC Address</th>
-                              <th>State</th>
-                              <th>Expires</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {leases.map(l => (
-                              <tr key={l.id}>
-                                <td className="mono">{l.ip_address}</td>
-                                <td>{l.hostname || '—'}</td>
-                                <td className="mono">{l.mac_address || '—'}</td>
-                                <td><span className={`badge ${l.address_state === 'Active' ? 'badge-green' : 'badge-gray'}`}>{l.address_state}</span></td>
-                                <td style={{ fontSize: 11 }}>{l.lease_expiry ? new Date(l.lease_expiry).toLocaleString() : '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
-// TAB: LEASE TRACKER
-// ════════════════════════════════════════════════════════════
-function LeasesTab() {
-  const [leases, setLeases]   = useState<Lease[]>([]);
-  const [total, setTotal]     = useState(0);
-  const [page, setPage]       = useState(1);
-  const [search, setSearch]   = useState('');
-  const [state, setState]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const [history, setHistory] = useState<{ip: string; rows: any[]} | null>(null);
-  const limit = 50;
-
-  const load = useCallback(async (p = 1, q = search, st = state) => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ page: String(p), limit: String(limit) });
-      if (q) params.set('search', q);
-      if (st) params.set('state', st);
-      const d = await api(`/leases?${params}`);
-      setLeases(d.data || []);
-      setTotal(d.total || 0);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, state]);
-
-  useEffect(() => { load(); }, []);
-
-  const showHistory = async (ip: string) => {
-    const d = await api(`/leases/ip/${encodeURIComponent(ip)}/history`);
-    setHistory({ ip, rows: d.data || [] });
-  };
-
-  return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Lease Tracker</h2>
-        <input
-          placeholder="Search IP, hostname, MAC..."
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1); load(1, e.target.value, state); }}
-          style={{ padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13, width: 240 }}
-        />
-        <select
-          value={state}
-          onChange={e => { setState(e.target.value); setPage(1); load(1, search, e.target.value); }}
-          style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13 }}
-        >
-          <option value="">All states</option>
-          <option value="Active">Active</option>
-          <option value="Expired">Expired</option>
-          <option value="Reservation">Reservation</option>
-        </select>
-        <div style={{ flex: 1 }} />
-        <a href="/api/leases/export" download style={{ padding: '6px 14px', background: '#1a2744', color: '#fff', borderRadius: 6, fontSize: 12, textDecoration: 'none' }}>
-          Export CSV
-        </a>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total} leases</span>
-      </div>
-
-      <div style={CARD}>
-        <table>
-          <thead>
-            <tr>
-              <th>IP Address</th>
-              <th>Hostname</th>
-              <th>MAC Address</th>
-              <th>Scope</th>
-              <th>State</th>
-              <th>Expires</th>
-              <th>History</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</td></tr>}
-            {!loading && leases.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No leases found</td></tr>}
-            {leases.map(l => (
-              <tr key={l.id}>
-                <td className="mono">{l.ip_address}</td>
-                <td>{l.hostname || '—'}</td>
-                <td className="mono">{l.mac_address || '—'}</td>
-                <td className="mono" style={{ fontSize: 11 }}>{l.scope_id || '—'}</td>
-                <td><span className={`badge ${l.address_state === 'Active' ? 'badge-green' : l.address_state === 'Reservation' ? 'badge-blue' : 'badge-gray'}`}>{l.address_state}</span></td>
-                <td style={{ fontSize: 11 }}>{l.lease_expiry ? new Date(l.lease_expiry).toLocaleString() : '—'}</td>
-                <td>
-                  <button
-                    onClick={() => showHistory(l.ip_address)}
-                    style={{ fontSize: 11, color: '#C8102E', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
-                  >
-                    IP History
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* Pagination */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
-          {page > 1 && <button onClick={() => { setPage(p => p-1); load(page-1); }} style={btnStyle}>← Prev</button>}
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>Page {page}</span>
-          {leases.length === limit && <button onClick={() => { setPage(p => p+1); load(page+1); }} style={btnStyle}>Next →</button>}
-        </div>
-      </div>
-
-      {/* IP History modal */}
-      {history && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ ...CARD, width: 600, maxHeight: '80vh', overflow: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div style={{ fontWeight: 700 }}>IP History: {history.ip}</div>
-              <button onClick={() => setHistory(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-muted)' }}>✕</button>
-            </div>
-            <table>
-              <thead><tr><th>Time</th><th>Event</th><th>Hostname</th><th>MAC</th></tr></thead>
-              <tbody>
-                {history.rows.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No history</td></tr>}
-                {history.rows.map((r: any, i: number) => (
-                  <tr key={i}>
-                    <td style={{ fontSize: 11 }}>{new Date(r.event_time).toLocaleString()}</td>
-                    <td><EventTypeBadge type={r.event_type} /></td>
-                    <td>{r.hostname || '—'}</td>
-                    <td className="mono">{r.mac_address || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
-// TAB: DNS
-// ════════════════════════════════════════════════════════════
-function DNSTab() {
-  const [zones, setZones]     = useState<DnsZone[]>([]);
-  const [records, setRecords] = useState<any[]>([]);
-  const [total, setTotal]     = useState(0);
-  const [page, setPage]       = useState(1);
-  const [search, setSearch]   = useState('');
-  const [type, setType]       = useState('');
-  const [breakdown, setBreakdown] = useState<any[]>([]);
-  const [selectedZone, setSelectedZone] = useState<number | null>(null);
-
-  const RECORD_COLORS = ['#C8102E','#2563eb','#16a34a','#ca8a04','#7c3aed','#0891b2','#ea580c'];
-
-  useEffect(() => {
-    api('/dns/zones').then(d => setZones(d.data || []));
-    api('/dns/record-type-breakdown').then(d => setBreakdown(d.data || []));
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams({ page: String(page), limit: '50' });
-    if (search) params.set('search', search);
-    if (type)   params.set('type', type);
-    if (selectedZone) params.set('zone_id', String(selectedZone));
-    api(`/dns/records?${params}`).then(d => { setRecords(d.data || []); setTotal(d.total || 0); });
-  }, [search, type, selectedZone, page]);
-
-  return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <h2 style={{ fontSize: 16, fontWeight: 700 }}>DNS</h2>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {/* Zones table */}
-        <div style={CARD}>
-          <div style={TITLE}>DNS Zones ({zones.length})</div>
-          <table>
-            <thead><tr><th>Zone Name</th><th>Type</th><th>Records</th><th>Kind</th></tr></thead>
-            <tbody>
-              {zones.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No zones — DNS server not yet configured</td></tr>}
-              {zones.map(z => (
-                <tr key={z.id} onClick={() => setSelectedZone(z.id === selectedZone ? null : z.id)} style={{ cursor: 'pointer', background: selectedZone === z.id ? 'var(--primary-light, #fef2f4)' : undefined }}>
-                  <td style={{ fontWeight: 500 }}>{z.zone_name}</td>
-                  <td><span className="badge badge-blue">{z.zone_type}</span></td>
-                  <td>{z.record_count}</td>
-                  <td><span className={`badge ${z.is_reverse ? 'badge-orange' : 'badge-gray'}`}>{z.is_reverse ? 'Reverse' : 'Forward'}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Record type breakdown */}
-        <div style={CARD}>
-          <div style={TITLE}>Record Types</div>
-          {breakdown.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>No DNS records synced yet</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={breakdown} dataKey="count" nameKey="record_type" cx="50%" cy="50%" outerRadius={80} label={({ record_type, count }) => `${record_type}: ${count}`}>
-                  {breakdown.map((_, i) => <Cell key={i} fill={RECORD_COLORS[i % RECORD_COLORS.length]} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* DNS records */}
-      <div style={CARD}>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-          <div style={TITLE}>DNS Records</div>
-          <div style={{ flex: 1 }} />
-          <input
-            placeholder="Search hostname or IP..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
-            style={{ padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13, width: 200 }}
-          />
-          <select value={type} onChange={e => { setType(e.target.value); setPage(1); }}
-            style={{ padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13 }}>
-            <option value="">All types</option>
-            {['A','AAAA','CNAME','MX','PTR','SRV','TXT','NS'].map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '5px 0' }}>{total} records</span>
-        </div>
-        <table>
-          <thead><tr><th>Hostname</th><th>Type</th><th>Data</th><th>TTL</th><th>Zone</th></tr></thead>
-          <tbody>
-            {records.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No records found</td></tr>}
-            {records.map((r: any, i: number) => (
-              <tr key={i}>
-                <td className="mono">{r.hostname}</td>
-                <td><span className="badge badge-blue">{r.record_type}</span></td>
-                <td className="mono" style={{ fontSize: 11, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.record_data}</td>
-                <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.ttl}</td>
-                <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.zone_name}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
-// TAB: EVENTS & ALERTS
-// ════════════════════════════════════════════════════════════
 function EventsTab() {
   const [events, setEvents]   = useState<DhcpEvent[]>([]);
   const [alerts, setAlerts]   = useState<AlertEvent[]>([]);
@@ -815,127 +455,6 @@ function EventsTab() {
     </div>
   );
 }
-
-// ════════════════════════════════════════════════════════════
-// TAB: KNOWN SERVERS
-// ════════════════════════════════════════════════════════════
-function ServersTab() {
-  interface Server {
-    id: number;
-    hostname: string;
-    ip_address: string;
-    role: string;
-    description: string;
-    is_active: boolean;
-    last_polled: string;
-    poll_status: string;
-    poll_error: string;
-  }
-
-  const [servers, setServers] = useState<Server[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm]       = useState({ hostname: '', ip_address: '', role: 'both', description: '' });
-  const { toast } = useToast();
-
-  const load = () => api('/servers').then(d => setServers(d.data || []));
-  useEffect(() => { load(); }, []);
-
-  const save = async () => {
-    try {
-      await api('/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-      toast('Server added', 'success');
-      setShowAdd(false);
-      setForm({ hostname: '', ip_address: '', role: 'both', description: '' });
-      load();
-    } catch (e: any) { toast(e.message, 'error'); }
-  };
-
-  const del = async (id: number) => {
-    if (!confirm('Remove this server?')) return;
-    await api(`/servers/${id}`, { method: 'DELETE' });
-    toast('Server removed', 'info');
-    load();
-  };
-
-  return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700 }}>Known Servers</h2>
-        <button onClick={() => setShowAdd(true)} style={{ ...btnStyle, background: '#C8102E', color: '#fff', border: 'none' }}>+ Add Server</button>
-      </div>
-
-      <div style={CARD}>
-        <table>
-          <thead><tr><th>Hostname</th><th>IP Address</th><th>Role</th><th>Status</th><th>Last Polled</th><th>Description</th><th></th></tr></thead>
-          <tbody>
-            {servers.length === 0 && (
-              <tr>
-                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
-                  No servers configured.<br />
-                  <span style={{ fontSize: 12 }}>Add your DHCP/DNS server to begin monitoring.</span>
-                </td>
-              </tr>
-            )}
-            {servers.map(s => (
-              <tr key={s.id}>
-                <td style={{ fontWeight: 500 }}>{s.hostname || '—'}</td>
-                <td className="mono">{s.ip_address || '—'}</td>
-                <td><span className="badge badge-blue">{s.role}</span></td>
-                <td>
-                  <span className={`badge ${s.poll_status === 'ok' ? 'badge-green' : s.poll_status === 'error' ? 'badge-red' : 'badge-gray'}`}>
-                    {s.poll_status || 'pending'}
-                  </span>
-                  {s.poll_error && <div style={{ fontSize: 10, color: '#dc2626', marginTop: 2 }}>{s.poll_error}</div>}
-                </td>
-                <td style={{ fontSize: 11 }}>{s.last_polled ? new Date(s.last_polled).toLocaleString() : 'Never'}</td>
-                <td style={{ color: 'var(--text-muted)' }}>{s.description || '—'}</td>
-                <td>
-                  <button onClick={() => del(s.id)} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {showAdd && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ ...CARD, width: 420 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700 }}>Add Server</div>
-              <button onClick={() => setShowAdd(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-muted)' }}>✕</button>
-            </div>
-            {[
-              { key: 'hostname', label: 'Hostname or FQDN' },
-              { key: 'ip_address', label: 'IP Address' },
-              { key: 'description', label: 'Description' },
-            ].map(f => (
-              <div key={f.key} style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{f.label}</label>
-                <input value={(form as any)[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }} />
-              </div>
-            ))}
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Role</label>
-              <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
-                style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}>
-                <option value="both">DHCP + DNS</option>
-                <option value="dhcp">DHCP only</option>
-                <option value="dns">DNS only</option>
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowAdd(false)} style={btnStyle}>Cancel</button>
-              <button onClick={save} style={{ ...btnStyle, background: '#C8102E', color: '#fff', border: 'none' }}>Add Server</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ════════════════════════════════════════════════════════════
 // TAB: SETTINGS
 // ════════════════════════════════════════════════════════════
@@ -1023,14 +542,26 @@ const btnStyle: React.CSSProperties = {
 // ════════════════════════════════════════════════════════════
 // SIDEBAR + MAIN APP
 // ════════════════════════════════════════════════════════════
-const SIDEBAR_ITEMS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'dashboard', label: 'Dashboard',      icon: '◉' },
-  { id: 'scopes',    label: 'DHCP',           icon: '⬡' },
-  { id: 'ipam',      label: 'IPAM',           icon: '🗺' },
-  { id: 'dns',       label: 'DNS',            icon: '🌐' },
-  { id: 'events',    label: 'Events & Alerts', icon: '🔔' },
-  { id: 'servers',   label: 'Known Servers',  icon: '🖥' },
-  { id: 'settings',  label: 'Settings',       icon: '⚙' },
+
+// SVG icons for sidebar
+const ICONS: Record<string, React.ReactNode> = {
+  dashboard: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  scopes:    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+  ipam:      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+  dns:       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>,
+  events:    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+  servers:   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>,
+  settings:  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+};
+
+const SIDEBAR_ITEMS: { id: Tab; label: string; badge?: string }[] = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'scopes',    label: 'DHCP' },
+  { id: 'ipam',      label: 'IPAM' },
+  { id: 'dns',       label: 'DNS' },
+  { id: 'events',    label: 'Events & Alerts' },
+  { id: 'servers',   label: 'Known Servers' },
+  { id: 'settings',  label: 'Settings' },
 ];
 
 export default function DDIVaultApp() {
@@ -1051,42 +582,84 @@ export default function DDIVaultApp() {
       <Header collectorOnline={collectorOnline} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
         {/* Sidebar */}
         <nav style={{
           width: 'var(--sidebar-width)',
           background: '#1a2744',
           display: 'flex',
           flexDirection: 'column',
-          padding: '12px 0',
           flexShrink: 0,
           overflowY: 'auto',
+          paddingTop: 8,
+          paddingBottom: 16,
         }}>
-          {SIDEBAR_ITEMS.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setTab(item.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '10px 16px',
-                background: tab === item.id ? 'rgba(200,16,46,0.12)' : 'transparent',
-                borderLeft: tab === item.id ? '3px solid #C8102E' : '3px solid transparent',
-                border: 'none',
-                borderRadius: 0,
-                color: tab === item.id ? '#fff' : 'rgba(255,255,255,0.55)',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: tab === item.id ? 600 : 400,
-                textAlign: 'left',
-                width: '100%',
-                transition: 'all 0.15s',
-              }}
-            >
-              <span style={{ fontSize: 14 }}>{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+          {/* Section label */}
+          <div style={{
+            padding: '12px 20px 8px',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            color: 'rgba(255,255,255,0.25)',
+            textTransform: 'uppercase',
+          }}>
+            Navigation
+          </div>
+
+          {SIDEBAR_ITEMS.map(item => {
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setTab(item.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '11px 20px',
+                  margin: '1px 10px',
+                  background: active ? 'rgba(200,16,46,0.15)' : 'transparent',
+                  borderLeft: 'none',
+                  border: 'none',
+                  borderRadius: 10,
+                  color: active ? '#fff' : 'rgba(255,255,255,0.5)',
+                  cursor: 'pointer',
+                  fontSize: 13.5,
+                  fontWeight: active ? 600 : 400,
+                  textAlign: 'left',
+                  width: 'calc(100% - 20px)',
+                  transition: 'all 0.15s',
+                  position: 'relative',
+                }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
+                onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; } }}
+              >
+                {/* Active indicator */}
+                {active && (
+                  <div style={{
+                    position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
+                    width: 3, height: 20, background: '#C8102E', borderRadius: '0 3px 3px 0',
+                  }} />
+                )}
+                <span style={{ color: active ? '#C8102E' : 'rgba(255,255,255,0.4)', flexShrink: 0 }}>
+                  {ICONS[item.id]}
+                </span>
+                <span>{item.label}</span>
+                {item.badge && (
+                  <span style={{
+                    marginLeft: 'auto', background: '#C8102E', color: '#fff',
+                    borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 700,
+                  }}>{item.badge}</span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Bottom spacer + version */}
+          <div style={{ flex: 1 }} />
+          <div style={{ padding: '12px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>
+            DDIVault v1.0
+          </div>
         </nav>
 
         {/* Content area */}

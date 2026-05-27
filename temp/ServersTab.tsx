@@ -20,6 +20,8 @@ interface Server {
   winrm_test_ok: boolean | null;
   winrm_tested_at: string;
   notes: string;
+  site_id: number | null;
+  site_name: string | null;
 }
 
 const CARD: React.CSSProperties = {
@@ -50,8 +52,11 @@ const AUTH_MODE_INFO: Record<string, { label: string; desc: string; color: strin
 };
 
 // ── Server Form Modal ─────────────────────────────────────────
-function ServerModal({ server, onClose, onDone }: {
-  server?: Server | null; onClose: () => void; onDone: () => void;
+function ServerModal({ server, sites, onClose, onDone }: {
+  server?: Server | null;
+  sites: {id:number;name:string;code:string;city:string}[];
+  onClose: () => void;
+  onDone: () => void;
 }) {
   const isEdit = !!server;
   const [form, setForm] = useState({
@@ -65,6 +70,7 @@ function ServerModal({ server, onClose, onDone }: {
     winrm_port:  String(server?.winrm_port || 5985),
     winrm_https: server?.winrm_https || false,
     notes:       server?.notes       || '',
+    site_id:     server?.site_id ? String(server.site_id) : '',
   });
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
@@ -124,6 +130,17 @@ function ServerModal({ server, onClose, onDone }: {
               <option value="both">DHCP + DNS</option>
               <option value="dhcp">DHCP only</option>
               <option value="dns">DNS only</option>
+            </select>
+          </div>
+          <div>
+            <label style={LABEL}>Site (from NetVault)</label>
+            <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))} style={INPUT}>
+              <option value="">— No site assigned —</option>
+              {sites.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}
+                </option>
+              ))}
             </select>
           </div>
           <div>
@@ -249,6 +266,7 @@ Invoke-Command -ComputerName ${form.ip_address || '<SERVER-IP>'} -ScriptBlock { 
 // ════════════════════════════════════════════════════════════
 export default function ServersTab() {
   const [servers, setServers]     = useState<Server[]>([]);
+  const [sites, setSites]         = useState<{id:number;name:string;code:string;city:string}[]>([]);
   const [editServer, setEditServer] = useState<Server | null>(null);
   const [showAdd, setShowAdd]     = useState(false);
   const [testing, setTesting]     = useState<Record<number, boolean>>({});
@@ -256,8 +274,12 @@ export default function ServersTab() {
   const { toast } = useToast();
 
   const load = useCallback(async () => {
-    const d = await api('/servers').catch(() => null);
-    if (d) setServers(d.data || []);
+    const [d, s] = await Promise.allSettled([
+      api('/servers'),
+      api('/sites'),
+    ]);
+    if (d.status === 'fulfilled') setServers(d.value.data || []);
+    if (s.status === 'fulfilled') setSites(s.value.data || []);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -361,6 +383,7 @@ export default function ServersTab() {
                       WinRM: {s.winrm_port || 5985}{s.winrm_https ? ' (HTTPS)' : ' (HTTP)'}
                     </span>
                     {s.description && <span style={{ color: 'var(--text-muted)' }}>· {s.description}</span>}
+                    {s.site_name && <span style={{ color: 'var(--text-muted)' }}>· 📍 {s.site_name}</span>}
                   </div>
 
                   {/* Poll status */}
@@ -409,8 +432,8 @@ export default function ServersTab() {
       )}
 
       {/* Modals */}
-      {showAdd    && <ServerModal onClose={() => setShowAdd(false)}    onDone={() => { setShowAdd(false);    load(); }} />}
-      {editServer && <ServerModal server={editServer} onClose={() => setEditServer(null)} onDone={() => { setEditServer(null); load(); }} />}
+      {showAdd    && <ServerModal sites={sites} onClose={() => setShowAdd(false)}    onDone={() => { setShowAdd(false);    load(); }} />}
+      {editServer && <ServerModal sites={sites} server={editServer} onClose={() => setEditServer(null)} onDone={() => { setEditServer(null); load(); }} />}
     </div>
   );
 }

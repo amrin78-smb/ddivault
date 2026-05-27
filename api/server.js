@@ -594,12 +594,25 @@ app.get('/api/servers', async (req, res) => {
       `SELECT id, hostname, ip_address::text as ip_address, role, description,
               is_active, last_polled, poll_status, poll_error,
               auth_mode, ps_username, winrm_port, winrm_https,
-              winrm_test_ok, winrm_tested_at, notes,
+              winrm_test_ok, winrm_tested_at, notes, site_id,
               created_at, updated_at
        FROM ddi_servers ORDER BY created_at DESC`
     );
-    // Never return ps_password to frontend
-    res.json({ data: rows.rows });
+    // Enrich with site names from NetVault if any site_ids present
+    const siteIds = [...new Set(rows.rows.map(r => r.site_id).filter(Boolean))];
+    let siteMap = {};
+    if (siteIds.length) {
+      const sites = await netvaultDb.query(
+        `SELECT id, name FROM sites WHERE id = ANY($1)`, [siteIds]
+      ).catch(() => ({ rows: [] }));
+      for (const s of sites.rows) siteMap[s.id] = s.name;
+    }
+    const data = rows.rows.map(r => ({
+      ...r,
+      ps_password: undefined, // never return password
+      site_name: r.site_id ? siteMap[r.site_id] || null : null,
+    }));
+    res.json({ data });
   } catch (err) {
     console.error('[API] servers error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -611,7 +624,7 @@ app.post('/api/servers', async (req, res) => {
     const {
       hostname, ip_address, role, description,
       auth_mode, ps_username, ps_password,
-      winrm_port, winrm_https, notes,
+      winrm_port, winrm_https, notes, site_id,
     } = req.body;
     if (!hostname && !ip_address) return res.status(400).json({ error: 'hostname or ip_address required' });
 
@@ -620,15 +633,15 @@ app.post('/api/servers', async (req, res) => {
     const result = await db.query(
       `INSERT INTO ddi_servers
          (hostname, ip_address, role, description, auth_mode, ps_username, ps_password,
-          winrm_port, winrm_https, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          winrm_port, winrm_https, notes, site_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING id, hostname, ip_address::text, role, description,
-                 auth_mode, ps_username, winrm_port, winrm_https, notes, is_active, created_at`,
+                 auth_mode, ps_username, winrm_port, winrm_https, notes, site_id, is_active, created_at`,
       [
         hostname || null, ip_address || null, role || 'both', description || null,
         auth_mode || 'kerberos', ps_username || null, encryptedPass,
         parseInt(winrm_port || '5985'), winrm_https === true,
-        notes || null,
+        notes || null, site_id ? parseInt(site_id) : null,
       ]
     );
     res.json({ data: result.rows[0] });
@@ -981,12 +994,21 @@ app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
     );
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const subnet = subnetRes.rows[0];
-    // Run scan async — don't block the HTTP response
+
+    // Respond immediately — scan runs in background
     res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });
+
+    // Run scan non-blocking after response is sent
     scanningSubnets.add(id);
-    scanSubnet(subnet)
-      .catch(err => console.error('[API] scan error:', err.message))
-      .finally(() => scanningSubnets.delete(id));
+    setImmediate(async () => {
+      try {
+        await scanSubnet(subnet);
+      } catch (err) {
+        console.error('[API] scan error:', err.message);
+      } finally {
+        scanningSubnets.delete(id);
+      }
+    });
   } catch (err) {
     console.error('[API] scan start error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -1364,6 +1386,34 @@ app.get('/api/dhcp/reservations/:serverId/:scopeId', async (req, res) => {
     res.json({ data: reservations || [] });
   } catch (err) {
     console.error('[API] dhcp reservations error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Sites (from NetVault DB) ──────────────────────────────────
+const netvaultDb = new Pool({
+  host:     process.env.NETVAULT_DB_HOST || 'localhost',
+  port:     parseInt(process.env.NETVAULT_DB_PORT || '5432'),
+  database: process.env.NETVAULT_DB_NAME || 'netvault',
+  user:     process.env.DDI_DB_USER      || 'ddivault_user',
+  password: process.env.DDI_DB_PASS      || '',
+  max: 3,
+  ssl: false,
+});
+
+app.get('/api/sites', async (req, res) => {
+  try {
+    const rows = await netvaultDb.query(
+      `SELECT s.id, s.name, s.code, s.city, s.site_type, s.site_status,
+              c.name as country_name
+       FROM sites s
+       LEFT JOIN countries c ON c.id = s.country_id
+       WHERE s.site_status = 'Active'
+       ORDER BY s.name`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] sites error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

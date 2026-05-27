@@ -370,6 +370,7 @@ export default function IPAMTab() {
   const [supernets, setSupernets]   = useState<Supernet[]>([]);
   const [subnets, setSubnets]       = useState<Subnet[]>([]);
   const [vlans, setVlans]           = useState<Vlan[]>([]);
+  const [sites, setSites]           = useState<{id:number;name:string;code:string;city:string}[]>([]);
   const [expanded, setExpanded]     = useState<Set<number>>(new Set());
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
   const [view, setView]             = useState<'tree' | 'flat' | 'vlans'>('tree');
@@ -398,14 +399,16 @@ export default function IPAMTab() {
   }, []);
 
   const loadAll = async () => {
-    const [sn, sub, vl] = await Promise.allSettled([
+    const [sn, sub, vl, si] = await Promise.allSettled([
       api('/ipam/supernets'),
       api('/ipam/subnets'),
       api('/ipam/vlans'),
+      api('/sites'),
     ]);
     if (sn.status  === 'fulfilled') setSupernets(sn.value.data  || []);
     if (sub.status === 'fulfilled') setSubnets(sub.value.data   || []);
     if (vl.status  === 'fulfilled') setVlans(vl.value.data      || []);
+    if (si.status  === 'fulfilled') setSites(si.value.data      || []);
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -753,7 +756,6 @@ export default function IPAMTab() {
               { k: 'network', l: 'Network (e.g. 10.0.0.0)', full: true },
               { k: 'prefix_length', l: 'Prefix Length (e.g. 8)' },
               { k: 'name', l: 'Name' },
-              { k: 'site', l: 'Site / Location' },
               { k: 'description', l: 'Description', full: true },
             ].map(f => (
               <div key={f.k} style={f.full ? { gridColumn: '1/-1' } : {}}>
@@ -762,6 +764,14 @@ export default function IPAMTab() {
                 </Field>
               </div>
             ))}
+            <div style={{ gridColumn: '1/-1' }}>
+              <Field label="Site (from NetVault)">
+                <select value={supernetForm.site} onChange={e => setSupernetForm(p => ({ ...p, site: e.target.value }))} style={INPUT}>
+                  <option value="">— No site —</option>
+                  {sites.map(s => <option key={s.id} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}</option>)}
+                </select>
+              </Field>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={() => setShowAddSupernet(false)} style={BTN}>Cancel</button>
@@ -779,7 +789,6 @@ export default function IPAMTab() {
               { k: 'name', l: 'Name' },
               { k: 'gateway', l: 'Gateway IP' },
               { k: 'vlan_id', l: 'VLAN ID' },
-              { k: 'site', l: 'Site' },
               { k: 'owner', l: 'Owner' },
               { k: 'location', l: 'Location' },
               { k: 'description', l: 'Description', full: true },
@@ -791,6 +800,14 @@ export default function IPAMTab() {
                 </Field>
               </div>
             ))}
+            <div style={{ gridColumn: '1/-1' }}>
+              <Field label="Site (from NetVault)">
+                <select value={subnetForm.site} onChange={e => setSubnetForm(p => ({ ...p, site: e.target.value }))} style={INPUT}>
+                  <option value="">— No site —</option>
+                  {sites.map(s => <option key={s.id} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}</option>)}
+                </select>
+              </Field>
+            </div>
             <div style={{ gridColumn: '1/-1' }}>
               <Field label="Supernet (optional)">
                 <select value={subnetSupernet || ''} onChange={e => setSubnetSupernet(e.target.value ? parseInt(e.target.value) : null)} style={INPUT}>
