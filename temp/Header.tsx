@@ -234,7 +234,7 @@ export function Header({ collectorOnline }: HeaderProps) {
                     });
                   } catch (_) {}
                   // Hard redirect — no callbackUrl, goes straight to launcher
-                  window.location.replace('http://192.168.6.111:3000/launcher');
+                  window.location.replace(`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000'}/launcher`);
                 }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
