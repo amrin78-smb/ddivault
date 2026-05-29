@@ -141,21 +141,25 @@ async function api(path: string, opts?: RequestInit) {
 function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
   const [stats, setStats]   = useState<any>(null);
   const [scopes, setScopes] = useState<Scope[]>([]);
+  const [scopeHistory, setScopeHistory] = useState<any[]>([]);
   const [events, setEvents] = useState<DhcpEvent[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
 
   useEffect(() => {
     const load = async () => {
-      const [s, sc, ev, al] = await Promise.allSettled([
+      const results = await Promise.allSettled([
         api('/dashboard/stats'),
         api('/scopes'),
         api('/dashboard/recent-events?limit=10'),
         api('/alerts?unacked=true&limit=5'),
+        api('/scopes/history/all?hours=168'),
       ]);
+      const [s, sc, ev, al] = results;
       if (s.status  === 'fulfilled') setStats(s.value);
       if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
       if (ev.status === 'fulfilled') setEvents(ev.value.data || []);
       if (al.status === 'fulfilled') setAlerts(al.value.data || []);
+      const hist = results[4]; if (hist?.status === 'fulfilled') setScopeHistory(hist.value.data || []);
     };
     load();
     const t = setInterval(load, 30000);
@@ -238,6 +242,50 @@ function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
           ))}
         </div>
       </div>
+
+
+      {/* Utilization Trends */}
+      {scopeHistory.length > 0 && (
+        <div style={{ ...CARD, padding: '20px 24px' }}>
+          <div style={TITLE}>Scope Utilization Trends</div>
+          <div style={{ ...MUTED }}>Last 7 days · hover to inspect</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginTop: 8 }}>
+            {scopeHistory.map((sh: any) => {
+              const hist = sh.history || [];
+              if (hist.length < 2) return null;
+              const max = Math.max(...hist.map((h: any) => h.percent_used), 1);
+              const latest = hist[hist.length - 1]?.percent_used || 0;
+              const first  = hist[0]?.percent_used || 0;
+              const trend  = latest - first;
+              const color  = pctColor(latest);
+              const w = 160; const h = 40;
+              const pts = hist.map((d: any, i: number) => {
+                const x = (i / (hist.length - 1)) * w;
+                const y = h - (d.percent_used / Math.max(max, 100)) * h;
+                return `${x},${y}`;
+              }).join(' ');
+              return (
+                <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{sh.scope_id}</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color }}>
+                      {latest.toFixed(1)}%
+                      <span style={{ fontSize: 10, marginLeft: 4, color: trend > 0 ? '#dc2626' : '#16a34a' }}>
+                        {trend > 0 ? '↑' : trend < 0 ? '↓' : '→'}{Math.abs(trend).toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                  <svg width={w} height={h} style={{ display: 'block' }}>
+                    <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx={(hist.length - 1) / (hist.length - 1) * w} cy={h - (latest / 100) * h} r="3" fill={color} />
+                  </svg>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>{sh.name || sh.scope_id}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Alerts + Recent events */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>

@@ -1767,6 +1767,45 @@ app.get('/api/ipam/conflicts', async (req, res) => {
   }
 });
 
+
+// Utilization history for all scopes (sparklines)
+app.get('/api/scopes/history/all', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours || '168'); // default 7 days
+    const rows = await db.query(
+      `SELECT
+         h.scope_id,
+         s.scope_id as scope_network,
+         s.name,
+         h.percent_used,
+         h.in_use,
+         h.free,
+         h.recorded_at
+       FROM dhcp_scope_history h
+       JOIN dhcp_scopes s ON s.id = h.scope_id
+       WHERE h.recorded_at > NOW() - make_interval(hours => $1)
+       ORDER BY h.scope_id, h.recorded_at ASC`,
+      [hours]
+    );
+
+    // Group by scope
+    const grouped = {};
+    for (const row of rows.rows) {
+      const key = row.scope_network;
+      if (!grouped[key]) grouped[key] = { scope_id: row.scope_network, name: row.name, history: [] };
+      grouped[key].history.push({
+        percent_used: parseFloat(row.percent_used),
+        in_use: row.in_use,
+        recorded_at: row.recorded_at,
+      });
+    }
+    res.json({ data: Object.values(grouped) });
+  } catch (err) {
+    console.error('[API] scope history all error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Generic error handler ─────────────────────────────────────
 app.use((err, req, res, _next) => {
   console.error('[API Error]', err.message, err.stack);

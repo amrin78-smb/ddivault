@@ -658,6 +658,28 @@ export default function IPAMTab() {
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button onClick={e => { e.stopPropagation(); setSubnetSupernet(sn.id); setShowAddSubnet(true); }}
                       style={{ ...BTN, fontSize: 11, padding: '3px 8px' }}>+ Subnet</button>
+                    <select
+                      id={'pfx-' + sn.id}
+                      defaultValue="24"
+                      onClick={e => e.stopPropagation()}
+                      style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff', color: '#2563eb', cursor: 'pointer' }}
+                    >
+                      {[24,25,26,27,28,29,30].map(p => <option key={p} value={p}>/{p}</option>)}
+                    </select>
+                    <button onClick={async e => {
+                      e.stopPropagation();
+                      const sel = document.getElementById('pfx-' + sn.id) as HTMLSelectElement;
+                      const prefix = sel?.value || '24';
+                      const d = await api('/ipam/supernets/' + sn.id + '/next-subnet?prefix=' + prefix).catch(() => null);
+                      setNextSubnetResult(p => ({ ...p, [sn.id]: d?.available ? d.subnet : 'None available' }));
+                    }} style={{ ...BTN, fontSize: 11, padding: '3px 8px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                      Next Free
+                    </button>
+                    {nextSubnetResult[sn.id] && (
+                      <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#2563eb', fontWeight: 600 }}>
+                        {nextSubnetResult[sn.id]}
+                      </span>
+                    )}
                     <button onClick={e => { e.stopPropagation(); deleteSupernet(sn.id); }}
                       style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
                   </div>

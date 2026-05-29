@@ -20,6 +20,7 @@ const nextConfig = {
       { source: '/api/dhcp/:path*',        destination: 'http://127.0.0.1:3007/api/dhcp/:path*' },
       { source: '/api/ipam/:path*',        destination: 'http://127.0.0.1:3007/api/ipam/:path*' },
       { source: '/api/search', destination: 'http://127.0.0.1:3007/api/search' },
+      { source: '/api/scopes/history/:path*', destination: 'http://127.0.0.1:3007/api/scopes/history/:path*' },
       { source: '/api/sites',              destination: 'http://127.0.0.1:3007/api/sites' },
     ];
   },
