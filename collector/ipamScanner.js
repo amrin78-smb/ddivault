@@ -84,7 +84,7 @@ function pingSweep(ips) {
   const results = new Map();
 
   // Process in batches of 50
-  const BATCH = 50;
+  const BATCH = 30;
   for (let i = 0; i < ips.length; i += BATCH) {
     const batch   = ips.slice(i, i + BATCH);
     const ipArray = batch.map(ip => `'${ip}'`).join(',');
@@ -105,7 +105,7 @@ foreach ($ip in $ips) {
         }
     } -ArgumentList $ip
 }
-$jobs | Wait-Job -Timeout 15 | Out-Null
+$jobs | Wait-Job -Timeout 25 | Out-Null
 foreach ($job in $jobs) {
     $out = Receive-Job $job -ErrorAction SilentlyContinue
     if ($out) { Write-Output $out }
@@ -277,8 +277,9 @@ async function scanSubnet(subnet) {
         hostsUp++;
         hostsUnknown++;
         // Resolve hostname and MAC for unknown live hosts
-        if (!hostname)   hostname   = await resolveHostname(ip, dnsServer);
-        if (!macAddress) macAddress = getMacFromArp(ip);
+        // hostname lookup skipped during ping sweep - too slow per-host
+        // if (!hostname) hostname = await resolveHostname(ip, dnsServer);
+        if (!macAddress) macAddress = getMacFromArp(ip); // ARP only - fast
       } else {
         status = 'available';
       }

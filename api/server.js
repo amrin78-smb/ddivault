@@ -980,7 +980,7 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/release', async (req, res) => {
 });
 
 // ── IPAM — Scan ───────────────────────────────────────────────
-const { scanSubnet, scanAllSubnets } = require('../collector/ipamScanner');
+const { scanAllSubnets } = require('../collector/ipamScanner');
 const scanningSubnets = new Set(); // prevent concurrent scans of same subnet
 
 app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
@@ -995,19 +995,23 @@ app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const subnet = subnetRes.rows[0];
 
-    // Respond immediately — scan runs in background
     res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });
 
-    // Run scan non-blocking after response is sent
+    // Run scan in a completely separate child process — does NOT block the API
     scanningSubnets.add(id);
-    setImmediate(async () => {
-      try {
-        await scanSubnet(subnet);
-      } catch (err) {
-        console.error('[API] scan error:', err.message);
-      } finally {
-        scanningSubnets.delete(id);
-      }
+    const { fork } = require('child_process');
+    const worker = fork(
+      require('path').join(__dirname, '..', 'collector', 'scanWorker.js'),
+      [String(id), subnet.network, String(subnet.prefix_length), subnet.name || ''],
+      { silent: false, env: process.env }
+    );
+    worker.on('exit', (code) => {
+      scanningSubnets.delete(id);
+      console.log(`[API] Scan worker exited for subnet ${id} with code ${code}`);
+    });
+    worker.on('error', (err) => {
+      scanningSubnets.delete(id);
+      console.error(`[API] Scan worker error for subnet ${id}: ${err.message}`);
     });
   } catch (err) {
     console.error('[API] scan start error:', err.message);
