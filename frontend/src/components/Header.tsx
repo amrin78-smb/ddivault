@@ -67,6 +67,9 @@ export function Header(props: HeaderProps) {
         DNS · DHCP · IPAM
       </div>
 
+      {/* Global Search */}
+      <GlobalSearch onNavigate={onNavigate} />
+
       <div style={{ flex: 1 }} />
 
       {/* Collector status */}

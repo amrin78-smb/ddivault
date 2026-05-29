@@ -253,6 +253,19 @@ function IPAddressTable({ subnet, onClose }: { subnet: Subnet; onClose: () => vo
           </div>
         ))}
         <button
+          onClick={async () => {
+            const d = await api('/ipam/subnets/' + subnet.id + '/next-ip').catch(() => null);
+            if (d?.available) {
+              toast('Next available IP: ' + d.ip, 'success');
+            } else {
+              toast('Subnet is full', 'error');
+            }
+          }}
+          style={{ ...BTN, fontSize: 12, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}
+        >
+          Next Available IP
+        </button>
+        <button
           onClick={startScan}
           disabled={scanning}
           style={{ ...BTN_RED, opacity: scanning ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
