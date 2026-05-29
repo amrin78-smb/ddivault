@@ -10,16 +10,16 @@
     Root installation directory. Default: C:\Apps\DDIVault
 
 .EXAMPLE
-    & "C:\Apps\DDIVault\app\installer\Update-DDIVault.ps1"
-    & "C:\Apps\DDIVault\app\installer\Update-DDIVault.ps1" -InstallDir "D:\Apps\DDIVault"
+    & "C:\Apps\ddivault\installer\Update-DDIVault.ps1"
+    & "C:\Apps\ddivault\installer\Update-DDIVault.ps1" -InstallDir "D:\Apps\ddivault"
 #>
 
 param(
-    [string]$InstallDir = "C:\Apps\DDIVault"
+    [string]$InstallDir = "C:\Apps\ddivault"
 )
 
 # ── Variables ──────────────────────────────────────────────────
-$AppDir      = "$InstallDir\app"
+$AppDir      = "$InstallDir"
 $FrontendDir = "$AppDir\frontend"
 $NssmExe     = "C:\Apps\NetVault\nssm\nssm-2.24\win64\nssm.exe"
 $LogDir      = "$InstallDir\logs"
