@@ -262,24 +262,26 @@ async function scanSubnet(subnet) {
     for (const ip of ips) {
       if (reservedSet.has(ip)) continue;
 
-      const ping  = pingResults.get(ip) || { alive: false, responseTime: null };
+      const pingResult = pingResults.get(ip) || { alive: false, responseTime: null };
       const lease = leaseMap.get(ip);
 
       let status;
       let hostname   = lease?.hostname    || null;
       let macAddress = lease?.mac_address || null;
 
+      // ARP first - detects devices blocking ICMP (Windows firewall etc)
+      if (!macAddress && !lease) macAddress = getMacFromArp(ip);
+
+      // Alive if ping responded OR ARP found a MAC
+      const alive = pingResult.alive || (!!macAddress && !lease);
+
       if (lease) {
         status = 'dhcp';
         hostsUp++;
-      } else if (ping.alive) {
+      } else if (alive) {
         status = 'unknown';
         hostsUp++;
         hostsUnknown++;
-        // Resolve hostname and MAC for unknown live hosts
-        // hostname lookup skipped during ping sweep - too slow per-host
-        // if (!hostname) hostname = await resolveHostname(ip, dnsServer);
-        if (!macAddress) macAddress = getMacFromArp(ip); // ARP only - fast
       } else {
         status = 'available';
       }
@@ -297,8 +299,8 @@ async function scanSubnet(subnet) {
            last_seen     = CASE WHEN EXCLUDED.status != 'available' THEN NOW() ELSE ipam_addresses.last_seen END,
            dhcp_lease_id = EXCLUDED.dhcp_lease_id,
            updated_at    = NOW()`,
-        [subnetId, ip, status, hostname, macAddress, ping.responseTime,
-         ping.alive || lease ? new Date().toISOString() : null, lease?.id || null]
+        [subnetId, ip, status, hostname, macAddress, pingResult.responseTime,
+         alive || lease ? new Date().toISOString() : null, lease?.id || null]
       );
 
       // Alert on first discovery of unknown devices
