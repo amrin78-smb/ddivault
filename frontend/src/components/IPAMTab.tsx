@@ -375,7 +375,8 @@ export default function IPAMTab() {
   const [expanded, setExpanded]     = useState<Set<number>>(new Set());
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
   const [view, setView]             = useState<'tree' | 'flat' | 'vlans'>('tree');
-  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport]           = useState(false);
+  const [showAddSupernet, setShowAddSupernet] = useState(false);
   const [showAddSubnet, setShowAddSubnet]     = useState(false);
   const [showAddVlan, setShowAddVlan]         = useState(false);
   const [subnetSupernet, setSubnetSupernet]   = useState<number | null>(null);
