@@ -49,7 +49,7 @@ foreach ($svc in @("DDIVault-App", "DDIVault-API", "DDIVault-Collector")) {
     }
 }
 Write-Host "    Waiting 5 seconds..." -ForegroundColor DarkGray
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 8
 
 foreach ($port in @(3006, 3007)) {
     $pids = netstat -ano 2>$null |
@@ -160,7 +160,7 @@ Write-OK "Frontend build succeeded"
 Write-Step "Starting services..."
 sc.exe start DDIVault-API | Out-Null
 Write-Host "    DDIVault-API started - waiting 5s..." -ForegroundColor DarkGray
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 8
 
 sc.exe start DDIVault-App | Out-Null
 Write-Host "    DDIVault-App started - waiting 8s..." -ForegroundColor DarkGray
