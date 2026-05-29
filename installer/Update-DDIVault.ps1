@@ -108,6 +108,8 @@ Write-Step "Restoring .env.local files..."
 if ($rootEnvContent) {
     Set-Content -LiteralPath $rootEnvPath -Value $rootEnvContent -NoNewline -Encoding UTF8
     Write-OK "Restored root .env.local"
+    Copy-Item -LiteralPath $rootEnvPath -Destination $frontendEnvPath -Force
+    Write-OK "Copied .env.local to frontend"
 }
 if ($frontendEnvContent) {
     Set-Content -LiteralPath $frontendEnvPath -Value $frontendEnvContent -NoNewline -Encoding UTF8
