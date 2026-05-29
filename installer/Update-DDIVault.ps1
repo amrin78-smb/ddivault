@@ -57,12 +57,12 @@ foreach ($port in @(3006, 3007)) {
         ForEach-Object { ($_ -split '\s+')[-1] } |
         Where-Object { $_ -match '^\d+$' } |
         Select-Object -Unique
-    foreach ($pid in $pids) {
+    foreach ($procPid in $pids) {
         try {
-            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $proc = Get-Process -Id $procPid -ErrorAction SilentlyContinue
             if ($proc -and $proc.Name -eq 'node') {
-                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-                Write-Warn "Killed lingering node PID $pid on port $port"
+                Stop-Process -Id $procPid -Force -ErrorAction SilentlyContinue
+                Write-Warn "Killed lingering node PID $procPid on port $port"
             }
         } catch {}
     }
