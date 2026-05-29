@@ -135,33 +135,55 @@ foreach ($job in $jobs) {
 }
 
 /**
- * DNS reverse lookup for a single IP.
+ * Resolve hostname using DNS reverse lookup.
+ * Uses custom DNS server if configured in app_settings.
  */
-function resolveHostname(ip) {
-  const script = `
+async function resolveHostname(ip, dnsServer) {
+  let script;
+  if (dnsServer) {
+    // Use specific DNS server for PTR lookup
+    script = `
+try {
+    $ns = '${dnsServer}'
+    $result = Resolve-DnsName -Name '${ip}' -Type PTR -Server $ns -ErrorAction SilentlyContinue
+    if ($result) { Write-Output $result.NameHost } else { Write-Output '' }
+} catch { Write-Output '' }
+`;
+  } else {
+    // Use system default DNS
+    script = `
 try {
     $h = [System.Net.Dns]::GetHostEntry('${ip}')
     Write-Output $h.HostName
-} catch {
-    Write-Output ""
-}
+} catch { Write-Output '' }
 `;
+  }
   const result = runPsScript(script, 5000);
-  return result || null;
+  return (result && result.trim()) ? result.trim() : null;
 }
 
 /**
- * Get MAC from ARP table.
+ * Get MAC from ARP table using PowerShell.
+ * Pings first to populate ARP cache, then reads arp -a.
  */
 function getMacFromArp(ip) {
+  const script = `
+# Ping once to ensure ARP cache is populated
+Test-Connection -ComputerName '${ip}' -Count 1 -Quiet -ErrorAction SilentlyContinue | Out-Null
+# Read ARP table and find the entry
+$arpOutput = arp -a
+foreach ($line in $arpOutput) {
+    if ($line -match [regex]::Escape('${ip}') + '\\s+([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})') {
+        Write-Output $matches[1]
+        exit
+    }
+}
+Write-Output ''
+`;
   try {
-    const result = execSync(
-      `powershell.exe -NonInteractive -NoProfile -Command "arp -a | Select-String '${ip.replace(/\./g, '\\.')}'"`,
-      { encoding: 'utf8', timeout: 5000 }
-    ).trim();
-    if (result) {
-      const match = result.match(/([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})/i);
-      if (match) return match[1].replace(/-/g, ':').toUpperCase();
+    const result = runPsScript(script, 8000);
+    if (result && result.trim()) {
+      return result.trim().replace(/-/g, ':').toUpperCase();
     }
     return null;
   } catch (_) { return null; }
@@ -194,6 +216,18 @@ async function scanSubnet(subnet) {
   const { id: subnetId, network, prefix_length: prefix, name } = subnet;
   const label = `${network}/${prefix}${name ? ` (${name})` : ''}`;
   log(`Starting scan: ${label}`);
+
+  // Get custom DNS server from settings if configured
+  let dnsServer = null;
+  try {
+    const setting = await db.query(
+      `SELECT value FROM app_settings WHERE key = 'scan_dns_server'`
+    );
+    if (setting.rows.length && setting.rows[0].value) {
+      dnsServer = setting.rows[0].value.trim();
+      log(`Using custom DNS server for lookups: ${dnsServer}`);
+    }
+  } catch (_) {}
 
   const jobRes = await db.query(
     `INSERT INTO ipam_scan_jobs (subnet_id, status) VALUES ($1, 'running') RETURNING id`,
@@ -243,7 +277,7 @@ async function scanSubnet(subnet) {
         hostsUp++;
         hostsUnknown++;
         // Resolve hostname and MAC for unknown live hosts
-        if (!hostname)   hostname   = resolveHostname(ip);
+        if (!hostname)   hostname   = await resolveHostname(ip, dnsServer);
         if (!macAddress) macAddress = getMacFromArp(ip);
       } else {
         status = 'available';

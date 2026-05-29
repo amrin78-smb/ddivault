@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
+import IPAMImport from '@/components/IPAMImport';
 
 // ── Types ─────────────────────────────────────────────────────
 interface Supernet {
@@ -374,7 +375,7 @@ export default function IPAMTab() {
   const [expanded, setExpanded]     = useState<Set<number>>(new Set());
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
   const [view, setView]             = useState<'tree' | 'flat' | 'vlans'>('tree');
-  const [showAddSupernet, setShowAddSupernet] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showAddSubnet, setShowAddSubnet]     = useState(false);
   const [showAddVlan, setShowAddVlan]         = useState(false);
   const [subnetSupernet, setSubnetSupernet]   = useState<number | null>(null);
@@ -514,6 +515,7 @@ export default function IPAMTab() {
             </button>
           ))}
         </div>
+        <button onClick={() => setShowImport(true)} style={BTN}>⬆ Import CSV</button>
         <button onClick={() => setShowAddSupernet(true)} style={BTN}>+ Supernet</button>
         <button onClick={() => { setSubnetSupernet(null); setShowAddSubnet(true); }} style={BTN}>+ Subnet</button>
         <button onClick={scanAll} style={BTN_RED}>⟳ Scan All</button>
@@ -749,6 +751,7 @@ export default function IPAMTab() {
 
       {/* ── MODALS ── */}
 
+      {showImport && <IPAMImport onDone={() => { setShowImport(false); loadAll(); }} />}
       {showAddSupernet && (
         <Modal title="Add Supernet" onClose={() => setShowAddSupernet(false)}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

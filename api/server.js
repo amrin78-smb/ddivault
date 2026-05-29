@@ -1418,6 +1418,75 @@ app.get('/api/sites', async (req, res) => {
   }
 });
 
+// ── IPAM — CSV/Excel Import ───────────────────────────────────
+app.post('/api/ipam/import', async (req, res) => {
+  try {
+    const { rows } = req.body; // array of subnet objects from parsed CSV
+    if (!rows || !Array.isArray(rows) || !rows.length) {
+      return res.status(400).json({ error: 'No rows provided' });
+    }
+
+    let imported = 0, skipped = 0, errors = [];
+
+    for (const row of rows) {
+      const network      = (row.network      || '').trim();
+      const prefix       = parseInt(row.prefix_length || row.prefix || '24');
+      const name         = (row.name         || '').trim() || null;
+      const gateway      = (row.gateway      || '').trim() || null;
+      const vlan_id      = row.vlan_id ? parseInt(row.vlan_id) : null;
+      const site         = (row.site         || '').trim() || null;
+      const description  = (row.description  || '').trim() || null;
+      const owner        = (row.owner        || '').trim() || null;
+      const location     = (row.location     || '').trim() || null;
+      const supernetRef  = (row.supernet     || '').trim() || null;
+
+      if (!network || isNaN(prefix)) {
+        errors.push(`Row skipped — missing network or prefix: ${JSON.stringify(row)}`);
+        skipped++;
+        continue;
+      }
+
+      // Look up supernet if provided
+      let supernet_id = null;
+      if (supernetRef) {
+        const [snet, spfx] = supernetRef.split('/');
+        const snRes = await db.query(
+          `SELECT id FROM ipam_supernets WHERE network::text = $1 AND prefix_length = $2 LIMIT 1`,
+          [snet, parseInt(spfx)]
+        ).catch(() => ({ rows: [] }));
+        if (snRes.rows.length) supernet_id = snRes.rows[0].id;
+      }
+
+      const totalHosts = Math.max(0, Math.pow(2, 32 - prefix) - 2);
+
+      await db.query(
+        `INSERT INTO ipam_subnets
+           (network, prefix_length, name, description, gateway, vlan_id, site, owner,
+            supernet_id, location, is_managed, total_hosts, free_hosts)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE,$11,$11)
+         ON CONFLICT (network, prefix_length) DO UPDATE SET
+           name=COALESCE(EXCLUDED.name, ipam_subnets.name),
+           description=COALESCE(EXCLUDED.description, ipam_subnets.description),
+           gateway=COALESCE(EXCLUDED.gateway, ipam_subnets.gateway),
+           vlan_id=COALESCE(EXCLUDED.vlan_id, ipam_subnets.vlan_id),
+           site=COALESCE(EXCLUDED.site, ipam_subnets.site),
+           owner=COALESCE(EXCLUDED.owner, ipam_subnets.owner),
+           supernet_id=COALESCE(EXCLUDED.supernet_id, ipam_subnets.supernet_id),
+           location=COALESCE(EXCLUDED.location, ipam_subnets.location),
+           updated_at=NOW()`,
+        [network, prefix, name, description, gateway, vlan_id, site, owner,
+         supernet_id, location, totalHosts]
+      );
+      imported++;
+    }
+
+    res.json({ success: true, imported, skipped, errors });
+  } catch (err) {
+    console.error('[API] ipam import error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Generic error handler ─────────────────────────────────────
 app.use((err, req, res, _next) => {
   console.error('[API Error]', err.message, err.stack);

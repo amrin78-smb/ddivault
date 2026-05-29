@@ -468,57 +468,92 @@ function SettingsTab() {
 
   const save = async (key: string, value: string) => {
     await api('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
+    setSettings(prev => ({ ...prev, [key]: value }));
     toast('Saved', 'success');
   };
 
+  const Field = ({ label, settingKey, placeholder, helpText }: { label: string; settingKey: string; placeholder?: string; helpText?: string }) => (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{label}</label>
+      <input
+        defaultValue={settings[settingKey] || ''}
+        placeholder={placeholder}
+        onBlur={e => { if (e.target.value !== (settings[settingKey] || '')) save(settingKey, e.target.value); }}
+        style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
+      />
+      {helpText && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{helpText}</div>}
+    </div>
+  );
+
   return (
-    <div style={{ padding: 20 }}>
-      <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Settings</h2>
+    <div style={{ padding: 24 }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.4px', marginBottom: 4 }}>Settings</div>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Configure DDIVault preferences</div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
 
         {/* Branding */}
         <div style={CARD}>
-          <div style={{ ...TITLE, marginBottom: 12 }}>Branding</div>
-          {[
-            { key: 'app_name', label: 'App Name' },
-            { key: 'company_name', label: 'Company Name' },
-          ].map(f => (
-            <div key={f.key} style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{f.label}</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  defaultValue={settings[f.key] || ''}
-                  onBlur={e => save(f.key, e.target.value)}
-                  style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
-                />
-              </div>
-            </div>
-          ))}
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>Branding</div>
+          <Field label="App Name" settingKey="app_name" placeholder="DDIVault" />
+          <Field label="Company Name" settingKey="company_name" placeholder="Your Company" />
         </div>
 
-        {/* Data retention */}
+        {/* IPAM Scan Settings */}
         <div style={CARD}>
-          <div style={{ ...TITLE, marginBottom: 12 }}>Data Retention</div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Retention (days)</label>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>IPAM Scan Settings</div>
+          <Field
+            label="DNS Server for Scans"
+            settingKey="scan_dns_server"
+            placeholder="e.g. 192.168.6.10 (leave blank for system default)"
+            helpText="Used for PTR/reverse DNS lookups during IPAM subnet scans. If blank, the system's default DNS is used."
+          />
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Scope Warning Threshold (%)</label>
             <input
-              defaultValue={settings.retention_days || '90'}
-              onBlur={e => save('retention_days', e.target.value)}
-              style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
+              defaultValue={settings.scope_warning_pct || '80'}
+              type="number" min="1" max="99"
+              onBlur={e => save('scope_warning_pct', e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
+            />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Scope Critical Threshold (%)</label>
+            <input
+              defaultValue={settings.scope_critical_pct || '90'}
+              type="number" min="1" max="100"
+              onBlur={e => save('scope_critical_pct', e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
             />
           </div>
         </div>
 
+        {/* Data Retention */}
+        <div style={CARD}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>Data Retention</div>
+          <Field
+            label="Retention Period (days)"
+            settingKey="retention_days"
+            placeholder="90"
+            helpText="DHCP events and scan history older than this will be cleaned up automatically."
+          />
+        </div>
+
         {/* About */}
         <div style={CARD}>
-          <div style={{ ...TITLE, marginBottom: 12 }}>About</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-            <div><strong>DDIVault</strong> v1.0.0</div>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>About</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 2 }}>
+            <div><strong>DDIVault</strong> <span style={{ color: 'var(--text-muted)' }}>v1.0.0</span></div>
             <div style={{ color: 'var(--text-muted)' }}>Part of the NocVault network intelligence suite</div>
-            <div style={{ marginTop: 8 }}>API Port: 3007 · App Port: 3006</div>
-            <div style={{ marginTop: 4 }}>
-              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000'}/launcher`} style={{ color: '#C8102E', textDecoration: 'none' }}>← NocVault Hub</a>
+            <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
+              <span style={{ fontSize: 12, background: 'var(--bg-primary)', padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>API :3007</span>
+              <span style={{ fontSize: 12, background: 'var(--bg-primary)', padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>App :3006</span>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000'}/launcher`}
+                style={{ color: '#C8102E', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>
+                ← NocVault Hub
+              </a>
             </div>
           </div>
         </div>
