@@ -1491,6 +1491,282 @@ app.post('/api/ipam/import', async (req, res) => {
   }
 });
 
+
+// ── Global Search ─────────────────────────────────────────────
+app.get('/api/search', async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q || q.length < 2) return res.json({ data: [] });
+
+    const results = [];
+
+    // Search IPAM addresses (IP, hostname, MAC)
+    const ipam = await db.query(
+      `SELECT
+         a.ip_address::text, a.hostname, a.mac_address, a.status,
+         s.network::text as subnet, s.prefix_length, s.name as subnet_name,
+         sn.name as supernet_name
+       FROM ipam_addresses a
+       JOIN ipam_subnets s ON s.id = a.subnet_id
+       LEFT JOIN ipam_supernets sn ON sn.id = s.supernet_id
+       WHERE
+         a.ip_address::text ILIKE $1 OR
+         a.hostname ILIKE $1 OR
+         a.mac_address ILIKE $1
+       LIMIT 20`,
+      [`%${q}%`]
+    );
+    for (const r of ipam.rows) {
+      results.push({
+        type: 'ip',
+        title: r.ip_address,
+        subtitle: [r.hostname, r.mac_address, r.subnet + '/' + r.prefix_length].filter(Boolean).join(' · '),
+        status: r.status,
+        meta: { subnet: r.subnet, prefix: r.prefix_length, subnet_name: r.subnet_name },
+      });
+    }
+
+    // Search subnets (network, name, description, site)
+    const subnets = await db.query(
+      `SELECT network::text, prefix_length, name, description, site, gateway::text
+       FROM ipam_subnets
+       WHERE
+         network::text ILIKE $1 OR
+         name ILIKE $1 OR
+         site ILIKE $1 OR
+         description ILIKE $1
+       LIMIT 10`,
+      [`%${q}%`]
+    );
+    for (const r of subnets.rows) {
+      results.push({
+        type: 'subnet',
+        title: r.network + '/' + r.prefix_length,
+        subtitle: [r.name, r.site, r.description].filter(Boolean).join(' · '),
+        status: null,
+        meta: { network: r.network, prefix: r.prefix_length },
+      });
+    }
+
+    // Search supernets
+    const supernets = await db.query(
+      `SELECT network::text, prefix_length, name, site
+       FROM ipam_supernets
+       WHERE network::text ILIKE $1 OR name ILIKE $1 OR site ILIKE $1
+       LIMIT 5`,
+      [`%${q}%`]
+    );
+    for (const r of supernets.rows) {
+      results.push({
+        type: 'supernet',
+        title: r.network + '/' + r.prefix_length,
+        subtitle: [r.name, r.site].filter(Boolean).join(' · '),
+        status: null,
+        meta: {},
+      });
+    }
+
+    // Search DHCP scopes
+    const scopes = await db.query(
+      `SELECT scope_id, name, start_range::text, end_range::text,
+              percent_used, server_hostname
+       FROM dhcp_scopes
+       WHERE scope_id ILIKE $1 OR name ILIKE $1
+       LIMIT 5`,
+      [`%${q}%`]
+    );
+    for (const r of scopes.rows) {
+      results.push({
+        type: 'scope',
+        title: r.scope_id,
+        subtitle: [r.name, r.server_hostname, r.start_range + ' - ' + r.end_range].filter(Boolean).join(' · '),
+        status: null,
+        meta: { percent_used: r.percent_used },
+      });
+    }
+
+    // Search DHCP leases
+    const leases = await db.query(
+      `SELECT ip_address::text, hostname, mac_address, address_state, scope_id
+       FROM dhcp_leases
+       WHERE
+         ip_address::text ILIKE $1 OR
+         hostname ILIKE $1 OR
+         mac_address ILIKE $1
+       LIMIT 10`,
+      [`%${q}%`]
+    );
+    for (const r of leases.rows) {
+      results.push({
+        type: 'lease',
+        title: r.ip_address,
+        subtitle: [r.hostname, r.mac_address, 'Scope: ' + r.scope_id].filter(Boolean).join(' · '),
+        status: r.address_state,
+        meta: {},
+      });
+    }
+
+    // Search DNS records
+    const dns = await db.query(
+      `SELECT r.hostname, r.record_type, r.record_data, z.zone_name
+       FROM dns_records r
+       JOIN dns_zones z ON z.id = r.zone_id
+       WHERE r.hostname ILIKE $1 OR r.record_data ILIKE $1
+       LIMIT 10`,
+      [`%${q}%`]
+    );
+    for (const r of dns.rows) {
+      results.push({
+        type: 'dns',
+        title: r.hostname + '.' + r.zone_name,
+        subtitle: r.record_type + ' → ' + r.record_data,
+        status: null,
+        meta: {},
+      });
+    }
+
+    res.json({ data: results, query: q, total: results.length });
+  } catch (err) {
+    console.error('[API] search error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Next available IP in a subnet ─────────────────────────────
+app.get('/api/ipam/subnets/:id/next-ip', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const subnetRes = await db.query(
+      'SELECT id, network::text, prefix_length FROM ipam_subnets WHERE id=$1', [id]
+    );
+    if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
+    const { network, prefix_length } = subnetRes.rows[0];
+
+    // Get all used/reserved IPs in this subnet
+    const usedRes = await db.query(
+      `SELECT ip_address::text FROM ipam_addresses
+       WHERE subnet_id=$1 AND status != 'available'
+       ORDER BY ip_address`,
+      [id]
+    );
+    const usedSet = new Set(usedRes.rows.map(r => r.ip_address));
+
+    // Generate host IPs and find first available
+    const parts  = network.split('.').map(Number);
+    const hostCount = Math.pow(2, 32 - parseInt(prefix_length)) - 2;
+    let base = (parts[0]<<24)|(parts[1]<<16)|(parts[2]<<8)|parts[3];
+    base = base & (~0 << (32 - parseInt(prefix_length)));
+
+    let nextIp = null;
+    for (let i = 2; i <= hostCount; i++) { // start from .2 (skip gateway .1)
+      const ip = base + i;
+      const ipStr = `${(ip>>>24)&255}.${(ip>>>16)&255}.${(ip>>>8)&255}.${ip&255}`;
+      if (!usedSet.has(ipStr)) { nextIp = ipStr; break; }
+    }
+
+    if (!nextIp) return res.json({ available: false, message: 'Subnet is full' });
+    res.json({ available: true, ip: nextIp, subnet: network + '/' + prefix_length });
+  } catch (err) {
+    console.error('[API] next-ip error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Next available subnet in a supernet ───────────────────────
+app.get('/api/ipam/supernets/:id/next-subnet', async (req, res) => {
+  try {
+    const id     = parseInt(req.params.id);
+    const prefix = parseInt(req.query.prefix || '24');
+
+    const snRes = await db.query(
+      'SELECT id, network::text, prefix_length, site FROM ipam_supernets WHERE id=$1', [id]
+    );
+    if (!snRes.rows.length) return res.status(404).json({ error: 'Supernet not found' });
+    const supernet = snRes.rows[0];
+
+    // Get all existing subnets within this supernet
+    const existingRes = await db.query(
+      `SELECT network::text, prefix_length FROM ipam_subnets
+       WHERE network << ($1 || '/' || $2)::inet
+       ORDER BY network`,
+      [supernet.network, supernet.prefix_length]
+    );
+
+    // Get all OTHER supernets assigned to different sites (must not overlap)
+    const otherSupernetsRes = await db.query(
+      `SELECT network::text, prefix_length, site FROM ipam_supernets
+       WHERE id != $1 AND site IS NOT NULL AND site != $2`,
+      [id, supernet.site || '']
+    );
+
+    const existingSet = new Set(
+      existingRes.rows.map(r => r.network + '/' + r.prefix_length)
+    );
+
+    // Generate candidate subnets
+    const snParts   = supernet.network.split('.').map(Number);
+    const snBase    = (snParts[0]<<24)|(snParts[1]<<16)|(snParts[2]<<8)|snParts[3];
+    const snMask    = ~0 << (32 - supernet.prefix_length);
+    const snEnd     = (snBase & snMask) + (Math.pow(2, 32 - supernet.prefix_length)) - 1;
+    const blockSize = Math.pow(2, 32 - prefix);
+
+    let nextSubnet = null;
+    for (let addr = (snBase & snMask); addr + blockSize - 1 <= snEnd; addr += blockSize) {
+      const candidate = `${(addr>>>24)&255}.${(addr>>>16)&255}.${(addr>>>8)&255}.${addr&255}/${prefix}`;
+      const candidateNet = candidate.split('/')[0];
+
+      // Skip if already used
+      if (existingSet.has(candidate)) continue;
+
+      // Skip if overlaps with another site's supernet
+      let blocked = false;
+      for (const other of otherSupernetsRes.rows) {
+        const otherParts = other.network.split('.').map(Number);
+        const otherBase  = (otherParts[0]<<24)|(otherParts[1]<<16)|(otherParts[2]<<8)|otherParts[3];
+        const otherMask  = ~0 << (32 - other.prefix_length);
+        const otherEnd   = (otherBase & otherMask) + Math.pow(2, 32 - other.prefix_length) - 1;
+        if (addr >= (otherBase & otherMask) && addr <= otherEnd) {
+          blocked = true; break;
+        }
+      }
+      if (blocked) continue;
+
+      nextSubnet = candidate;
+      break;
+    }
+
+    if (!nextSubnet) return res.json({ available: false, message: 'No available subnet blocks' });
+    res.json({
+      available: true,
+      subnet: nextSubnet,
+      prefix,
+      supernet: supernet.network + '/' + supernet.prefix_length,
+      site: supernet.site,
+    });
+  } catch (err) {
+    console.error('[API] next-subnet error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Conflict detection ────────────────────────────────────────
+app.get('/api/ipam/conflicts', async (req, res) => {
+  try {
+    const conflicts = await db.query(
+      `SELECT
+         a.id as id_a, a.network::text as network_a, a.prefix_length as prefix_a, a.name as name_a, a.site as site_a,
+         b.id as id_b, b.network::text as network_b, b.prefix_length as prefix_b, b.name as name_b, b.site as site_b
+       FROM ipam_subnets a
+       JOIN ipam_subnets b ON a.id < b.id
+       WHERE a.network::inet && b.network::inet`
+    );
+    res.json({ data: conflicts.rows, count: conflicts.rows.length });
+  } catch (err) {
+    console.error('[API] conflicts error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Generic error handler ─────────────────────────────────────
 app.use((err, req, res, _next) => {
   console.error('[API Error]', err.message, err.stack);

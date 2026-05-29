@@ -1,14 +1,17 @@
 'use client';
 import Image from 'next/image';
+import GlobalSearch from './GlobalSearch';
 import { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
 
 interface HeaderProps {
+  onNavigate?: (tab: string) => void;
   collectorOnline: boolean;
 }
 
-export function Header({ collectorOnline }: HeaderProps) {
+export function Header(props: HeaderProps) {
+  const { collectorOnline, onNavigate } = props;
   const { theme, toggle } = useTheme();
   const { data: session } = useSession();
   const [dropdownOpen, setDropdownOpen] = useState(false);

@@ -614,7 +614,7 @@ export default function DDIVaultApp() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <Header collectorOnline={collectorOnline} />
+      <Header collectorOnline={collectorOnline} onNavigate={setTab} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 

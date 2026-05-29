@@ -376,6 +376,9 @@ export default function IPAMTab() {
   const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
   const [view, setView]             = useState<'tree' | 'flat' | 'vlans'>('tree');
   const [showImport, setShowImport]           = useState(false);
+  const [nextIpResult, setNextIpResult]       = useState<Record<number,string>>({});
+  const [nextSubnetResult, setNextSubnetResult] = useState<Record<number,string>>({});
+  const [conflicts, setConflicts]             = useState<any[]>([]);
   const [showAddSupernet, setShowAddSupernet] = useState(false);
   const [showAddSubnet, setShowAddSubnet]     = useState(false);
   const [showAddVlan, setShowAddVlan]         = useState(false);
@@ -400,6 +403,11 @@ export default function IPAMTab() {
     return () => clearInterval(t);
   }, []);
 
+  const checkConflicts = async () => {
+    const d = await api('/ipam/conflicts').catch(() => null);
+    if (d) setConflicts(d.data || []);
+  };
+
   const loadAll = async () => {
     const [sn, sub, vl, si] = await Promise.allSettled([
       api('/ipam/supernets'),
@@ -411,6 +419,7 @@ export default function IPAMTab() {
     if (sub.status === 'fulfilled') setSubnets(sub.value.data   || []);
     if (vl.status  === 'fulfilled') setVlans(vl.value.data      || []);
     if (si.status  === 'fulfilled') setSites(si.value.data      || []);
+    checkConflicts();
   };
 
   useEffect(() => { loadAll(); }, []);
