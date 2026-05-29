@@ -6,7 +6,7 @@ import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
 
 interface HeaderProps {
-  onNavigate?: (tab: string) => void;
+  onNavigate?: (tab: any) => void;
   collectorOnline: boolean;
 }
 

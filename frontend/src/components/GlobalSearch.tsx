@@ -22,7 +22,7 @@ const TYPE_LABEL: Record<string, string> = {
   scope: 'DHCP Scope', lease: 'DHCP Lease', dns: 'DNS Record',
 };
 
-export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) => void }) {
   const [query, setQuery]     = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen]       = useState(false);
