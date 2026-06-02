@@ -3,6 +3,7 @@ import './globals.css';
 import { AuthProvider } from '@/components/AuthProvider';
 import { ThemeProvider } from '@/components/ThemeContext';
 import { ToastProvider } from '@/components/Toast';
+import { IdleTimeout } from '@/components/IdleTimeout';
 
 export const metadata: Metadata = {
   title: 'DDIVault — DNS · DHCP · IPAM',
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body>
         <AuthProvider>
+          <IdleTimeout />
           <ThemeProvider>
             <ToastProvider>
               {children}
