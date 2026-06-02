@@ -334,3 +334,42 @@ All products share:
 - Repo: `https://github.com/amrin78-smb/ddivault`
 - Branch: `main`
 - Always work from Codespaces, never edit on server directly
+
+## Schema Maintenance Rule
+
+### ⚠️ CRITICAL — Always keep schema.sql in sync with live DB
+
+Any time you make a database change (new table, new column, new index), you MUST update the appropriate schema file in the same commit. Fresh installs use these files — if they're out of sync, new installs will be missing columns and will fail.
+
+### Rules
+1. **New table** → add to `scripts/schema.sql`
+2. **New column on existing table** → add `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` to the most relevant migration file, OR to `schema.sql` if it's a core column
+3. **New index** → add `CREATE INDEX IF NOT EXISTS` to the relevant schema file
+4. **Never run `ALTER TABLE` directly on the server** — always add it to a schema file first, commit, then deploy via update script
+
+### Pattern to follow
+```sql
+-- Always use IF NOT EXISTS so schema files are idempotent (safe to re-run)
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS new_column TEXT;
+CREATE INDEX IF NOT EXISTS idx_name ON table_name(column_name);
+```
+
+### Verify schema is in sync
+```powershell
+# On server — check a table's actual columns
+$env:PGPASSWORD = "NVAdmin@2026"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U ddivault_user -h localhost -p 5432 -d ddivault -c "\d table_name"
+```
+
+```bash
+# In Codespaces — check what's in schema files
+grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-server-auth.sql scripts/schema-sites.sql
+```
+
+### Current schema file responsibilities
+| File | Contains |
+|---|---|
+| `scripts/schema.sql` | Core tables, triggers, functions, seed data |
+| `scripts/schema-ipam.sql` | IPAM Phase A+B tables + columns added to existing tables |
+| `scripts/schema-server-auth.sql` | Per-server auth columns on `ddi_servers` |
+| `scripts/schema-sites.sql` | `site_id` columns on `ddi_servers`, `ipam_supernets`, `ipam_subnets` |
