@@ -2,7 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
+import {
+  PageHeader, EmptyState, CardSkeleton, Spinner, useRefreshKey, useEscape,
+} from '@/components/ui';
 
+// ════════════════════════════════════════════════════════════
+// Types
+// ════════════════════════════════════════════════════════════
 interface Server {
   id: number;
   hostname: string;
@@ -24,41 +30,62 @@ interface Server {
   site_name: string | null;
 }
 
-const CARD: React.CSSProperties = {
-  background: 'var(--bg-card)', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)',
-};
-const BTN: React.CSSProperties = {
-  padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 6,
-  background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12,
-};
-const BTN_RED: React.CSSProperties = { ...BTN, background: '#C8102E', color: '#fff', border: 'none' };
-const INPUT: React.CSSProperties = {
-  width: '100%', padding: '6px 10px', border: '1px solid var(--border)',
-  borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13,
-};
-const LABEL: React.CSSProperties = { fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 };
+interface Site { id: number; name: string; code: string; city: string }
 
+interface TestResult { ok: boolean; latency_ms: number | null; error: string | null; auth_mode?: string }
+
+// ════════════════════════════════════════════════════════════
+// API helper
+// ════════════════════════════════════════════════════════════
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
   return res.json();
 }
 
-const AUTH_MODE_INFO: Record<string, { label: string; desc: string; color: string }> = {
-  kerberos:   { label: 'Kerberos (Domain SSO)',    desc: 'Uses the Windows identity of the DDIVault service. No credentials stored. Requires DDIVault server and target to be in the same AD domain.', color: '#16a34a' },
-  credential: { label: 'Stored Credentials',       desc: 'Username and password stored encrypted in the database. Required for workgroup servers, cross-domain, or when Kerberos is not available.', color: '#2563eb' },
-  local:      { label: 'Local (Same Machine)',      desc: 'Runs PowerShell directly on this server. Use only if the DHCP/DNS server IS the same machine as this NocVault server.', color: '#7c3aed' },
+// ════════════════════════════════════════════════════════════
+// Shared style tokens
+// ════════════════════════════════════════════════════════════
+const INPUT: React.CSSProperties = {
+  width: '100%', padding: '8px 11px', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
+  color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const LABEL: React.CSSProperties = {
+  fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
+};
+const SECTION_HEADER: React.CSSProperties = {
+  fontSize: 11, fontWeight: 700, color: 'var(--text-muted)',
+  textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10,
 };
 
-// ── Server Form Modal ─────────────────────────────────────────
+const AUTH_MODE_INFO: Record<string, { label: string; desc: string; color: string }> = {
+  kerberos:   { label: 'Kerberos (Domain SSO)',   desc: 'Uses the Windows identity of the DDIVault service. No credentials stored. Requires DDIVault server and target to be in the same AD domain.', color: 'var(--green)' },
+  credential: { label: 'Stored Credentials',      desc: 'Username and password stored encrypted in the database. Required for workgroup servers, cross-domain, or when Kerberos is not available.', color: 'var(--blue)' },
+  local:      { label: 'Local (Same Machine)',    desc: 'Runs PowerShell directly on this server. Use only if the DHCP/DNS server IS the same machine as this NocVault server.', color: 'var(--purple)' },
+};
+
+function authColor(mode: string): string {
+  return AUTH_MODE_INFO[mode]?.color || 'var(--text-muted)';
+}
+
+function dotColor(ok: boolean | null): string {
+  return ok === true ? 'var(--green)' : ok === false ? 'var(--red)' : '#94a3b8';
+}
+
+// ════════════════════════════════════════════════════════════
+// Server Form Modal — MODULE SCOPE (never nested)
+// ════════════════════════════════════════════════════════════
 function ServerModal({ server, sites, onClose, onDone }: {
   server?: Server | null;
-  sites: {id:number;name:string;code:string;city:string}[];
+  sites: Site[];
   onClose: () => void;
   onDone: () => void;
 }) {
   const isEdit = !!server;
+  const { toast } = useToast();
+  useEscape(onClose);
+
   const [form, setForm] = useState({
     hostname:    server?.hostname    || '',
     ip_address:  server?.ip_address  || '',
@@ -74,7 +101,6 @@ function ServerModal({ server, sites, onClose, onDone }: {
   });
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
-  const { toast } = useToast();
 
   const save = async () => {
     if (!form.hostname && !form.ip_address) { toast('Hostname or IP required', 'error'); return; }
@@ -99,21 +125,30 @@ function ServerModal({ server, sites, onClose, onDone }: {
     finally { setLoading(false); }
   };
 
-  const modeInfo = AUTH_MODE_INFO[form.auth_mode];
-
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ ...CARD, padding: 24, width: 560, maxHeight: '90vh', overflow: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>{isEdit ? 'Edit Server' : 'Add Server to Monitor'}</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>×</button>
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)',
+          padding: 24, width: 580, maxWidth: '94vw', maxHeight: '92vh', overflow: 'auto',
+        }}
+      >
+        {/* Modal header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>
+            {isEdit ? 'Edit Server' : 'Add Server to Monitor'}
+          </div>
+          <button onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-muted)' }}>
+            ×
+          </button>
         </div>
 
-        {/* Basic info */}
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-          Server Details
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+        {/* Server details */}
+        <div style={SECTION_HEADER}>Server Details</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
           <div>
             <label style={LABEL}>Hostname or FQDN</label>
             <input value={form.hostname} onChange={e => setForm(p => ({ ...p, hostname: e.target.value }))}
@@ -143,7 +178,7 @@ function ServerModal({ server, sites, onClose, onDone }: {
               ))}
             </select>
           </div>
-          <div>
+          <div style={{ gridColumn: '1 / -1' }}>
             <label style={LABEL}>Description</label>
             <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
               style={INPUT} placeholder="Primary AD / DHCP server" />
@@ -151,38 +186,45 @@ function ServerModal({ server, sites, onClose, onDone }: {
         </div>
 
         {/* Auth section */}
-        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-          PowerShell / WinRM Authentication
-        </div>
-
-        {/* Auth mode selector — card style */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-          {Object.entries(AUTH_MODE_INFO).map(([mode, info]) => (
-            <div key={mode}
-              onClick={() => setForm(p => ({ ...p, auth_mode: mode }))}
-              style={{
-                padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                border: `2px solid ${form.auth_mode === mode ? info.color : 'var(--border)'}`,
-                background: form.auth_mode === mode ? info.color + '11' : 'var(--bg-primary)',
-                transition: 'all 0.15s',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                <div style={{ width: 14, height: 14, borderRadius: '50%', border: `2px solid ${info.color}`,
-                  background: form.auth_mode === mode ? info.color : 'transparent', flexShrink: 0 }} />
-                <div style={{ fontWeight: 600, fontSize: 13, color: form.auth_mode === mode ? info.color : 'var(--text-primary)' }}>
-                  {info.label}
+        <div style={SECTION_HEADER}>PowerShell / WinRM Authentication</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+          {Object.entries(AUTH_MODE_INFO).map(([mode, info]) => {
+            const selected = form.auth_mode === mode;
+            return (
+              <div key={mode}
+                onClick={() => setForm(p => ({ ...p, auth_mode: mode }))}
+                style={{
+                  padding: '11px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                  border: `2px solid ${selected ? info.color : 'var(--border)'}`,
+                  background: selected ? `color-mix(in srgb, ${info.color} 8%, var(--bg-card))` : 'var(--bg-primary)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
+                  <div style={{
+                    width: 15, height: 15, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${info.color}`,
+                    background: selected ? info.color : 'transparent',
+                    boxShadow: selected ? `inset 0 0 0 2px var(--bg-card)` : 'none',
+                  }} />
+                  <div style={{ fontWeight: 600, fontSize: 13, color: selected ? info.color : 'var(--text-primary)' }}>
+                    {info.label}
+                  </div>
                 </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', paddingLeft: 24, lineHeight: 1.5 }}>{info.desc}</div>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', paddingLeft: 22 }}>{info.desc}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* Credential fields — only for credential mode */}
+        {/* Credential fields */}
         {form.auth_mode === 'credential' && (
-          <div style={{ ...CARD, padding: 14, marginBottom: 14, background: '#eff6ff', border: '1px solid #bfdbfe' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#1d4ed8', marginBottom: 10 }}>Stored Credentials</div>
+          <div style={{
+            padding: 14, marginBottom: 16, borderRadius: 'var(--radius-sm)',
+            background: 'color-mix(in srgb, var(--blue) 7%, var(--bg-card))',
+            border: '1px solid color-mix(in srgb, var(--blue) 30%, var(--bg-card))',
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--blue)', marginBottom: 10 }}>Stored Credentials</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={LABEL}>Username</label>
@@ -196,24 +238,24 @@ function ServerModal({ server, sites, onClose, onDone }: {
                     type={showPass ? 'text' : 'password'}
                     value={form.ps_password}
                     onChange={e => setForm(p => ({ ...p, ps_password: e.target.value }))}
-                    style={{ ...INPUT, paddingRight: 60 }}
+                    style={{ ...INPUT, paddingRight: 56 }}
                     placeholder={isEdit ? '••••••••' : 'Enter password'}
                   />
-                  <button onClick={() => setShowPass(p => !p)}
-                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)' }}>
+                  <button type="button" onClick={() => setShowPass(p => !p)}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--blue)' }}>
                     {showPass ? 'Hide' : 'Show'}
                   </button>
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: 11, color: '#2563eb', marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: 'var(--blue)', marginTop: 8 }}>
               🔒 Password is encrypted with AES-256-GCM before storage. Never stored in plaintext.
             </div>
           </div>
         )}
 
         {/* WinRM settings */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 18, alignItems: 'end' }}>
           <div>
             <label style={LABEL}>WinRM Port</label>
             <select value={form.winrm_port} onChange={e => setForm(p => ({ ...p, winrm_port: e.target.value }))} style={INPUT}>
@@ -221,8 +263,8 @@ function ServerModal({ server, sites, onClose, onDone }: {
               <option value="5986">5986 — HTTPS</option>
             </select>
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', paddingBottom: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
               <input type="checkbox" checked={form.winrm_https} onChange={e => setForm(p => ({ ...p, winrm_https: e.target.checked }))} />
               Use HTTPS / SSL
             </label>
@@ -234,11 +276,11 @@ function ServerModal({ server, sites, onClose, onDone }: {
         </div>
 
         {/* WinRM setup guide */}
-        <details style={{ marginBottom: 16 }}>
-          <summary style={{ fontSize: 12, color: '#2563eb', cursor: 'pointer', fontWeight: 500 }}>
+        <details style={{ marginBottom: 18 }}>
+          <summary style={{ fontSize: 12, color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }}>
             ▶ WinRM setup commands (run on the target server as Administrator)
           </summary>
-          <pre style={{ fontSize: 11, background: '#1e293b', color: '#e2e8f0', padding: 12, borderRadius: 6, marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
+          <pre style={{ fontSize: 11, background: 'var(--navy)', color: '#e2e8f0', padding: 12, borderRadius: 'var(--radius-sm)', marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
 {`# On the DHCP/DNS server:
 Enable-PSRemoting -Force
 Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value "<NOCVAULT-SERVER-IP>" -Force
@@ -250,10 +292,11 @@ Invoke-Command -ComputerName ${form.ip_address || '<SERVER-IP>'} -ScriptBlock { 
           </pre>
         </details>
 
+        {/* Footer */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={BTN}>Cancel</button>
-          <button onClick={save} disabled={loading} style={{ ...BTN_RED, opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Server'}
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={loading} style={{ opacity: loading ? 0.7 : 1 }}>
+            {loading ? <><Spinner size={13} color="#fff" /> Saving…</> : isEdit ? 'Save Changes' : 'Add Server'}
           </button>
         </div>
       </div>
@@ -262,47 +305,171 @@ Invoke-Command -ComputerName ${form.ip_address || '<SERVER-IP>'} -ScriptBlock { 
 }
 
 // ════════════════════════════════════════════════════════════
-// MAIN KNOWN SERVERS TAB
+// Server Card — MODULE SCOPE (never nested)
+// ════════════════════════════════════════════════════════════
+function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
+  s: Server;
+  testing: boolean;
+  testResult?: TestResult;
+  onTest: (s: Server) => void;
+  onEdit: (s: Server) => void;
+  onDelete: (id: number) => void;
+}) {
+  const aColor = authColor(s.auth_mode);
+  const ok = s.winrm_test_ok;
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)',
+      padding: 18, display: 'flex', flexDirection: 'column', gap: 12,
+    }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{
+          width: 11, height: 11, borderRadius: '50%', flexShrink: 0,
+          background: dotColor(ok),
+          boxShadow: ok === true ? `0 0 7px ${dotColor(ok)}` : 'none',
+        }} title={ok === true ? 'WinRM OK' : ok === false ? 'WinRM failed' : 'Not tested'} />
+        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{s.hostname || s.ip_address}</div>
+        <code className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-primary)', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)' }}>
+          {s.ip_address}
+        </code>
+        <span className={`badge ${s.role === 'both' ? 'badge-blue' : 'badge-gray'}`}>{s.role}</span>
+        <span className={`badge ${s.is_active ? 'badge-green' : 'badge-gray'}`}>{s.is_active ? 'Active' : 'Disabled'}</span>
+        {s.site_name && <span className="badge badge-purple">📍 {s.site_name}</span>}
+      </div>
+
+      {/* Info grid */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Auth mode</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: aColor, display: 'inline-block' }} />
+            <span style={{ color: aColor, fontWeight: 600 }}>{AUTH_MODE_INFO[s.auth_mode]?.label || s.auth_mode}</span>
+          </span>
+        </div>
+        {s.auth_mode === 'credential' && s.ps_username && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Username</span>
+            <span style={{ color: 'var(--text-secondary)' }}>👤 {s.ps_username}</span>
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>WinRM</span>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Port {s.winrm_port || 5985} · {s.winrm_https ? 'HTTPS' : 'HTTP'}
+          </span>
+        </div>
+        {s.description && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+            <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Description</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{s.description}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Poll error */}
+      {s.poll_error && (
+        <div style={{
+          fontSize: 11.5, color: 'var(--red)',
+          background: 'color-mix(in srgb, var(--red) 9%, var(--bg-card))',
+          border: '1px solid color-mix(in srgb, var(--red) 25%, var(--bg-card))',
+          padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+        }}>
+          ⚠ {s.poll_error}
+        </div>
+      )}
+
+      {/* Test result (inline) */}
+      {testResult && (
+        <div style={{
+          fontSize: 11.5, padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+          background: testResult.ok
+            ? 'color-mix(in srgb, var(--green) 12%, var(--bg-card))'
+            : 'color-mix(in srgb, var(--red) 10%, var(--bg-card))',
+          color: testResult.ok ? 'var(--green)' : 'var(--red)',
+          fontWeight: 600,
+        }}>
+          {testResult.ok
+            ? `✓ WinRM connected successfully${testResult.latency_ms != null ? ` (${testResult.latency_ms}ms)` : ''}`
+            : `✗ Connection failed: ${testResult.error}`}
+        </div>
+      )}
+
+      {/* Timestamps */}
+      <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+        {s.last_polled ? `Last polled: ${new Date(s.last_polled).toLocaleString()}` : 'Never polled'}
+        {s.winrm_tested_at ? ` · Last tested: ${new Date(s.winrm_tested_at).toLocaleString()}` : ''}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 4, borderTop: '1px solid var(--border-light)' }}>
+        <button
+          className="btn btn-navy"
+          onClick={() => onTest(s)}
+          disabled={testing}
+          style={{ fontSize: 12.5, opacity: testing ? 0.8 : 1 }}
+        >
+          {testing ? <><Spinner size={13} color="#fff" /> Testing…</> : <>⚡ Test Connection</>}
+        </button>
+        <button className="btn" onClick={() => onEdit(s)} style={{ fontSize: 12.5 }}>Edit</button>
+        <button
+          className="btn"
+          onClick={() => onDelete(s.id)}
+          style={{ fontSize: 12.5, color: 'var(--red)', marginLeft: 'auto' }}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MAIN — Known Servers Tab
 // ════════════════════════════════════════════════════════════
 export default function ServersTab() {
-  const [servers, setServers]     = useState<Server[]>([]);
-  const [sites, setSites]         = useState<{id:number;name:string;code:string;city:string}[]>([]);
+  const [servers, setServers] = useState<Server[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editServer, setEditServer] = useState<Server | null>(null);
-  const [showAdd, setShowAdd]     = useState(false);
-  const [testing, setTesting]     = useState<Record<number, boolean>>({});
-  const [testResults, setTestResults] = useState<Record<number, { ok: boolean; latency_ms: number | null; error: string | null }>>({});
+  const [showAdd, setShowAdd] = useState(false);
+  const [testing, setTesting] = useState<Record<number, boolean>>({});
+  const [testResults, setTestResults] = useState<Record<number, TestResult>>({});
   const { toast } = useToast();
 
   const load = useCallback(async () => {
-    const [d, s] = await Promise.allSettled([
-      api('/servers'),
-      api('/sites'),
-    ]);
+    const [d, s] = await Promise.allSettled([api('/servers'), api('/sites')]);
     if (d.status === 'fulfilled') setServers(d.value.data || []);
     if (s.status === 'fulfilled') setSites(s.value.data || []);
+    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useRefreshKey(load);
 
   const del = async (id: number) => {
     if (!confirm('Remove this server? DHCP/DNS data collected from it will be preserved.')) return;
-    await api(`/servers/${id}`, { method: 'DELETE' });
-    toast('Server removed', 'info');
-    load();
+    try {
+      await api(`/servers/${id}`, { method: 'DELETE' });
+      toast('Server removed', 'info');
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
   };
 
   const testConnection = async (server: Server) => {
     setTesting(p => ({ ...p, [server.id]: true }));
-    toast(`Testing connection to ${server.hostname || server.ip_address}...`, 'info');
+    toast(`Testing connection to ${server.hostname || server.ip_address}…`, 'info');
     try {
-      const d = await api(`/servers/${server.id}/test-connection`, { method: 'POST' });
+      const d: TestResult = await api(`/servers/${server.id}/test-connection`, { method: 'POST' });
       setTestResults(p => ({ ...p, [server.id]: d }));
       if (d.ok) {
-        toast(`✓ Connected to ${server.ip_address} via ${d.auth_mode} (${d.latency_ms}ms)`, 'success');
+        toast(`✓ Connected to ${server.ip_address} via ${d.auth_mode}${d.latency_ms != null ? ` (${d.latency_ms}ms)` : ''}`, 'success');
       } else {
         toast(`✗ Failed: ${d.error}`, 'error');
       }
-      load(); // refresh winrm_test_ok
+      load();
     } catch (e: any) {
       toast(e.message, 'error');
     } finally {
@@ -310,130 +477,94 @@ export default function ServersTab() {
     }
   };
 
-  const authBadgeColor = (mode: string) => {
-    const m: Record<string, string> = { kerberos: '#16a34a', credential: '#2563eb', local: '#7c3aed' };
-    return m[mode] || '#6b7280';
-  };
+  const total = servers.length;
+  const okCount = servers.filter(s => s.winrm_test_ok === true).length;
+  const failCount = servers.filter(s => s.winrm_test_ok === false).length;
+  const untestedCount = servers.filter(s => s.winrm_test_ok == null).length;
 
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <PageHeader
+        title="Known Servers"
+        subtitle="DHCP and DNS servers monitored via WinRM / PowerShell remoting"
+      >
+        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Server</button>
+      </PageHeader>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700 }}>Known Servers</h2>
-        <button onClick={() => setShowAdd(true)} style={BTN_RED}>+ Add Server</button>
+      {/* KPI tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+        <div className="kpi-card" style={{ borderLeftColor: 'var(--navy)' }}>
+          <div className="stat-value" style={{ fontSize: 28 }}>{total}</div>
+          <div className="stat-label">Total Servers</div>
+        </div>
+        <div className="kpi-card" style={{ borderLeftColor: 'var(--green)' }}>
+          <div className="stat-value" style={{ fontSize: 28, color: 'var(--green)' }}>{okCount}</div>
+          <div className="stat-label">WinRM OK</div>
+        </div>
+        <div className="kpi-card" style={{ borderLeftColor: 'var(--red)' }}>
+          <div className="stat-value" style={{ fontSize: 28, color: 'var(--red)' }}>{failCount}</div>
+          <div className="stat-label">WinRM Failed</div>
+        </div>
+        <div className="kpi-card" style={{ borderLeftColor: '#94a3b8' }}>
+          <div className="stat-value" style={{ fontSize: 28, color: 'var(--text-muted)' }}>{untestedCount}</div>
+          <div className="stat-label">Not Tested</div>
+        </div>
       </div>
 
-      {/* Auth method legend */}
-      <div style={{ ...CARD, padding: '10px 16px', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, alignSelf: 'center' }}>AUTH METHODS:</div>
+      {/* Auth legend */}
+      <div style={{
+        display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center',
+        padding: '8px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)',
+      }}>
+        <span style={{ fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Auth methods</span>
         {Object.entries(AUTH_MODE_INFO).map(([mode, info]) => (
-          <div key={mode} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: info.color }} />
+          <span key={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: info.color }} />
             <span style={{ color: info.color, fontWeight: 600 }}>{mode}</span>
             <span style={{ color: 'var(--text-muted)' }}>— {info.label}</span>
-          </div>
+          </span>
         ))}
       </div>
 
-      {/* Server cards */}
-      {servers.length === 0 ? (
-        <div style={{ ...CARD, padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-          No servers configured yet.<br />
-          <span style={{ fontSize: 12 }}>Click + Add Server to begin monitoring your DHCP/DNS infrastructure.</span>
+      {/* Body */}
+      {loading ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 16 }}>
+          <CardSkeleton count={4} height={120} />
+        </div>
+      ) : servers.length === 0 ? (
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+          <EmptyState
+            icon="🖥️"
+            title="No servers configured"
+            message="Add your first DHCP/DNS server to start monitoring."
+            actionLabel="+ Add Server"
+            onAction={() => setShowAdd(true)}
+          />
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {servers.map(s => {
-            const testResult = testResults[s.id];
-            const isTesting  = testing[s.id];
-            const color      = authBadgeColor(s.auth_mode);
-
-            return (
-              <div key={s.id} style={{ ...CARD, padding: '14px 18px', display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-                {/* Status dot */}
-                <div style={{ paddingTop: 4 }}>
-                  <div style={{
-                    width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
-                    background: s.winrm_test_ok === true ? '#16a34a' : s.winrm_test_ok === false ? '#dc2626' : '#94a3b8',
-                    boxShadow: s.winrm_test_ok === true ? '0 0 6px #16a34a' : 'none',
-                  }} title={s.winrm_test_ok === true ? 'WinRM OK' : s.winrm_test_ok === false ? 'WinRM failed' : 'Not tested'} />
-                </div>
-
-                {/* Main info */}
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{s.hostname || s.ip_address}</div>
-                    <code style={{ fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-primary)', padding: '1px 6px', borderRadius: 4 }}>
-                      {s.ip_address}
-                    </code>
-                    <span className={`badge ${s.role === 'both' ? 'badge-blue' : 'badge-gray'}`}>{s.role}</span>
-                    <span className={`badge ${s.is_active ? 'badge-green' : 'badge-gray'}`}>{s.is_active ? 'Active' : 'Disabled'}</span>
-                  </div>
-
-                  {/* Auth info row */}
-                  <div style={{ display: 'flex', gap: 12, fontSize: 11, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
-                      <span style={{ color, fontWeight: 600 }}>{AUTH_MODE_INFO[s.auth_mode]?.label || s.auth_mode}</span>
-                    </div>
-                    {s.auth_mode === 'credential' && s.ps_username && (
-                      <span style={{ color: 'var(--text-muted)' }}>👤 {s.ps_username}</span>
-                    )}
-                    <span style={{ color: 'var(--text-muted)' }}>
-                      WinRM: {s.winrm_port || 5985}{s.winrm_https ? ' (HTTPS)' : ' (HTTP)'}
-                    </span>
-                    {s.description && <span style={{ color: 'var(--text-muted)' }}>· {s.description}</span>}
-                    {s.site_name && <span style={{ color: 'var(--text-muted)' }}>· 📍 {s.site_name}</span>}
-                  </div>
-
-                  {/* Poll status */}
-                  {s.poll_error && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: '#dc2626', background: '#fee2e2', padding: '4px 8px', borderRadius: 4 }}>
-                      ⚠ {s.poll_error}
-                    </div>
-                  )}
-
-                  {/* Test result */}
-                  {testResult && (
-                    <div style={{ marginTop: 6, fontSize: 11, padding: '4px 8px', borderRadius: 4,
-                      background: testResult.ok ? '#dcfce7' : '#fee2e2',
-                      color: testResult.ok ? '#15803d' : '#b91c1c' }}>
-                      {testResult.ok
-                        ? `✓ WinRM connected successfully (${testResult.latency_ms}ms)`
-                        : `✗ Connection failed: ${testResult.error}`}
-                    </div>
-                  )}
-
-                  {/* Last polled */}
-                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)' }}>
-                    {s.last_polled ? `Last polled: ${new Date(s.last_polled).toLocaleString()}` : 'Never polled'}
-                    {s.winrm_tested_at ? ` · Last tested: ${new Date(s.winrm_tested_at).toLocaleString()}` : ''}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexDirection: 'column', alignItems: 'flex-end' }}>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button
-                      onClick={() => testConnection(s)}
-                      disabled={isTesting}
-                      style={{ ...BTN, fontSize: 11, background: isTesting ? 'var(--bg-primary)' : 'var(--bg-card)' }}
-                    >
-                      {isTesting ? '⟳ Testing...' : '⚡ Test Connection'}
-                    </button>
-                    <button onClick={() => setEditServer(s)} style={{ ...BTN, fontSize: 11 }}>Edit</button>
-                    <button onClick={() => del(s.id)} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 16 }}>
+          {servers.map(s => (
+            <ServerCard
+              key={s.id}
+              s={s}
+              testing={!!testing[s.id]}
+              testResult={testResults[s.id]}
+              onTest={testConnection}
+              onEdit={setEditServer}
+              onDelete={del}
+            />
+          ))}
         </div>
       )}
 
       {/* Modals */}
-      {showAdd    && <ServerModal sites={sites} onClose={() => setShowAdd(false)}    onDone={() => { setShowAdd(false);    load(); }} />}
-      {editServer && <ServerModal sites={sites} server={editServer} onClose={() => setEditServer(null)} onDone={() => { setEditServer(null); load(); }} />}
+      {showAdd && (
+        <ServerModal sites={sites} onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); load(); }} />
+      )}
+      {editServer && (
+        <ServerModal sites={sites} server={editServer} onClose={() => setEditServer(null)} onDone={() => { setEditServer(null); load(); }} />
+      )}
     </div>
   );
 }

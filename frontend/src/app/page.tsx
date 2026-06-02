@@ -9,10 +9,8 @@ import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
 import ServersTab from '@/components/ServersTab';
 import {
-  RadialBarChart, RadialBar, PieChart, Pie, Cell,
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  BarChart, Bar, Legend,
-} from 'recharts';
+  PageHeader, EmptyState, UtilBar, Trend, TableSkeleton, Skeleton, pctColor,
+} from '@/components/ui';
 
 // ── Types ─────────────────────────────────────────────────────
 interface Scope {
@@ -27,21 +25,9 @@ interface Scope {
   reserved: number;
   percent_used: number;
   state: string;
-  lease_duration: string;
   server_hostname: string;
+  server_ip: string;
   last_updated: string;
-}
-
-interface Lease {
-  id: number;
-  ip_address: string;
-  hostname: string;
-  mac_address: string;
-  scope_id: string;
-  address_state: string;
-  lease_start: string;
-  lease_expiry: string;
-  last_seen: string;
 }
 
 interface DhcpEvent {
@@ -65,27 +51,10 @@ interface AlertEvent {
   rule_name: string;
 }
 
-interface DnsZone {
-  id: number;
-  zone_name: string;
-  zone_type: string;
-  is_reverse: boolean;
-  record_count: number;
-  server_hostname: string;
-  last_updated: string;
-}
-
-interface Subnet {
-  id: number;
-  network: string;
-  prefix_length: number;
+interface ScopeHistory {
+  scope_id: string;
   name: string;
-  description: string;
-  gateway: string;
-  vlan_id: number;
-  site: string;
-  owner: string;
-  used_ips: number;
+  history: { percent_used: number; in_use: number; recorded_at: string }[];
 }
 
 type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'settings';
@@ -96,34 +65,9 @@ const CARD: React.CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius)',
   boxShadow: 'var(--shadow-sm)',
-  padding: '20px 24px',
 };
-
-const TITLE: React.CSSProperties = {
-  fontSize: 14,
-  fontWeight: 600,
-  color: 'var(--text-primary)',
-  marginBottom: 4,
-};
-
-const MUTED: React.CSSProperties = {
-  fontSize: 12,
-  color: 'var(--text-muted)',
-  marginBottom: 14,
-};
-
-// ── Utilization colour helper ─────────────────────────────────
-function pctColor(pct: number): string {
-  if (pct >= 90) return '#dc2626';
-  if (pct >= 80) return '#ca8a04';
-  return '#16a34a';
-}
-
-function pctBadge(pct: number): string {
-  if (pct >= 90) return 'badge-red';
-  if (pct >= 80) return 'badge-yellow';
-  return 'badge-green';
-}
+const TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
+const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
 
 // ── API helper ────────────────────────────────────────────────
 async function api(path: string, opts?: RequestInit) {
@@ -135,257 +79,250 @@ async function api(path: string, opts?: RequestInit) {
   return res.json();
 }
 
+// ── Event type badge ──────────────────────────────────────────
+const EVENT_BADGE: Record<string, string> = {
+  Assign: 'badge-green', Renew: 'badge-blue', Release: 'badge-gray',
+  ScopeFull: 'badge-red', ScopeWarning: 'badge-yellow', Conflict: 'badge-red',
+  NACK: 'badge-orange', RogueDHCP: 'badge-red', Expired: 'badge-gray',
+};
+function EventTypeBadge({ type }: { type: string }) {
+  return <span className={`badge ${EVENT_BADGE[type] || 'badge-gray'}`}>{type || '—'}</span>;
+}
+
+// ── Sparkline (inline SVG, 7-day trend) ───────────────────────
+function Sparkline({ data, color, width = 220, height = 44 }: {
+  data: { percent_used: number }[]; color: string; width?: number; height?: number;
+}) {
+  if (data.length < 2) return <div style={{ height, ...MUTED, display: 'flex', alignItems: 'center' }}>Not enough history</div>;
+  const max = Math.max(100, ...data.map(d => d.percent_used));
+  const pts = data.map((d, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - (d.percent_used / max) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const area = `0,${height} ${pts.join(' ')} ${width},${height}`;
+  const lastX = width, lastY = height - (data[data.length - 1].percent_used / max) * height;
+  const gid = `spark-${color.replace(/[^a-z0-9]/gi, '')}`;
+  return (
+    <svg width={width} height={height} style={{ display: 'block', width: '100%' }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill={`url(#${gid})`} />
+      <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={lastX} cy={lastY} r="2.5" fill={color} />
+    </svg>
+  );
+}
+
 // ════════════════════════════════════════════════════════════
-// TAB: DASHBOARD
+// TAB: DASHBOARD — operations center
 // ════════════════════════════════════════════════════════════
-function DashboardTab({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => void; onFocusScope: (scopeId: string) => void }) {
   const [stats, setStats]   = useState<any>(null);
   const [scopes, setScopes] = useState<Scope[]>([]);
-  const [scopeHistory, setScopeHistory] = useState<any[]>([]);
+  const [scopeHistory, setScopeHistory] = useState<ScopeHistory[]>([]);
   const [events, setEvents] = useState<DhcpEvent[]>([]);
-  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    const results = await Promise.allSettled([
+      api('/dashboard/stats'),
+      api('/scopes'),
+      api('/dashboard/recent-events?limit=20'),
+      api('/scopes/history/all?hours=168'),
+    ]);
+    const [s, sc, ev, hist] = results;
+    if (s.status  === 'fulfilled') setStats(s.value);
+    if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
+    if (ev.status === 'fulfilled') setEvents(ev.value.data || []);
+    if (hist.status === 'fulfilled') setScopeHistory(hist.value.data || []);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    const load = async () => {
-      const results = await Promise.allSettled([
-        api('/dashboard/stats'),
-        api('/scopes'),
-        api('/dashboard/recent-events?limit=10'),
-        api('/alerts?unacked=true&limit=5'),
-        api('/scopes/history/all?hours=168'),
-      ]);
-      const [s, sc, ev, al] = results;
-      if (s.status  === 'fulfilled') setStats(s.value);
-      if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
-      if (ev.status === 'fulfilled') setEvents(ev.value.data || []);
-      if (al.status === 'fulfilled') setAlerts(al.value.data || []);
-      const hist = results[4]; if (hist?.status === 'fulfilled') setScopeHistory(hist.value.data || []);
-    };
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
 
-  // KPI tiles
-  const kpiTiles = stats ? [
-    { label: 'Total Scopes',    value: stats.scopes?.total    ?? '—', sub: `${stats.scopes?.critical ?? 0} critical`,  color: stats.scopes?.critical > 0 ? '#dc2626' : '#16a34a' },
-    { label: 'Active Leases',   value: stats.active_leases    ?? '—', sub: 'DHCP clients',                              color: '#2563eb' },
-    { label: 'Available IPs',   value: stats.ips?.free        ?? '—', sub: `${stats.ips?.in_use ?? 0} in use`,          color: '#7c3aed' },
-    { label: 'DNS Zones',       value: stats.dns_zones        ?? '—', sub: 'managed zones',                             color: '#0891b2' },
-    { label: 'Unacked Alerts',  value: stats.unacked_alerts   ?? '—', sub: 'need attention',                            color: stats.unacked_alerts > 0 ? '#dc2626' : '#16a34a' },
+  // Trends derived from real history (start vs end of window)
+  const trends = useMemo(() => {
+    let critNow = 0, critThen = 0, warnNow = 0, warnThen = 0, usedNow = 0, usedThen = 0;
+    for (const sh of scopeHistory) {
+      const h = sh.history || [];
+      if (!h.length) continue;
+      const first = h[0], last = h[h.length - 1];
+      if (last.percent_used >= 90) critNow++;
+      if (first.percent_used >= 90) critThen++;
+      if (last.percent_used >= 80 && last.percent_used < 90) warnNow++;
+      if (first.percent_used >= 80 && first.percent_used < 90) warnThen++;
+      usedNow += last.in_use || 0; usedThen += first.in_use || 0;
+    }
+    return { crit: critNow - critThen, warn: warnNow - warnThen, used: usedNow - usedThen };
+  }, [scopeHistory]);
+
+  const attention = useMemo(
+    () => scopes
+      .map(s => ({ ...s, pct: parseFloat(String(s.percent_used)) }))
+      .filter(s => s.pct >= 80)
+      .sort((a, b) => b.pct - a.pct),
+    [scopes],
+  );
+
+  const topByUtil = useMemo(() => {
+    const latest = (sh: ScopeHistory) => sh.history?.[sh.history.length - 1]?.percent_used ?? 0;
+    return [...scopeHistory].filter(sh => (sh.history?.length ?? 0) >= 2).sort((a, b) => latest(b) - latest(a)).slice(0, 6);
+  }, [scopeHistory]);
+
+  const kpis = stats ? [
+    { label: 'Total Scopes',   value: stats.scopes?.total ?? 0,    sub: 'DHCP scopes monitored',     color: 'var(--navy)',  delta: 0,            invert: false },
+    { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false },
+    { label: 'Warning Scopes',  value: stats.scopes?.warning ?? 0,  sub: '80 – 90% utilization',      color: (stats.scopes?.warning ?? 0) > 0 ? 'var(--yellow)' : 'var(--green)', delta: trends.warn, invert: false },
+    { label: 'Active Leases',   value: stats.active_leases ?? 0,    sub: 'live DHCP clients',         color: 'var(--blue)',  delta: trends.used,  invert: true },
+    { label: 'DNS Zones',       value: stats.dns_zones ?? 0,        sub: 'forward & reverse',         color: 'var(--teal)',  delta: 0,            invert: false },
   ] : [];
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <PageHeader title="Operations Center" subtitle="Live DDI health — scope exhaustion, recent activity, and utilization trends. Refreshes every 30s." />
 
-      {/* Page header */}
-      <div>
-        <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.4px' }}>Dashboard</div>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 3 }}>Infrastructure overview</div>
-      </div>
-
-      {/* KPI tiles */}
+      {/* KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14 }}>
-        {kpiTiles.map((t, i) => (
-          <div key={i} style={{
-            ...CARD, padding: '20px 24px',
-            transition: 'box-shadow 0.2s, transform 0.2s',
-            cursor: 'default',
-          }}
-            onMouseEnter={e => { e.currentTarget.style.boxShadow = 'var(--shadow-md)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={e => { e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; e.currentTarget.style.transform = 'none'; }}
-          >
-            <div style={{ fontSize: 36, fontWeight: 800, color: t.color, lineHeight: 1, letterSpacing: '-1px' }}>{t.value}</div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{t.label}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{t.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Scope gauges */}
-      <div style={{ ...CARD, padding: '20px 24px' }}>
-        <div style={{ ...TITLE }}>Scope Utilization</div>
-        <div style={{ ...MUTED }}>Live — updates every 30s · Click scope to view leases</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-          {scopes.length === 0 && (
-            <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: 20 }}>
-              No scopes found. Configure a DHCP server in Known Servers to begin monitoring.
-            </div>
-          )}
-          {scopes.map(sc => (
-            <div
-              key={sc.id}
-              onClick={() => onNavigate('scopes')}
-              style={{
-                cursor: 'pointer',
-                textAlign: 'center',
-                padding: '12px 16px',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: 'var(--bg-primary)',
-                minWidth: 140,
-                transition: 'box-shadow 0.15s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)')}
-              onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
-            >
-              {/* Circular gauge via SVG */}
-              <ScopeGauge pct={parseFloat(String(sc.percent_used))} size={80} />
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {sc.name || sc.scope_id}
+        {loading && !stats
+          ? Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="kpi-card" style={{ borderLeftColor: 'var(--border)' }}>
+                <Skeleton height={30} width="45%" /><div style={{ height: 8 }} /><Skeleton height={12} width="75%" />
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{sc.scope_id}</div>
-              <div style={{ fontSize: 11, color: pctColor(parseFloat(String(sc.percent_used))), marginTop: 2 }}>
-                {sc.in_use} / {sc.total_ips} IPs
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-
-      {/* Utilization Trends */}
-      {scopeHistory.length > 0 && (
-        <div style={{ ...CARD, padding: '20px 24px' }}>
-          <div style={TITLE}>Scope Utilization Trends</div>
-          <div style={{ ...MUTED }}>Last 7 days · hover to inspect</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginTop: 8 }}>
-            {scopeHistory.map((sh: any) => {
-              const hist = sh.history || [];
-              if (hist.length < 2) return null;
-              const max = Math.max(...hist.map((h: any) => h.percent_used), 1);
-              const latest = hist[hist.length - 1]?.percent_used || 0;
-              const first  = hist[0]?.percent_used || 0;
-              const trend  = latest - first;
-              const color  = pctColor(latest);
-              const w = 160; const h = 40;
-              const pts = hist.map((d: any, i: number) => {
-                const x = (i / (hist.length - 1)) * w;
-                const y = h - (d.percent_used / Math.max(max, 100)) * h;
-                return `${x},${y}`;
-              }).join(' ');
-              return (
-                <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{sh.scope_id}</div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color }}>
-                      {latest.toFixed(1)}%
-                      <span style={{ fontSize: 10, marginLeft: 4, color: trend > 0 ? '#dc2626' : '#16a34a' }}>
-                        {trend > 0 ? '↑' : trend < 0 ? '↓' : '→'}{Math.abs(trend).toFixed(1)}
-                      </span>
-                    </div>
-                  </div>
-                  <svg width={w} height={h} style={{ display: 'block' }}>
-                    <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx={(hist.length - 1) / (hist.length - 1) * w} cy={h - (latest / 100) * h} r="3" fill={color} />
-                  </svg>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>{sh.name || sh.scope_id}</div>
+            ))
+          : kpis.map((k, i) => (
+              <div key={i} className="kpi-card" style={{ borderLeftColor: k.color }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ fontSize: 30, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
+                  <Trend delta={k.delta} invert={k.invert} />
                 </div>
-              );
-            })}
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{k.label}</div>
+                <div style={{ ...MUTED, marginTop: 2 }}>{k.sub}</div>
+              </div>
+            ))}
+      </div>
+
+      {/* Second row: attention (40%) + activity (60%) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 14 }}>
+
+        {/* Scopes requiring attention */}
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Scopes Requiring Attention</div>
+            <span style={MUTED}>{attention.length} over 80%</span>
           </div>
-        </div>
-      )}
-
-      {/* Alerts + Recent events */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14 }}>
-
-        {/* Active alerts */}
-        <div style={{ ...CARD, padding: '20px 24px' }}>
-          <div style={TITLE}>Active Alerts</div>
-          <div style={MUTED}>{alerts.length} unacknowledged</div>
-          {alerts.length === 0 ? (
-            <div style={{ color: '#16a34a', fontSize: 13, fontWeight: 500 }}>✓ All clear</div>
+          {loading ? <TableSkeleton rows={5} cols={3} /> : attention.length === 0 ? (
+            <EmptyState
+              icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}
+              title="All scopes healthy"
+              message="No DHCP scope is above 80% utilization."
+            />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {alerts.map(a => (
-                <div key={a.id} style={{
-                  padding: '8px 10px',
-                  background: a.severity === 'critical' ? '#fee2e2' : '#fef9c3',
-                  borderRadius: 6,
-                  borderLeft: `3px solid ${a.severity === 'critical' ? '#dc2626' : '#ca8a04'}`,
-                }}>
-                  <div style={{ fontSize: 12, color: a.severity === 'critical' ? '#b91c1c' : '#a16207', fontWeight: 500 }}>
-                    {a.message}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {new Date(a.fired_at).toLocaleString()}
-                  </div>
-                </div>
-              ))}
-              <button
-                onClick={() => onNavigate('events')}
-                style={{ fontSize: 11, color: '#C8102E', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
-              >
-                View all alerts →
-              </button>
+            <div style={{ maxHeight: 360, overflow: 'auto' }}>
+              <table className="data-table">
+                <thead><tr><th>Scope</th><th>Used / Total</th><th style={{ minWidth: 150 }}>Utilization</th></tr></thead>
+                <tbody>
+                  {attention.map(s => (
+                    <tr key={s.id} className="clickable" onClick={() => onFocusScope(s.scope_id)}>
+                      <td>
+                        <div style={{ fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>{s.scope_id}</div>
+                        <div style={{ ...MUTED, marginTop: 1 }}>{s.name || s.server_hostname || '—'}</div>
+                      </td>
+                      <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                        {s.in_use} / {s.total_ips}
+                        {s.free < 10 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {s.free} left</span>}
+                      </td>
+                      <td><UtilBar pct={s.pct} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
 
-        {/* Recent events */}
-        <div style={{ ...CARD, padding: '20px 24px' }}>
-          <div style={TITLE}>Recent DHCP Events</div>
-          <div style={MUTED}>Last 10 events from DHCP log</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Type</th>
-                <th>IP Address</th>
-                <th>Hostname</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.length === 0 && (
-                <tr><td colSpan={4} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>No events yet</td></tr>
-              )}
-              {events.map(e => (
-                <tr key={e.id}>
-                  <td className="mono">{e.event_time ? new Date(e.event_time).toLocaleTimeString() : '—'}</td>
-                  <td><EventTypeBadge type={e.event_type} /></td>
-                  <td className="mono">{e.ip_address || '—'}</td>
-                  <td style={{ color: 'var(--text-secondary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.hostname || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Recent activity */}
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Recent Activity</div>
+            <button onClick={() => onNavigate('events')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>
+              View all →
+            </button>
+          </div>
+          {loading ? <TableSkeleton rows={8} cols={4} /> : events.length === 0 ? (
+            <EmptyState title="No recent activity" message="DHCP log events will appear here as they are collected." />
+          ) : (
+            <div style={{ maxHeight: 360, overflow: 'auto' }}>
+              <table className="data-table">
+                <thead><tr><th>Type</th><th>IP Address</th><th>Hostname</th><th>Time</th></tr></thead>
+                <tbody>
+                  {events.map(e => (
+                    <tr key={e.id}>
+                      <td><EventTypeBadge type={e.event_type} /></td>
+                      <td className="mono">{e.ip_address || '—'}</td>
+                      <td style={{ color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.hostname || '—'}</td>
+                      <td className="mono" style={{ ...MUTED, whiteSpace: 'nowrap' }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Third row: sparklines for top 6 scopes by utilization */}
+      <div style={CARD}>
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={TITLE}>Utilization Trends</div>
+          <span style={MUTED}>Top 6 scopes · last 7 days</span>
+        </div>
+        <div style={{ padding: 18 }}>
+          {loading ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={70} />)}
+            </div>
+          ) : topByUtil.length === 0 ? (
+            <EmptyState title="No trend data yet" message="Utilization history accumulates as scopes are polled over time." />
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+              {topByUtil.map(sh => {
+                const latest = sh.history[sh.history.length - 1].percent_used;
+                const first = sh.history[0].percent_used;
+                const color = pctColor(latest);
+                return (
+                  <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600 }}>{sh.scope_id}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color }}>{latest.toFixed(1)}%</span>
+                        <Trend delta={latest - first} invert={false} />
+                      </div>
+                    </div>
+                    <Sparkline data={sh.history} color={color} />
+                    <div style={{ ...MUTED, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sh.name || sh.scope_id}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// ── Scope gauge SVG ───────────────────────────────────────────
-function ScopeGauge({ pct, size }: { pct: number; size: number }) {
-  const r = (size / 2) - 8;
-  const circ = 2 * Math.PI * r;
-  const filled = (pct / 100) * circ * 0.75; // 270deg arc
-  const color = pctColor(pct);
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(135deg)' }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--border)" strokeWidth={7} strokeDasharray={`${circ * 0.75} ${circ}`} strokeLinecap="round" />
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={7} strokeDasharray={`${filled} ${circ}`} strokeLinecap="round" style={{ transition: 'stroke-dasharray 0.5s ease' }} />
-      <text x={size/2} y={size/2 + 5} textAnchor="middle" fontSize={14} fontWeight={700} fill={color} style={{ transform: `rotate(-135deg)`, transformOrigin: `${size/2}px ${size/2}px` }}>
-        {Math.round(pct)}%
-      </text>
-    </svg>
-  );
-}
-
-// ── Event type badge ──────────────────────────────────────────
-function EventTypeBadge({ type }: { type: string }) {
-  const map: Record<string, string> = {
-    Assign: 'badge-green', Renew: 'badge-blue', Release: 'badge-gray',
-    ScopeFull: 'badge-red', ScopeWarning: 'badge-yellow', Conflict: 'badge-red',
-    NACK: 'badge-orange', RogueDHCP: 'badge-red', Expired: 'badge-gray',
-  };
-  return <span className={`badge ${map[type] || 'badge-gray'}`}>{type}</span>;
-}
-
 // ════════════════════════════════════════════════════════════
-// TAB: DHCP SCOPES
+// TAB: EVENTS & ALERTS
+// ════════════════════════════════════════════════════════════
 function EventsTab() {
   const [events, setEvents]   = useState<DhcpEvent[]>([]);
   const [alerts, setAlerts]   = useState<AlertEvent[]>([]);
@@ -394,53 +331,48 @@ function EventsTab() {
   const [page, setPage]       = useState(1);
   const [hours, setHours]     = useState(24);
   const [typeFilter, setTypeFilter] = useState('');
-  const [view, setView]       = useState<'events' | 'alerts'>('alerts');
+  const [view, setView]       = useState<'alerts' | 'events'>('alerts');
   const { toast } = useToast();
 
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), limit: '50', hours: String(hours) });
     if (typeFilter) params.set('type', typeFilter);
-    api(`/events?${params}`).then(d => { setEvents(d.data || []); setEvTotal(d.total || 0); });
-    api('/alerts?limit=50').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); });
+    api(`/events?${params}`).then(d => { setEvents(d.data || []); setEvTotal(d.total || 0); }).catch(() => {});
+    api('/alerts?limit=50').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
   }, [page, hours, typeFilter]);
+
+  const reloadAlerts = () => api('/alerts?limit=50').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
 
   const ack = async (id: number) => {
     await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
     toast('Alert acknowledged', 'success');
-    api('/alerts?limit=50').then(d => setAlerts(d.data || []));
+    reloadAlerts();
   };
-
   const ackAll = async () => {
     await api('/alerts/acknowledge-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
     toast('All alerts acknowledged', 'success');
-    api('/alerts?limit=50').then(d => setAlerts(d.data || []));
+    reloadAlerts();
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      {/* Tab switcher */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 16, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', width: 'fit-content' }}>
-        {(['alerts','events'] as const).map(v => (
-          <button key={v} onClick={() => setView(v)} style={{
-            padding: '7px 18px', background: view === v ? '#C8102E' : 'var(--bg-card)',
-            color: view === v ? '#fff' : 'var(--text-secondary)',
-            border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, textTransform: 'capitalize',
-          }}>
-            {v === 'alerts' ? `Alerts (${alTotal})` : `DHCP Events (${evTotal})`}
-          </button>
-        ))}
-      </div>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PageHeader title="Events & Alerts" subtitle="Fired alerts and the raw DHCP event log from your servers">
+        <div className="segmented">
+          <button className={view === 'alerts' ? 'active' : ''} onClick={() => setView('alerts')}>Alerts ({alTotal})</button>
+          <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}>DHCP Events ({evTotal})</button>
+        </div>
+      </PageHeader>
 
       {view === 'alerts' && (
         <div style={CARD}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
             <div style={TITLE}>Alert History</div>
-            <button onClick={ackAll} style={{ ...btnStyle, background: '#C8102E', color: '#fff', border: 'none', fontSize: 12 }}>Acknowledge All</button>
+            {alerts.some(a => !a.acknowledged) && <button className="btn btn-primary" onClick={ackAll}>Acknowledge All</button>}
           </div>
-          <table>
+          <table className="data-table">
             <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
-              {alerts.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No alerts</td></tr>}
+              {alerts.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, ...MUTED }}>No alerts</td></tr>}
               {alerts.map(a => (
                 <tr key={a.id}>
                   <td><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
@@ -448,11 +380,7 @@ function EventsTab() {
                   <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
                   <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
                   <td><span className={`badge ${a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.acknowledged ? 'ACK' : 'Open'}</span></td>
-                  <td>
-                    {!a.acknowledged && (
-                      <button onClick={() => ack(a.id)} style={{ fontSize: 11, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>
-                    )}
-                  </td>
+                  <td>{!a.acknowledged && <button onClick={() => ack(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>}</td>
                 </tr>
               ))}
             </tbody>
@@ -462,25 +390,21 @@ function EventsTab() {
 
       {view === 'events' && (
         <div style={CARD}>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <div style={{ padding: '12px 18px', display: 'flex', gap: 10, alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
             <div style={TITLE}>DHCP Event Log</div>
             <div style={{ flex: 1 }} />
-            <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
-              style={{ padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13 }}>
+            <select className="input" value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(1); }}>
               <option value="">All types</option>
-              {['Assign','Renew','Release','Conflict','ScopeFull','ScopeWarning','NACK','RogueDHCP'].map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
+              {['Assign','Renew','Release','Conflict','ScopeFull','ScopeWarning','NACK','RogueDHCP'].map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-            <select value={hours} onChange={e => { setHours(parseInt(e.target.value)); setPage(1); }}
-              style={{ padding: '5px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13 }}>
+            <select className="input" value={hours} onChange={e => { setHours(parseInt(e.target.value)); setPage(1); }}>
               {[1,6,24,48,168].map(h => <option key={h} value={h}>Last {h}h</option>)}
             </select>
           </div>
-          <table>
+          <table className="data-table">
             <thead><tr><th>Time</th><th>Type</th><th>IP</th><th>Hostname</th><th>MAC</th><th>Description</th></tr></thead>
             <tbody>
-              {events.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No events</td></tr>}
+              {events.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, ...MUTED }}>No events</td></tr>}
               {events.map(e => (
                 <tr key={e.id}>
                   <td style={{ fontSize: 11 }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
@@ -488,120 +412,81 @@ function EventsTab() {
                   <td className="mono">{e.ip_address || '—'}</td>
                   <td>{e.hostname || '—'}</td>
                   <td className="mono" style={{ fontSize: 11 }}>{e.mac_address || '—'}</td>
-                  <td style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description || '—'}</td>
+                  <td style={{ fontSize: 11, ...MUTED, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description || '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
-            {page > 1 && <button onClick={() => setPage(p => p-1)} style={btnStyle}>← Prev</button>}
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>Page {page} · {evTotal} events</span>
-            {events.length === 50 && <button onClick={() => setPage(p => p+1)} style={btnStyle}>Next →</button>}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: 12 }}>
+            {page > 1 && <button className="btn" onClick={() => setPage(p => p - 1)}>← Prev</button>}
+            <span style={{ ...MUTED, padding: '6px 0' }}>Page {page} · {evTotal} events</span>
+            {events.length === 50 && <button className="btn" onClick={() => setPage(p => p + 1)}>Next →</button>}
           </div>
         </div>
       )}
     </div>
   );
 }
+
 // ════════════════════════════════════════════════════════════
 // TAB: SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsTab() {
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const { toast } = useToast();
-
-  useEffect(() => {
-    api('/settings').then(d => setSettings(d.data || {}));
-  }, []);
-
-  const save = async (key: string, value: string) => {
-    await api('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
-    setSettings(prev => ({ ...prev, [key]: value }));
-    toast('Saved', 'success');
-  };
-
-  const Field = ({ label, settingKey, placeholder, helpText }: { label: string; settingKey: string; placeholder?: string; helpText?: string }) => (
+function SettingField({ label, value, settingKey, placeholder, helpText, type, onSave }: {
+  label: string; value: string; settingKey: string; placeholder?: string; helpText?: string; type?: string;
+  onSave: (key: string, value: string) => void;
+}) {
+  return (
     <div style={{ marginBottom: 16 }}>
       <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{label}</label>
       <input
-        defaultValue={settings[settingKey] || ''}
-        placeholder={placeholder}
-        onBlur={e => { if (e.target.value !== (settings[settingKey] || '')) save(settingKey, e.target.value); }}
-        style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
+        className="input" style={{ width: '100%' }} type={type} defaultValue={value} placeholder={placeholder}
+        onBlur={e => { if (e.target.value !== value) onSave(settingKey, e.target.value); }}
       />
       {helpText && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{helpText}</div>}
     </div>
   );
+}
+
+function SettingsTab() {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const { toast } = useToast();
+
+  useEffect(() => { api('/settings').then(d => setSettings(d.data || {})).catch(() => {}); }, []);
+
+  const save = useCallback(async (key: string, value: string) => {
+    await api('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
+    setSettings(prev => ({ ...prev, [key]: value }));
+    toast('Saved', 'success');
+  }, [toast]);
+
+  const sectionTitle: React.CSSProperties = { fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.4px', marginBottom: 4 }}>Settings</div>
-      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Configure DDIVault preferences</div>
-
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <PageHeader title="Settings" subtitle="Configure DDIVault thresholds, scanning, and data retention" />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-
-        {/* Branding */}
-        <div style={CARD}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>Branding</div>
-          <Field label="App Name" settingKey="app_name" placeholder="DDIVault" />
-          <Field label="Company Name" settingKey="company_name" placeholder="Your Company" />
+        <div style={{ ...CARD, padding: 20 }}>
+          <div style={sectionTitle}>Branding</div>
+          <SettingField label="App Name" value={settings.app_name || ''} settingKey="app_name" placeholder="DDIVault" onSave={save} />
+          <SettingField label="Company Name" value={settings.company_name || ''} settingKey="company_name" placeholder="Your Company" onSave={save} />
         </div>
-
-        {/* IPAM Scan Settings */}
-        <div style={CARD}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>IPAM Scan Settings</div>
-          <Field
-            label="DNS Server for Scans"
-            settingKey="scan_dns_server"
-            placeholder="e.g. 192.168.1.10 (leave blank for system default)"
-            helpText="Used for PTR/reverse DNS lookups during IPAM subnet scans. If blank, the system's default DNS is used."
-          />
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Scope Warning Threshold (%)</label>
-            <input
-              defaultValue={settings.scope_warning_pct || '80'}
-              type="number" min="1" max="99"
-              onBlur={e => save('scope_warning_pct', e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
-            />
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Scope Critical Threshold (%)</label>
-            <input
-              defaultValue={settings.scope_critical_pct || '90'}
-              type="number" min="1" max="100"
-              onBlur={e => save('scope_critical_pct', e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13 }}
-            />
-          </div>
+        <div style={{ ...CARD, padding: 20 }}>
+          <div style={sectionTitle}>IPAM Scan Settings</div>
+          <SettingField label="DNS Server for Scans" value={settings.scan_dns_server || ''} settingKey="scan_dns_server" placeholder="e.g. 192.168.1.10 (leave blank for system default)" helpText="Used for PTR / reverse DNS lookups during IPAM subnet scans." onSave={save} />
+          <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
+          <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
         </div>
-
-        {/* Data Retention */}
-        <div style={CARD}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>Data Retention</div>
-          <Field
-            label="Retention Period (days)"
-            settingKey="retention_days"
-            placeholder="90"
-            helpText="DHCP events and scan history older than this will be cleaned up automatically."
-          />
+        <div style={{ ...CARD, padding: 20 }}>
+          <div style={sectionTitle}>Data Retention</div>
+          <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
         </div>
-
-        {/* About */}
-        <div style={CARD}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' }}>About</div>
+        <div style={{ ...CARD, padding: 20 }}>
+          <div style={sectionTitle}>About</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 2 }}>
-            <div><strong>DDIVault</strong> <span style={{ color: 'var(--text-muted)' }}>v1.0.0</span></div>
-            <div style={{ color: 'var(--text-muted)' }}>Part of the NocVault network intelligence suite</div>
-            <div style={{ marginTop: 8, display: 'flex', gap: 12 }}>
-              <span style={{ fontSize: 12, background: 'var(--bg-primary)', padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>API :3007</span>
-              <span style={{ fontSize: 12, background: 'var(--bg-primary)', padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>App :3006</span>
-            </div>
+            <div><strong>DDIVault</strong> <span style={MUTED}>v1.0.0</span></div>
+            <div style={MUTED}>Part of the NocVault network intelligence suite</div>
             <div style={{ marginTop: 12 }}>
-              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`}
-                style={{ color: '#C8102E', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>
-                ← NocVault Hub
-              </a>
+              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>← NocVault Hub</a>
             </div>
           </div>
         </div>
@@ -610,23 +495,9 @@ function SettingsTab() {
   );
 }
 
-// ── Shared button style ───────────────────────────────────────
-const btnStyle: React.CSSProperties = {
-  padding: '6px 14px',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  background: 'var(--bg-card)',
-  color: 'var(--text-primary)',
-  cursor: 'pointer',
-  fontSize: 13,
-  fontWeight: 500,
-};
-
 // ════════════════════════════════════════════════════════════
-// SIDEBAR + MAIN APP
+// SIDEBAR + APP SHELL
 // ════════════════════════════════════════════════════════════
-
-// SVG icons for sidebar
 const ICONS: Record<string, React.ReactNode> = {
   dashboard: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
   scopes:    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
@@ -637,7 +508,7 @@ const ICONS: Record<string, React.ReactNode> = {
   settings:  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 
-const SIDEBAR_ITEMS: { id: Tab; label: string; badge?: string }[] = [
+const SIDEBAR_ITEMS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'scopes',    label: 'DHCP' },
   { id: 'ipam',      label: 'IPAM' },
@@ -650,44 +521,55 @@ const SIDEBAR_ITEMS: { id: Tab; label: string; badge?: string }[] = [
 export default function DDIVaultApp() {
   const [tab, setTab] = useState<Tab>('dashboard');
   const [collectorOnline, setCollectorOnline] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [focusScope, setFocusScope] = useState<string | null>(null);
 
   useEffect(() => {
-    const check = () => {
-      fetch('/api/health').then(r => setCollectorOnline(r.ok)).catch(() => setCollectorOnline(false));
-    };
+    const check = () => fetch('/api/health').then(r => setCollectorOnline(r.ok)).catch(() => setCollectorOnline(false));
     check();
     const t = setInterval(check, 30000);
     return () => clearInterval(t);
   }, []);
 
+  // Global keyboard shortcut: "R" refreshes the current tab (broadcast event)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+      if (typing) return;
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        window.dispatchEvent(new Event('ddivault:refresh'));
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const navigate = useCallback((t: Tab) => { setTab(t); }, []);
+  const focusScopeNav = useCallback((scopeId: string) => { setFocusScope(scopeId); setTab('scopes'); }, []);
+
+  const sidebarWidth = collapsed ? 64 : 240;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <Header collectorOnline={collectorOnline} onNavigate={setTab} />
+      <Header collectorOnline={collectorOnline} onNavigate={navigate} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
         {/* Sidebar */}
         <nav style={{
-          width: 'var(--sidebar-width)',
-          background: '#1a2744',
-          display: 'flex',
-          flexDirection: 'column',
-          flexShrink: 0,
-          overflowY: 'auto',
-          paddingTop: 8,
-          paddingBottom: 16,
+          width: sidebarWidth, background: '#1a2744', display: 'flex', flexDirection: 'column',
+          flexShrink: 0, overflowY: 'auto', overflowX: 'hidden', paddingTop: 8, paddingBottom: 12,
+          transition: 'width 0.18s ease',
         }}>
-          {/* Section label */}
-          <div style={{
-            padding: '12px 20px 8px',
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: '0.1em',
-            color: 'rgba(255,255,255,0.25)',
-            textTransform: 'uppercase',
-          }}>
-            Navigation
-          </div>
+          {!collapsed && (
+            <div style={{ padding: '12px 20px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase' }}>
+              Navigation
+            </div>
+          )}
+          {collapsed && <div style={{ height: 12 }} />}
 
           {SIDEBAR_ITEMS.map(item => {
             const active = tab === item.id;
@@ -695,61 +577,56 @@ export default function DDIVaultApp() {
               <button
                 key={item.id}
                 onClick={() => setTab(item.id)}
+                title={collapsed ? item.label : undefined}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '11px 20px',
-                  margin: '1px 10px',
-                  background: active ? 'rgba(200,16,46,0.15)' : 'transparent',
-                  borderLeft: 'none',
-                  border: 'none',
-                  borderRadius: 10,
-                  color: active ? '#fff' : 'rgba(255,255,255,0.5)',
-                  cursor: 'pointer',
-                  fontSize: 13.5,
-                  fontWeight: active ? 600 : 400,
-                  textAlign: 'left',
-                  width: 'calc(100% - 20px)',
-                  transition: 'all 0.15s',
-                  position: 'relative',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  justifyContent: collapsed ? 'center' : 'flex-start',
+                  padding: collapsed ? '11px 0' : '11px 20px',
+                  margin: '1px 10px', background: active ? 'rgba(200,16,46,0.15)' : 'transparent',
+                  border: 'none', borderRadius: 10,
+                  color: active ? '#fff' : 'rgba(255,255,255,0.5)', cursor: 'pointer',
+                  fontSize: 13.5, fontWeight: active ? 600 : 400, textAlign: 'left',
+                  width: 'calc(100% - 20px)', transition: 'all 0.15s', position: 'relative',
                 }}
                 onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
                 onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; } }}
               >
-                {/* Active indicator */}
-                {active && (
-                  <div style={{
-                    position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
-                    width: 3, height: 20, background: '#C8102E', borderRadius: '0 3px 3px 0',
-                  }} />
-                )}
-                <span style={{ color: active ? '#C8102E' : 'rgba(255,255,255,0.4)', flexShrink: 0 }}>
-                  {ICONS[item.id]}
-                </span>
-                <span>{item.label}</span>
-                {item.badge && (
-                  <span style={{
-                    marginLeft: 'auto', background: '#C8102E', color: '#fff',
-                    borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 700,
-                  }}>{item.badge}</span>
-                )}
+                {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, background: '#C8102E', borderRadius: '0 3px 3px 0' }} />}
+                <span style={{ color: active ? '#C8102E' : 'rgba(255,255,255,0.45)', flexShrink: 0, display: 'flex' }}>{ICONS[item.id]}</span>
+                {!collapsed && <span>{item.label}</span>}
               </button>
             );
           })}
 
-          {/* Bottom spacer + version */}
           <div style={{ flex: 1 }} />
-          <div style={{ padding: '12px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>
-            DDIVault v1.0
-          </div>
+
+          {/* Collapse toggle */}
+          <button
+            onClick={() => setCollapsed(c => !c)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, justifyContent: collapsed ? 'center' : 'flex-start',
+              margin: '4px 10px', padding: collapsed ? '10px 0' : '10px 20px', width: 'calc(100% - 20px)',
+              background: 'transparent', border: 'none', borderRadius: 10, cursor: 'pointer',
+              color: 'rgba(255,255,255,0.4)', fontSize: 12.5, transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }}>
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            {!collapsed && <span>Collapse</span>}
+          </button>
+
+          {!collapsed && <div style={{ padding: '6px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>DDIVault v1.0</div>}
         </nav>
 
         {/* Content area */}
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
           <ErrorBoundary name={tab}>
-            {tab === 'dashboard' && <DashboardTab onNavigate={setTab} />}
-            {tab === 'scopes'    && <DHCPTab />}
+            {tab === 'dashboard' && <DashboardTab onNavigate={navigate} onFocusScope={focusScopeNav} />}
+            {tab === 'scopes'    && <DHCPTab focusScope={focusScope} />}
             {tab === 'ipam'      && <IPAMTab />}
             {tab === 'dns'       && <DNSTab />}
             {tab === 'events'    && <EventsTab />}

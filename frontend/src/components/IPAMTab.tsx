@@ -1,10 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
 import IPAMImport from '@/components/IPAMImport';
+import {
+  PageHeader, EmptyState, Skeleton, TableSkeleton, Breadcrumb,
+  UtilBar, Spinner, pctColor, useRefreshKey, useEscape,
+} from '@/components/ui';
 
-// ── Types ─────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// Types
+// ════════════════════════════════════════════════════════════
 interface Supernet {
   id: number;
   network: string;
@@ -40,10 +46,6 @@ interface Subnet {
   used_hosts: number;
   free_hosts: number;
   unknown_hosts: number;
-  ip_count: number;
-  dhcp_count: number;
-  unknown_count: number;
-  reserved_count: number;
 }
 
 interface IPAddress {
@@ -70,30 +72,16 @@ interface Vlan {
   site: string;
 }
 
-// ── Shared styles ─────────────────────────────────────────────
-const CARD: React.CSSProperties = {
-  background: 'var(--bg-card)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  boxShadow: 'var(--shadow-sm)',
-};
+interface Site { id: number; name: string; code: string; city: string }
 
-const BTN: React.CSSProperties = {
-  padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 6,
-  background: 'var(--bg-card)', color: 'var(--text-primary)',
-  cursor: 'pointer', fontSize: 12, fontWeight: 500,
-};
+interface Conflict {
+  id_a: number; network_a: string; prefix_a: number; name_a: string; site_a: string;
+  id_b: number; network_b: string; prefix_b: number; name_b: string; site_b: string;
+}
 
-const BTN_RED: React.CSSProperties = {
-  ...BTN, background: '#C8102E', color: '#fff', border: 'none',
-};
-
-const INPUT: React.CSSProperties = {
-  width: '100%', padding: '6px 10px', border: '1px solid var(--border)',
-  borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 13,
-};
-
-// ── Helpers ───────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// API helper
+// ════════════════════════════════════════════════════════════
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
   if (!res.ok) {
@@ -103,53 +91,103 @@ async function api(path: string, opts?: RequestInit) {
   return res.json();
 }
 
-function pctColor(pct: number) {
-  if (pct >= 90) return '#dc2626';
-  if (pct >= 70) return '#ca8a04';
-  return '#16a34a';
-}
-
-function statusColor(status: string): string {
-  const m: Record<string, string> = {
-    dhcp: '#2563eb', available: '#16a34a', reserved: '#7c3aed',
-    unknown: '#ea580c', offline: '#6b7280',
-  };
-  return m[status] || '#6b7280';
-}
-
-function statusBadge(status: string): string {
-  const m: Record<string, string> = {
-    dhcp: 'badge-blue', available: 'badge-green', reserved: 'badge-gray',
-    unknown: 'badge-orange', offline: 'badge-gray',
-  };
-  return `badge ${m[status] || 'badge-gray'}`;
-}
+// ════════════════════════════════════════════════════════════
+// Helpers / shared styles
+// ════════════════════════════════════════════════════════════
+const PREFIX_OPTIONS = [24, 25, 26, 27, 28, 29, 30];
 
 function totalHosts(prefix: number) {
   return Math.max(0, Math.pow(2, 32 - prefix) - 2);
 }
 
-// ── Utilization bar ───────────────────────────────────────────
-function UtilBar({ used, total }: { used: number; total: number }) {
-  const pct = total > 0 ? (used / total) * 100 : 0;
+function utilPct(used: number, total: number) {
+  return total > 0 ? (used / total) * 100 : 0;
+}
+
+// Per-status colour + badge + subtle row tint
+const STATUS_COLOR: Record<string, string> = {
+  available: 'var(--green)',
+  dhcp:      'var(--blue)',
+  reserved:  'var(--red)',
+  unknown:   'var(--orange)',
+  offline:   'var(--text-muted)',
+};
+const STATUS_BADGE: Record<string, string> = {
+  available: 'badge-green',
+  dhcp:      'badge-blue',
+  reserved:  'badge-red',
+  unknown:   'badge-orange',
+  offline:   'badge-gray',
+};
+const STATUS_TINT: Record<string, string> = {
+  available: 'rgba(22,163,74,0.06)',
+  dhcp:      'rgba(37,99,235,0.06)',
+  reserved:  'rgba(220,38,38,0.06)',
+  unknown:   'rgba(234,88,12,0.07)',
+  offline:   'transparent',
+};
+
+const INPUT: React.CSSProperties = {
+  width: '100%', padding: '8px 12px', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)',
+  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+};
+
+const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)' };
+const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace" };
+
+function fmtDate(d?: string) { return d ? new Date(d).toLocaleString() : '—'; }
+function fmtDay(d?: string)  { return d ? new Date(d).toLocaleDateString() : '—'; }
+
+function scanLabel(status: string, last_scanned?: string) {
+  if (status === 'scanning') return '⟳ Scanning';
+  if (status === 'done' && last_scanned) return `✓ ${fmtDay(last_scanned)}`;
+  if (status === 'error') return '⚠ Error';
+  return 'Not scanned';
+}
+
+// ════════════════════════════════════════════════════════════
+// Field / Modal helpers (module scope)
+// ════════════════════════════════════════════════════════════
+function Field({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, minWidth: 60 }}>
-        <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: pctColor(pct), borderRadius: 3, transition: 'width 0.4s' }} />
-      </div>
-      <span style={{ fontSize: 11, fontWeight: 600, color: pctColor(pct), minWidth: 38 }}>{pct.toFixed(1)}%</span>
+    <div style={{ marginBottom: 10, ...(full ? { gridColumn: '1/-1' } : {}) }}>
+      <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>{label}</label>
+      {children}
     </div>
   );
 }
 
-// ── Modal wrapper ─────────────────────────────────────────────
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function SiteSelect({ value, onChange, sites }: { value: string; onChange: (v: string) => void; sites: Site[] }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ ...CARD, width: 520, maxHeight: '85vh', overflow: 'auto', padding: 20 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{title}</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+    <select value={value} onChange={e => onChange(e.target.value)} style={INPUT}>
+      <option value="">— No site —</option>
+      {sites.map(s => (
+        <option key={s.id} value={s.name}>
+          {s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function ModalShell({ title, subtitle, width = 540, onClose, children }: {
+  title: string; subtitle?: string; width?: number; onClose: () => void; children: React.ReactNode;
+}) {
+  useEscape(onClose);
+  return (
+    <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: 'var(--bg-card)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)',
+        width, maxWidth: '92vw', maxHeight: '88vh', overflow: 'auto', padding: 24,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>{title}</div>
+            {subtitle && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 3 }}>{subtitle}</div>}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
         </div>
         {children}
       </div>
@@ -157,40 +195,226 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-// ── Form field helper ─────────────────────────────────────────
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function ModalFooter({ onCancel, onConfirm, confirmLabel, busy }: {
+  onCancel: () => void; onConfirm: () => void; confirmLabel: string; busy?: boolean;
+}) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{label}</label>
-      {children}
+    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+      <button className="btn" onClick={onCancel}>Cancel</button>
+      <button className="btn btn-primary" onClick={onConfirm} disabled={busy} style={{ opacity: busy ? 0.7 : 1 }}>
+        {busy ? <Spinner color="#fff" /> : null}{confirmLabel}
+      </button>
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════════
-// SUB-VIEW: IP Address Table for a subnet
+// MODALS (module scope)
 // ════════════════════════════════════════════════════════════
-function IPAddressTable({ subnet, onClose }: { subnet: Subnet; onClose: () => void }) {
+function AddSupernetModal({ sites, onClose, onSaved }: {
+  sites: Site[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ network: '', prefix_length: '8', name: '', description: '', site: '' });
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!form.network.trim()) { toast('Network is required', 'error'); return; }
+    setBusy(true);
+    try {
+      await api('/ipam/supernets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      toast('Supernet added', 'success');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell title="Add Supernet" subtitle="Top-level network block (e.g. 10.0.0.0/8)" onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Network" full><input value={form.network} onChange={e => set('network', e.target.value)} style={INPUT} placeholder="10.0.0.0" /></Field>
+        <Field label="Prefix Length"><input value={form.prefix_length} onChange={e => set('prefix_length', e.target.value)} style={INPUT} placeholder="8" /></Field>
+        <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="Corp Backbone" /></Field>
+        <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
+        <Field label="Site (from NetVault)" full><SiteSelect value={form.site} onChange={v => set('site', v)} sites={sites} /></Field>
+      </div>
+      <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Add Supernet" busy={busy} />
+    </ModalShell>
+  );
+}
+
+function AddSubnetModal({ sites, supernets, defaultSupernetId, defaultNetwork, onClose, onSaved }: {
+  sites: Site[]; supernets: Supernet[]; defaultSupernetId: number | null; defaultNetwork?: string;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [supernetId, setSupernetId] = useState<number | null>(defaultSupernetId);
+  const [form, setForm] = useState({
+    network: defaultNetwork || '', prefix_length: '24', name: '', description: '',
+    gateway: '', vlan_id: '', site: '', owner: '', location: '', notes: '',
+  });
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!form.network.trim()) { toast('Network is required', 'error'); return; }
+    setBusy(true);
+    try {
+      await api('/ipam/subnets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, supernet_id: supernetId }),
+      });
+      toast('Subnet added', 'success');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell title="Add Subnet" subtitle="Individual subnet within a supernet" width={620} onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Network" full><input value={form.network} onChange={e => set('network', e.target.value)} style={INPUT} placeholder="192.168.1.0" /></Field>
+        <Field label="Prefix Length"><input value={form.prefix_length} onChange={e => set('prefix_length', e.target.value)} style={INPUT} placeholder="24" /></Field>
+        <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="Office LAN" /></Field>
+        <Field label="Gateway IP"><input value={form.gateway} onChange={e => set('gateway', e.target.value)} style={INPUT} placeholder="192.168.1.1" /></Field>
+        <Field label="VLAN ID"><input value={form.vlan_id} onChange={e => set('vlan_id', e.target.value)} style={INPUT} /></Field>
+        <Field label="Owner"><input value={form.owner} onChange={e => set('owner', e.target.value)} style={INPUT} /></Field>
+        <Field label="Location"><input value={form.location} onChange={e => set('location', e.target.value)} style={INPUT} /></Field>
+        <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
+        <Field label="Notes" full><input value={form.notes} onChange={e => set('notes', e.target.value)} style={INPUT} /></Field>
+        <Field label="Site (from NetVault)" full><SiteSelect value={form.site} onChange={v => set('site', v)} sites={sites} /></Field>
+        <Field label="Supernet (optional)" full>
+          <select value={supernetId ?? ''} onChange={e => setSupernetId(e.target.value ? parseInt(e.target.value) : null)} style={INPUT}>
+            <option value="">— Unassigned —</option>
+            {supernets.map(sn => <option key={sn.id} value={sn.id}>{sn.name || `${sn.network}/${sn.prefix_length}`} ({sn.network}/{sn.prefix_length})</option>)}
+          </select>
+        </Field>
+      </div>
+      <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Add Subnet" busy={busy} />
+    </ModalShell>
+  );
+}
+
+function AddVlanModal({ sites, onClose, onSaved }: { sites: Site[]; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ vlan_id: '', name: '', description: '', site: '' });
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!form.vlan_id.trim()) { toast('VLAN ID is required', 'error'); return; }
+    setBusy(true);
+    try {
+      await api('/ipam/vlans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      toast('VLAN added', 'success');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell title="Add VLAN" subtitle="Register a VLAN in the IPAM directory" onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="VLAN ID"><input value={form.vlan_id} onChange={e => set('vlan_id', e.target.value)} style={INPUT} placeholder="100" /></Field>
+        <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="Servers" /></Field>
+        <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
+        <Field label="Site (from NetVault)" full><SiteSelect value={form.site} onChange={v => set('site', v)} sites={sites} /></Field>
+      </div>
+      <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Add VLAN" busy={busy} />
+    </ModalShell>
+  );
+}
+
+function ReserveModal({ ip, onClose, onConfirm }: {
+  ip: string; onClose: () => void; onConfirm: (description: string, owner: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ description: '', owner: '' });
+  const submit = async () => {
+    setBusy(true);
+    try { await onConfirm(form.description, form.owner); }
+    finally { setBusy(false); }
+  };
+  return (
+    <ModalShell title={`Reserve ${ip}`} subtitle="Mark this address as statically reserved" onClose={onClose}>
+      <Field label="Purpose / Description">
+        <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} style={INPUT} placeholder="e.g. Printer, Server, Gateway" autoFocus />
+      </Field>
+      <Field label="Owner">
+        <input value={form.owner} onChange={e => setForm(p => ({ ...p, owner: e.target.value }))} style={INPUT} placeholder="e.g. IT Team, John Smith" />
+      </Field>
+      <ModalFooter onCancel={onClose} onConfirm={submit} confirmLabel="Reserve IP" busy={busy} />
+    </ModalShell>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// Tree subnet row (module scope)
+// ════════════════════════════════════════════════════════════
+function SubnetRow({ subnet, onView, onScan, onDelete }: {
+  subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void;
+}) {
+  const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
+  const used    = subnet.used_hosts || 0;
+  const unknown = subnet.unknown_hosts || 0;
+
+  return (
+    <div
+      onClick={onView}
+      style={{
+        padding: '10px 16px 10px 44px', display: 'flex', alignItems: 'center', gap: 12,
+        cursor: 'pointer', borderBottom: '1px solid var(--border-light)', transition: 'background 0.12s',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-primary)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+    >
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
+      <div style={{ minWidth: 170 }}>
+        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>{subnet.network}/{subnet.prefix_length}</div>
+        {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{subnet.site || ''}</div>
+      {subnet.vlan_id ? <span className="badge badge-blue">VLAN {subnet.vlan_id}</span> : null}
+      <div style={{ flex: 1, minWidth: 120 }}><UtilBar pct={utilPct(used, total)} /></div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 92, textAlign: 'right', ...MONO }}>{used}/{total}</div>
+      {unknown > 0 && <span className="badge badge-orange" style={{ minWidth: 70, justifyContent: 'center' }}>⚠ {unknown}</span>}
+      <div style={{ fontSize: 11, color: subnet.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', minWidth: 96 }}>
+        {scanLabel(subnet.scan_status, subnet.last_scanned)}
+      </div>
+      <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+        <button onClick={onScan} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+        <button onClick={onDelete} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// Subnet detail (full-screen overlay) — module scope
+// ════════════════════════════════════════════════════════════
+function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void }) {
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState('');
   const [statusFilter, setStatus] = useState('');
   const [scanning, setScanning]   = useState(false);
-  const [reserveModal, setReserveModal] = useState<string | null>(null);
-  const [reserveForm, setReserveForm]   = useState({ description: '', owner: '' });
+  const [reserveIp, setReserveIp] = useState<string | null>(null);
   const { toast } = useToast();
+  useEscape(onClose);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const d = await api(`/ipam/subnets/${subnet.id}/addresses${statusFilter ? `?status=${statusFilter}` : ''}`);
       setAddresses(d.data || []);
-    } finally { setLoading(false); }
-  }, [subnet.id, statusFilter]);
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setLoading(false); }
+  }, [subnet.id, statusFilter, toast]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll scan status while scanning
+  // Poll scan-status while scanning
   useEffect(() => {
     if (!scanning) return;
     const t = setInterval(async () => {
@@ -202,147 +426,163 @@ function IPAddressTable({ subnet, onClose }: { subnet: Subnet; onClose: () => vo
       }
     }, 3000);
     return () => clearInterval(t);
-  }, [scanning]);
+  }, [scanning, subnet.id, toast, load]);
 
   const startScan = async () => {
     setScanning(true);
     toast(`Scanning ${subnet.network}/${subnet.prefix_length}...`, 'info');
-    await api(`/ipam/subnets/${subnet.id}/scan`, { method: 'POST' });
+    try { await api(`/ipam/subnets/${subnet.id}/scan`, { method: 'POST' }); }
+    catch (e: any) { toast(e.message, 'error'); setScanning(false); }
   };
 
-  const reserveIP = async () => {
-    if (!reserveModal) return;
-    await api(`/ipam/subnets/${subnet.id}/addresses/${reserveModal}/reserve`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...reserveForm, reserved_by: 'admin' }),
-    });
-    toast(`${reserveModal} reserved`, 'success');
-    setReserveModal(null);
-    load();
+  const nextIp = async () => {
+    const d = await api(`/ipam/subnets/${subnet.id}/next-ip`).catch(() => null);
+    if (d?.available) toast(`Next available IP: ${d.ip}`, 'success');
+    else toast('Subnet is full', 'error');
   };
 
-  const releaseIP = async (ip: string) => {
+  const doReserve = async (description: string, owner: string) => {
+    if (!reserveIp) return;
+    try {
+      await api(`/ipam/subnets/${subnet.id}/addresses/${reserveIp}/reserve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, owner, reserved_by: 'admin' }),
+      });
+      toast(`${reserveIp} reserved`, 'success');
+      setReserveIp(null);
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
+  };
+
+  const release = async (ip: string) => {
     if (!confirm(`Release reservation for ${ip}?`)) return;
-    await api(`/ipam/subnets/${subnet.id}/addresses/${ip}/release`, { method: 'POST' });
-    toast(`${ip} released`, 'info');
-    load();
+    try {
+      await api(`/ipam/subnets/${subnet.id}/addresses/${ip}/release`, { method: 'POST' });
+      toast(`${ip} released`, 'info');
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
   };
 
-  const filtered = addresses.filter(a => {
-    const q = filter.toLowerCase();
-    return !q || a.ip_address?.includes(q) || a.hostname?.toLowerCase().includes(q) || a.mac_address?.toLowerCase().includes(q);
-  });
+  const counts = useMemo(() => addresses.reduce((acc, a) => {
+    acc[a.status] = (acc[a.status] || 0) + 1; return acc;
+  }, {} as Record<string, number>), [addresses]);
 
-  // Status summary counts
-  const counts = addresses.reduce((acc, a) => { acc[a.status] = (acc[a.status] || 0) + 1; return acc; }, {} as Record<string, number>);
+  const filtered = useMemo(() => {
+    const q = filter.toLowerCase().trim();
+    return addresses.filter(a => !q ||
+      a.ip_address?.includes(q) ||
+      a.hostname?.toLowerCase().includes(q) ||
+      a.mac_address?.toLowerCase().includes(q));
+  }, [addresses, filter]);
+
+  const supLabel = subnet.supernet_network
+    ? `${subnet.supernet_network}/${subnet.supernet_prefix}`
+    : 'Unassigned';
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-primary)', zIndex: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ background: '#1a2744', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 6, color: '#fff', padding: '4px 10px', cursor: 'pointer', fontSize: 13 }}>← Back</button>
-        <div>
-          <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>{subnet.name || `${subnet.network}/${subnet.prefix_length}`}</div>
-          <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: 'monospace' }}>{subnet.network}/{subnet.prefix_length} · {subnet.gateway ? `GW: ${subnet.gateway}` : 'No gateway'}</div>
+      <div style={{ background: 'var(--navy)', padding: '12px 24px', flexShrink: 0 }}>
+        <div style={{ marginBottom: 8 }}>
+          <Breadcrumb items={[
+            { label: 'IPAM', onClick: onClose },
+            { label: supLabel },
+            { label: `${subnet.network}/${subnet.prefix_length}` },
+          ]} />
         </div>
-        <div style={{ flex: 1 }} />
-        {/* Status pills */}
-        {Object.entries(counts).map(([s, n]) => (
-          <div key={s} style={{ padding: '3px 10px', borderRadius: 12, background: statusColor(s) + '22', border: `1px solid ${statusColor(s)}44`, fontSize: 11, color: statusColor(s), fontWeight: 600 }}>
-            {n} {s}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>
+              {subnet.name || `${subnet.network}/${subnet.prefix_length}`}
+            </div>
+            <div style={{ ...MONO, color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
+              {subnet.network}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
+              {subnet.site ? ` · ${subnet.site}` : ''}
+            </div>
           </div>
-        ))}
-        <button
-          onClick={async () => {
-            const d = await api('/ipam/subnets/' + subnet.id + '/next-ip').catch(() => null);
-            if (d?.available) {
-              toast('Next available IP: ' + d.ip, 'success');
-            } else {
-              toast('Subnet is full', 'error');
-            }
-          }}
-          style={{ ...BTN, fontSize: 12, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}
-        >
-          Next Available IP
-        </button>
-        <button
-          onClick={startScan}
-          disabled={scanning}
-          style={{ ...BTN_RED, opacity: scanning ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
-        >
-          {scanning ? '⟳ Scanning...' : '⟳ Scan Now'}
-        </button>
+          <div style={{ flex: 1 }} />
+          {Object.entries(counts).map(([s, n]) => (
+            <div key={s} style={{
+              padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+              background: STATUS_TINT[s] || 'rgba(255,255,255,0.08)',
+              border: `1px solid ${STATUS_COLOR[s] || 'var(--text-muted)'}55`,
+              color: '#fff',
+            }}>
+              <span style={{ color: STATUS_COLOR[s] || '#fff', filter: 'brightness(1.6)' }}>●</span> {n} {s}
+            </div>
+          ))}
+          <button className="btn" onClick={nextIp} style={{ fontSize: 12 }}>Next Available IP</button>
+          <button className="btn btn-primary" onClick={startScan} disabled={scanning} style={{ opacity: scanning ? 0.7 : 1 }}>
+            {scanning ? <><Spinner color="#fff" /> Scanning…</> : '⟳ Scan Now'}
+          </button>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
       </div>
 
       {/* Filters */}
-      <div style={{ padding: '12px 20px', display: 'flex', gap: 10, background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <input
-          placeholder="Search IP, hostname, MAC..."
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          style={{ ...INPUT, width: 280 }}
-        />
-        <select value={statusFilter} onChange={e => setStatus(e.target.value)}
-          style={{ ...INPUT, width: 150 }}>
+      <div style={{ padding: '12px 24px', display: 'flex', gap: 10, alignItems: 'center', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <input className="input" placeholder="Search IP, hostname, MAC…" value={filter} onChange={e => setFilter(e.target.value)} style={{ ...INPUT, width: 300 }} />
+        <select value={statusFilter} onChange={e => setStatus(e.target.value)} style={{ ...INPUT, width: 160 }}>
           <option value="">All statuses</option>
           <option value="available">Available</option>
           <option value="dhcp">DHCP</option>
           <option value="reserved">Reserved</option>
           <option value="unknown">Unknown</option>
+          <option value="offline">Offline</option>
         </select>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {filtered.length} / {addresses.length} IPs
-          {subnet.last_scanned && ` · Last scanned: ${new Date(subnet.last_scanned).toLocaleString()}`}
+          {subnet.last_scanned ? ` · Last scanned ${fmtDate(subnet.last_scanned)}` : ''}
         </span>
       </div>
 
-      {/* IP Table */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 20px' }}>
+      {/* Table */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>Loading...</div>
+          <div style={{ marginTop: 12 }}><TableSkeleton rows={10} cols={7} /></div>
+        ) : addresses.length === 0 ? (
+          <EmptyState
+            icon="🛰"
+            title="No addresses yet"
+            message="Run a scan to discover live hosts, DHCP leases and free addresses in this subnet."
+            actionLabel="Scan Now"
+            onAction={startScan}
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState icon="🔍" title="No results" message="No addresses match your search or filter." />
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+          <table className="data-table" style={{ marginTop: 12 }}>
             <thead>
               <tr>
-                <th style={TH}>IP Address</th>
-                <th style={TH}>Status</th>
-                <th style={TH}>Hostname</th>
-                <th style={TH}>MAC Address</th>
-                <th style={TH}>Ping (ms)</th>
-                <th style={TH}>Last Seen</th>
-                <th style={TH}>Description / Owner</th>
-                <th style={TH}>Actions</th>
+                <th>IP Address</th>
+                <th>Status</th>
+                <th>Hostname</th>
+                <th>MAC</th>
+                <th>Last Seen</th>
+                <th>Ping (ms)</th>
+                <th>Description / Owner</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
-                  {addresses.length === 0 ? 'No data yet — click Scan Now to discover hosts' : 'No results'}
-                </td></tr>
-              )}
               {filtered.map(addr => (
-                <tr key={addr.ip_address} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ ...TD, fontFamily: 'monospace', fontWeight: 600 }}>{addr.ip_address}</td>
-                  <td style={TD}>
-                    <span className={statusBadge(addr.status)} style={{ background: statusColor(addr.status) + '22', color: statusColor(addr.status), border: `1px solid ${statusColor(addr.status)}44` }}>
-                      {addr.status}
-                    </span>
-                  </td>
+                <tr key={addr.ip_address} style={{ background: STATUS_TINT[addr.status] || 'transparent' }}>
+                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{addr.ip_address}</td>
+                  <td style={TD}><span className={`badge ${STATUS_BADGE[addr.status] || 'badge-gray'}`}>{addr.status}</span></td>
                   <td style={TD}>{addr.hostname || '—'}</td>
-                  <td style={{ ...TD, fontFamily: 'monospace', fontSize: 11 }}>{addr.mac_address || '—'}</td>
-                  <td style={TD}>{addr.ping_ms != null ? `${addr.ping_ms}ms` : '—'}</td>
-                  <td style={{ ...TD, fontSize: 11 }}>{addr.last_seen ? new Date(addr.last_seen).toLocaleString() : '—'}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 11 }}>{addr.mac_address || '—'}</td>
+                  <td style={{ ...TD, fontSize: 11 }}>{fmtDate(addr.last_seen)}</td>
+                  <td style={TD}>{addr.ping_ms != null ? `${addr.ping_ms}` : '—'}</td>
                   <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>
                     {addr.description || ''}{addr.owner ? ` (${addr.owner})` : ''}
-                    {addr.is_reserved && addr.reserved_by ? <span style={{ color: '#7c3aed', marginLeft: 4 }}>· {addr.reserved_by}</span> : ''}
+                    {addr.is_reserved && addr.reserved_by ? <span style={{ color: 'var(--purple)', marginLeft: 4 }}>· {addr.reserved_by}</span> : ''}
                   </td>
                   <td style={TD}>
                     {addr.is_reserved ? (
-                      <button onClick={() => releaseIP(addr.ip_address)} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Release</button>
-                    ) : addr.status === 'available' || addr.status === 'unknown' ? (
-                      <button onClick={() => { setReserveModal(addr.ip_address); setReserveForm({ description: '', owner: '' }); }}
-                        style={{ fontSize: 11, color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer' }}>Reserve</button>
-                    ) : null}
+                      <button onClick={() => release(addr.ip_address)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Release</button>
+                    ) : (addr.status === 'available' || addr.status === 'unknown') ? (
+                      <button onClick={() => setReserveIp(addr.ip_address)} style={{ fontSize: 11, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Reserve</button>
+                    ) : '—'}
                   </td>
                 </tr>
               ))}
@@ -351,222 +591,213 @@ function IPAddressTable({ subnet, onClose }: { subnet: Subnet; onClose: () => vo
         )}
       </div>
 
-      {/* Reserve modal */}
-      {reserveModal && (
-        <Modal title={`Reserve ${reserveModal}`} onClose={() => setReserveModal(null)}>
-          <Field label="Purpose / Description">
-            <input value={reserveForm.description} onChange={e => setReserveForm(p => ({ ...p, description: e.target.value }))} style={INPUT} placeholder="e.g. Printer, Server, Gateway" />
-          </Field>
-          <Field label="Owner">
-            <input value={reserveForm.owner} onChange={e => setReserveForm(p => ({ ...p, owner: e.target.value }))} style={INPUT} placeholder="e.g. IT Team, John Smith" />
-          </Field>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <button onClick={() => setReserveModal(null)} style={BTN}>Cancel</button>
-            <button onClick={reserveIP} style={BTN_RED}>Reserve IP</button>
-          </div>
-        </Modal>
-      )}
+      {reserveIp && <ReserveModal ip={reserveIp} onClose={() => setReserveIp(null)} onConfirm={doReserve} />}
     </div>
   );
 }
 
-const TH: React.CSSProperties = {
-  background: '#f9fafb', color: '#6b7280', fontSize: 11, fontWeight: 600,
-  textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 12px',
-  borderBottom: '1px solid var(--border)', textAlign: 'left', whiteSpace: 'nowrap',
-};
-const TD: React.CSSProperties = { padding: '9px 12px', fontSize: 13, color: 'var(--text-primary)' };
+// ════════════════════════════════════════════════════════════
+// MAIN
+// ════════════════════════════════════════════════════════════
+type View = 'tree' | 'flat' | 'vlans';
+type SortKey = 'network' | 'name' | 'used' | 'unknown' | 'util';
 
-// ════════════════════════════════════════════════════════════
-// MAIN IPAM TAB
-// ════════════════════════════════════════════════════════════
 export default function IPAMTab() {
-  const [supernets, setSupernets]   = useState<Supernet[]>([]);
-  const [subnets, setSubnets]       = useState<Subnet[]>([]);
-  const [vlans, setVlans]           = useState<Vlan[]>([]);
-  const [sites, setSites]           = useState<{id:number;name:string;code:string;city:string}[]>([]);
-  const [expanded, setExpanded]     = useState<Set<number>>(new Set());
-  const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
-  const [view, setView]             = useState<'tree' | 'flat' | 'vlans'>('tree');
-  const [showImport, setShowImport]           = useState(false);
-  const [nextIpResult, setNextIpResult]       = useState<Record<number,string>>({});
-  const [nextSubnetResult, setNextSubnetResult] = useState<Record<number,string>>({});
-  const [conflicts, setConflicts]             = useState<any[]>([]);
-  const [showAddSupernet, setShowAddSupernet] = useState(false);
-  const [showAddSubnet, setShowAddSubnet]     = useState(false);
-  const [showAddVlan, setShowAddVlan]         = useState(false);
-  const [subnetSupernet, setSubnetSupernet]   = useState<number | null>(null);
-
-  const [supernetForm, setSupernetForm] = useState({ network: '', prefix_length: '8', name: '', description: '', site: '' });
-  const [subnetForm, setSubnetForm]     = useState({ network: '', prefix_length: '24', name: '', description: '', gateway: '', vlan_id: '', site: '', owner: '', location: '', notes: '' });
-  const [vlanForm, setVlanForm]         = useState({ vlan_id: '', name: '', description: '', site: '' });
-
   const { toast } = useToast();
 
-  // ── Global scan progress ──────────────────────────────────
+  const [supernets, setSupernets] = useState<Supernet[]>([]);
+  const [subnets, setSubnets]     = useState<Subnet[]>([]);
+  const [vlans, setVlans]         = useState<Vlan[]>([]);
+  const [sites, setSites]         = useState<Site[]>([]);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [loading, setLoading]     = useState(true);
+
+  const [view, setView]           = useState<View>('tree');
+  const [expanded, setExpanded]   = useState<Set<number>>(new Set());
+  const [selectedSubnet, setSelectedSubnet] = useState<Subnet | null>(null);
+
+  const [showImport, setShowImport]       = useState(false);
+  const [showAddSupernet, setAddSupernet] = useState(false);
+  const [showAddVlan, setAddVlan]         = useState(false);
+  const [addSubnetFor, setAddSubnetFor]   = useState<number | null>(null);  // supernet id (null = unassigned/any)
+  const [showAddSubnet, setShowAddSubnet] = useState(false);
+
+  const [nextSubnetResult, setNextSubnetResult] = useState<Record<number, string>>({});
+  const [prefixSel, setPrefixSel] = useState<Record<number, number>>({});
+
   const [scanStatus, setScanStatus] = useState<any>(null);
+  const [prevActive, setPrevActive] = useState<number | null>(null);
 
-  useEffect(() => {
-    const checkScan = async () => {
-      const d = await api('/ipam/scan-status').catch(() => null);
-      if (d) setScanStatus(d);
-    };
-    checkScan();
-    const t = setInterval(checkScan, 3000);
-    return () => clearInterval(t);
-  }, []);
-
-  const checkConflicts = async () => {
-    const d = await api('/ipam/conflicts').catch(() => null);
-    if (d) setConflicts(d.data || []);
-  };
-
-  const loadAll = async () => {
-    const [sn, sub, vl, si] = await Promise.allSettled([
+  // ── Load ──────────────────────────────────────────────────
+  const loadAll = useCallback(async () => {
+    const [sn, sub, vl, si, cf] = await Promise.allSettled([
       api('/ipam/supernets'),
       api('/ipam/subnets'),
       api('/ipam/vlans'),
       api('/sites'),
+      api('/ipam/conflicts'),
     ]);
-    if (sn.status  === 'fulfilled') setSupernets(sn.value.data  || []);
-    if (sub.status === 'fulfilled') setSubnets(sub.value.data   || []);
-    if (vl.status  === 'fulfilled') setVlans(vl.value.data      || []);
-    if (si.status  === 'fulfilled') setSites(si.value.data      || []);
-    checkConflicts();
-  };
+    if (sn.status  === 'fulfilled') setSupernets(sn.value.data || []);
+    if (sub.status === 'fulfilled') setSubnets(sub.value.data || []);
+    if (vl.status  === 'fulfilled') setVlans(vl.value.data || []);
+    if (si.status  === 'fulfilled') setSites(si.value.data || []);
+    if (cf.status  === 'fulfilled') setConflicts(cf.value.data || []);
+    setLoading(false);
+  }, []);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [loadAll]);
+  useRefreshKey(loadAll);
 
-  // Reload subnets when scan completes
-  const prevActiveScan = useState<number | null>(null);
+  // ── Global scan poll ──────────────────────────────────────
   useEffect(() => {
-    if (scanStatus?.active_scans === 0 && prevActiveScan[0] !== null && prevActiveScan[0] > 0) {
-      loadAll();
-    }
-    if (scanStatus) prevActiveScan[1](scanStatus.active_scans);
-  }, [scanStatus?.active_scans]);
+    const check = async () => {
+      const d = await api('/ipam/scan-status').catch(() => null);
+      if (d) setScanStatus(d);
+    };
+    check();
+    const t = setInterval(check, 3000);
+    return () => clearInterval(t);
+  }, []);
 
-  const toggleExpanded = (id: number) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
+  // Reload when scans finish
+  useEffect(() => {
+    if (!scanStatus) return;
+    const active = scanStatus.active_scans ?? 0;
+    if (prevActive !== null && prevActive > 0 && active === 0) loadAll();
+    setPrevActive(active);
+  }, [scanStatus, prevActive, loadAll]);
 
-  const addSupernet = async () => {
-    try {
-      await api('/ipam/supernets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(supernetForm) });
-      toast('Supernet added', 'success');
-      setShowAddSupernet(false);
-      setSupernetForm({ network: '', prefix_length: '8', name: '', description: '', site: '' });
-      loadAll();
-    } catch (e: any) { toast(e.message, 'error'); }
-  };
-
-  const addSubnet = async () => {
-    try {
-      await api('/ipam/subnets', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...subnetForm, supernet_id: subnetSupernet }) });
-      toast('Subnet added', 'success');
-      setShowAddSubnet(false);
-      setSubnetForm({ network: '', prefix_length: '24', name: '', description: '', gateway: '', vlan_id: '', site: '', owner: '', location: '', notes: '' });
-      loadAll();
-    } catch (e: any) { toast(e.message, 'error'); }
-  };
-
-  const addVlan = async () => {
-    try {
-      await api('/ipam/vlans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vlanForm) });
-      toast('VLAN added', 'success');
-      setShowAddVlan(false);
-      setVlanForm({ vlan_id: '', name: '', description: '', site: '' });
-      loadAll();
-    } catch (e: any) { toast(e.message, 'error'); }
-  };
-
+  // ── Mutations ─────────────────────────────────────────────
   const deleteSupernet = async (id: number) => {
     if (!confirm('Delete supernet? Subnets will be unlinked but not deleted.')) return;
-    await api(`/ipam/supernets/${id}`, { method: 'DELETE' });
-    toast('Supernet deleted', 'info');
-    loadAll();
+    try { await api(`/ipam/supernets/${id}`, { method: 'DELETE' }); toast('Supernet deleted', 'info'); loadAll(); }
+    catch (e: any) { toast(e.message, 'error'); }
   };
 
   const deleteSubnet = async (id: number) => {
     if (!confirm('Delete subnet? All IP address data will be removed.')) return;
-    await api(`/ipam/subnets/${id}`, { method: 'DELETE' });
-    toast('Subnet deleted', 'info');
-    loadAll();
+    try { await api(`/ipam/subnets/${id}`, { method: 'DELETE' }); toast('Subnet deleted', 'info'); loadAll(); }
+    catch (e: any) { toast(e.message, 'error'); }
   };
 
-  const scanSubnet = async (subnet: Subnet) => {
-    toast(`Scanning ${subnet.network}/${subnet.prefix_length}...`, 'info');
-    await api(`/ipam/subnets/${subnet.id}/scan`, { method: 'POST' });
-    toast('Scan started — refresh in a moment', 'success');
-    setTimeout(loadAll, 10000);
+  const deleteVlan = async (id: number) => {
+    if (!confirm('Delete this VLAN?')) return;
+    try { await api(`/ipam/vlans/${id}`, { method: 'DELETE' }); toast('VLAN deleted', 'info'); loadAll(); }
+    catch (e: any) { toast(e.message, 'error'); }
+  };
+
+  const scanSubnet = async (s: Subnet) => {
+    try {
+      await api(`/ipam/subnets/${s.id}/scan`, { method: 'POST' });
+      toast(`Scan started for ${s.network}/${s.prefix_length}`, 'success');
+    } catch (e: any) { toast(e.message, 'error'); }
   };
 
   const scanAll = async () => {
-    toast('Full IPAM scan started', 'info');
-    await api('/ipam/scan-all', { method: 'POST' });
+    try { await api('/ipam/scan-all', { method: 'POST' }); toast('Full IPAM scan started', 'info'); }
+    catch (e: any) { toast(e.message, 'error'); }
   };
 
-  // Subnets not linked to any supernet
-  const orphanSubnets = subnets.filter(s => !s.supernet_id);
+  const findNextSubnet = async (sn: Supernet) => {
+    const prefix = prefixSel[sn.id] || 24;
+    const d = await api(`/ipam/supernets/${sn.id}/next-subnet?prefix=${prefix}`).catch(() => null);
+    setNextSubnetResult(p => ({ ...p, [sn.id]: d?.available ? `${d.subnet}/${prefix}` : 'None available' }));
+    if (d?.available) toast(`Next free /${prefix}: ${d.subnet}`, 'success');
+    else toast('No free subnet available', 'error');
+  };
 
-  // If viewing a specific subnet's IPs
+  const toggleExpanded = (id: number) =>
+    setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const openAddSubnet = (supernetId: number | null) => { setAddSubnetFor(supernetId); setShowAddSubnet(true); };
+
+  // ── Derived ───────────────────────────────────────────────
+  const orphanSubnets = useMemo(() => subnets.filter(s => !s.supernet_id), [subnets]);
+  const totalIPs   = useMemo(() => subnets.reduce((a, s) => a + (s.total_hosts || 0), 0), [subnets]);
+  const totalUnknown = useMemo(() => subnets.reduce((a, s) => a + (s.unknown_hosts || 0), 0), [subnets]);
+
+  // ── Subnet detail overlay ─────────────────────────────────
   if (selectedSubnet) {
-    return <IPAddressTable subnet={selectedSubnet} onClose={() => { setSelectedSubnet(null); loadAll(); }} />;
+    return <SubnetDetail subnet={selectedSubnet} onClose={() => { setSelectedSubnet(null); loadAll(); }} />;
   }
 
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>IPAM — IP Address Management</h2>
-        <div style={{ flex: 1 }} />
-        {/* View toggle */}
-        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-          {(['tree','flat','vlans'] as const).map(v => (
-            <button key={v} onClick={() => setView(v)} style={{
-              padding: '5px 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
-              background: view === v ? '#1a2744' : 'var(--bg-card)',
-              color: view === v ? '#fff' : 'var(--text-secondary)',
-            }}>
-              {v === 'tree' ? '🌲 Tree' : v === 'flat' ? '📋 All Subnets' : '🏷 VLANs'}
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PageHeader
+        title="IPAM"
+        subtitle="Hierarchical IP address management — supernets, subnets, and live address utilization"
+      >
+        <div className="segmented">
+          {(['tree', 'flat', 'vlans'] as View[]).map(v => (
+            <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
+              {v === 'tree' ? 'Tree' : v === 'flat' ? 'All Subnets' : 'VLANs'}
             </button>
           ))}
         </div>
-        <button onClick={() => setShowImport(true)} style={BTN}>⬆ Import CSV</button>
-        <button onClick={() => setShowAddSupernet(true)} style={BTN}>+ Supernet</button>
-        <button onClick={() => { setSubnetSupernet(null); setShowAddSubnet(true); }} style={BTN}>+ Subnet</button>
-        <button onClick={scanAll} style={BTN_RED}>⟳ Scan All</button>
-      </div>
+        <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>
+        <button className="btn" onClick={() => setAddSupernet(true)}>+ Supernet</button>
+        <button className="btn" onClick={() => openAddSubnet(null)}>+ Subnet</button>
+        <button className="btn btn-primary" onClick={scanAll}>⟳ Scan All</button>
+      </PageHeader>
 
-      {/* Summary tiles */}
+      {/* ── CONFLICT BANNER ── */}
+      {conflicts.length > 0 && (
+        <div style={{
+          background: 'rgba(220,38,38,0.08)', borderLeft: '4px solid var(--red)',
+          border: '1px solid rgba(220,38,38,0.3)', borderRadius: 'var(--radius)', padding: '14px 18px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--red)' }}>
+              {conflicts.length} overlapping subnet{conflicts.length > 1 ? 's' : ''} detected
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {conflicts.map((c, i) => (
+              <div key={i} style={{
+                ...MONO, fontSize: 12, fontWeight: 600, color: 'var(--red)',
+                background: 'var(--bg-card)', border: '1px solid rgba(220,38,38,0.3)',
+                borderRadius: 'var(--radius-sm)', padding: '5px 10px',
+              }}>
+                {c.network_a}/{c.prefix_a} ⇄ {c.network_b}/{c.prefix_b}
+                {(c.site_a || c.site_b) && (
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6, fontFamily: 'inherit' }}>
+                    ({c.site_a || '—'} / {c.site_b || '—'})
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── KPI tiles ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
         {[
-          { label: 'Supernets',  value: supernets.length,                        color: '#1a2744' },
-          { label: 'Subnets',    value: subnets.length,                           color: '#2563eb' },
-          { label: 'Total IPs',  value: subnets.reduce((a,s) => a + (s.total_hosts||0), 0), color: '#7c3aed' },
-          { label: 'Unknown',    value: subnets.reduce((a,s) => a + (s.unknown_hosts||0), 0),
-            color: subnets.reduce((a,s) => a + (s.unknown_hosts||0), 0) > 0 ? '#ea580c' : '#16a34a' },
-        ].map((t,i) => (
-          <div key={i} style={{ ...CARD, padding: 16 }}>
-            <div style={{ fontSize: 26, fontWeight: 700, color: t.color }}>{t.value}</div>
+          { label: 'Supernets',     value: supernets.length, color: 'var(--navy)' },
+          { label: 'Subnets',       value: subnets.length,   color: 'var(--blue)' },
+          { label: 'Total IPs',     value: totalIPs,         color: 'var(--purple)' },
+          { label: 'Unknown Hosts', value: totalUnknown,     color: totalUnknown > 0 ? 'var(--orange)' : 'var(--green)' },
+        ].map((t, i) => (
+          <div key={i} className="kpi-card" style={{ borderLeftColor: t.color }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: t.color }}>
+              {loading ? <Skeleton height={28} width={60} /> : t.value.toLocaleString()}
+            </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{t.label}</div>
           </div>
         ))}
       </div>
 
-      {/* ── Scan Progress Panel ── */}
+      {/* ── Active scan progress ── */}
       {scanStatus && scanStatus.active_scans > 0 && (
-        <div style={{ ...CARD, padding: 16, borderLeft: '4px solid #C8102E', background: '#fff8f8' }}>
+        <div style={{
+          background: 'var(--primary-light)', border: '1px solid var(--border)',
+          borderLeft: '4px solid var(--primary)', borderRadius: 'var(--radius)', padding: 16,
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#C8102E', animation: 'pulse 1s infinite' }} />
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#C8102E' }}>
-              Scanning {scanStatus.active_scans} subnet{scanStatus.active_scans > 1 ? 's' : ''}...
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--primary)', animation: 'pulse 1s infinite' }} />
+            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--primary)' }}>
+              Scanning {scanStatus.active_scans} subnet{scanStatus.active_scans > 1 ? 's' : ''}…
             </div>
           </div>
           {scanStatus.subnets?.filter((s: any) => s.scan_status === 'scanning').map((s: any) => {
@@ -576,16 +807,14 @@ export default function IPAMTab() {
             return (
               <div key={s.id} style={{ marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                  <span style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 600 }}>{s.network}/{s.prefix_length}{s.name ? ` — ${s.name}` : ''}</span>
+                  <span style={{ ...MONO, fontSize: 12, fontWeight: 600 }}>{s.network}/{s.prefix_length}{s.name ? ` — ${s.name}` : ''}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{scanned} / {total} hosts · {pct}%</span>
                 </div>
-                <div style={{ height: 6, background: '#fee2e2', borderRadius: 3 }}>
-                  <div style={{ height: '100%', width: `${pct}%`, background: '#C8102E', borderRadius: 3, transition: 'width 0.5s' }} />
-                </div>
-                <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>
-                  <span style={{ color: '#2563eb' }}>● {s.used_hosts || 0} DHCP</span>
-                  <span style={{ color: '#16a34a' }}>● {s.free_hosts || 0} free</span>
-                  <span style={{ color: '#ea580c' }}>● {s.unknown_hosts || 0} unknown</span>
+                <div className="util-track"><div className="util-fill" style={{ width: `${pct}%`, background: 'var(--primary)' }} /></div>
+                <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11 }}>
+                  <span style={{ color: 'var(--blue)' }}>● {s.used_hosts || 0} DHCP</span>
+                  <span style={{ color: 'var(--green)' }}>● {s.free_hosts || 0} free</span>
+                  <span style={{ color: 'var(--orange)' }}>● {s.unknown_hosts || 0} unknown</span>
                 </div>
               </div>
             );
@@ -593,339 +822,301 @@ export default function IPAMTab() {
         </div>
       )}
 
-      {/* Recently completed scan results */}
-      {scanStatus && scanStatus.active_scans === 0 && scanStatus.subnets?.some((s: any) => s.scan_status === 'done') && (
-        <div style={{ ...CARD, padding: '10px 16px' }}>
+      {/* ── Recently completed scan results ── */}
+      {scanStatus && scanStatus.active_scans === 0 && scanStatus.subnets?.some((s: any) => s.scan_status === 'done' && s.last_scanned) && (
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 16px' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>Last Scan Results</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {scanStatus.subnets?.filter((s: any) => s.scan_status === 'done' && s.last_scanned).map((s: any) => {
-              const total = s.total_hosts || 0;
-              const pct   = total > 0 ? Math.round((s.used_hosts / total) * 100) : 0;
-              return (
-                <div key={s.id} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 11 }}>
-                  <div style={{ fontFamily: 'monospace', fontWeight: 600 }}>{s.network}/{s.prefix_length}</div>
-                  <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-                    {s.used_hosts}/{total} used · {s.unknown_hosts > 0 ? <span style={{ color: '#ea580c' }}>⚠ {s.unknown_hosts} unknown</span> : <span style={{ color: '#16a34a' }}>✓ clean</span>}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {new Date(s.last_scanned).toLocaleString()}
-                  </div>
+            {scanStatus.subnets?.filter((s: any) => s.scan_status === 'done' && s.last_scanned).map((s: any) => (
+              <div key={s.id} style={{ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 11 }}>
+                <div style={{ ...MONO, fontWeight: 600 }}>{s.network}/{s.prefix_length}</div>
+                <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                  {s.used_hosts}/{s.total_hosts || 0} used · {s.unknown_hosts > 0
+                    ? <span style={{ color: 'var(--orange)' }}>⚠ {s.unknown_hosts} unknown</span>
+                    : <span style={{ color: 'var(--green)' }}>✓ clean</span>}
                 </div>
-              );
-            })}
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(s.last_scanned)}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* ── TREE VIEW ── */}
-      {view === 'tree' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {supernets.length === 0 && orphanSubnets.length === 0 && (
-            <div style={{ ...CARD, padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-              No networks configured yet.<br />
-              <span style={{ fontSize: 12 }}>Add a Supernet (e.g. 10.0.0.0/8) then add Subnets under it.</span>
-            </div>
-          )}
-
-          {supernets.map(sn => {
-            const children = subnets.filter(s => s.supernet_id === sn.id);
-            const isOpen   = expanded.has(sn.id);
-            const totalUsed = children.reduce((a, s) => a + (s.used_hosts || 0), 0);
-            const totalAll  = children.reduce((a, s) => a + (s.total_hosts || 0), 0);
-
-            return (
-              <div key={sn.id} style={{ ...CARD, overflow: 'hidden' }}>
-                {/* Supernet row */}
-                <div
-                  onClick={() => toggleExpanded(sn.id)}
-                  style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderBottom: isOpen ? '1px solid var(--border)' : 'none' }}
-                >
-                  <span style={{ fontSize: 14, color: 'var(--text-muted)', transition: 'transform 0.2s', display: 'inline-block', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#1a2744', flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
-                      {sn.name || `${sn.network}/${sn.prefix_length}`}
-                      <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)', marginLeft: 10 }}>{sn.network}/{sn.prefix_length}</span>
-                    </div>
-                    {sn.site && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sn.site}</div>}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{children.length} subnets</div>
-                  {totalAll > 0 && (
-                    <div style={{ width: 200 }}>
-                      <UtilBar used={totalUsed} total={totalAll} />
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={e => { e.stopPropagation(); setSubnetSupernet(sn.id); setShowAddSubnet(true); }}
-                      style={{ ...BTN, fontSize: 11, padding: '3px 8px' }}>+ Subnet</button>
-                    <select
-                      id={'pfx-' + sn.id}
-                      defaultValue="24"
-                      onClick={e => e.stopPropagation()}
-                      style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff', color: '#2563eb', cursor: 'pointer' }}
-                    >
-                      {[24,25,26,27,28,29,30].map(p => <option key={p} value={p}>/{p}</option>)}
-                    </select>
-                    <button onClick={async e => {
-                      e.stopPropagation();
-                      const sel = document.getElementById('pfx-' + sn.id) as HTMLSelectElement;
-                      const prefix = sel?.value || '24';
-                      const d = await api('/ipam/supernets/' + sn.id + '/next-subnet?prefix=' + prefix).catch(() => null);
-                      setNextSubnetResult(p => ({ ...p, [sn.id]: d?.available ? d.subnet : 'None available' }));
-                    }} style={{ ...BTN, fontSize: 11, padding: '3px 8px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
-                      Next Free
-                    </button>
-                    {nextSubnetResult[sn.id] && (
-                      <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#2563eb', fontWeight: 600 }}>
-                        {nextSubnetResult[sn.id]}
-                      </span>
-                    )}
-                    <button onClick={e => { e.stopPropagation(); deleteSupernet(sn.id); }}
-                      style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
-                  </div>
-                </div>
-
-                {/* Subnet rows */}
-                {isOpen && children.map(sub => (
-                  <SubnetRow key={sub.id} subnet={sub} onView={() => setSelectedSubnet(sub)} onScan={() => scanSubnet(sub)} onDelete={() => deleteSubnet(sub.id)} />
-                ))}
-                {isOpen && children.length === 0 && (
-                  <div style={{ padding: '16px 48px', color: 'var(--text-muted)', fontSize: 13 }}>
-                    No subnets yet — click + Subnet to add one
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Orphan subnets (no supernet) */}
-          {orphanSubnets.length > 0 && (
-            <div style={CARD}>
-              <div style={{ padding: '12px 16px', fontWeight: 600, fontSize: 13, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
-                Unassigned Subnets
-              </div>
-              {orphanSubnets.map(sub => (
-                <SubnetRow key={sub.id} subnet={sub} onView={() => setSelectedSubnet(sub)} onScan={() => scanSubnet(sub)} onDelete={() => deleteSubnet(sub.id)} />
-              ))}
-            </div>
-          )}
+      {/* ── Body ── */}
+      {loading ? (
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+          <TableSkeleton rows={8} cols={6} />
         </div>
-      )}
-
-      {/* ── FLAT VIEW ── */}
-      {view === 'flat' && (
-        <div style={CARD}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={TH}>Network</th>
-                <th style={TH}>Name</th>
-                <th style={TH}>Supernet</th>
-                <th style={TH}>Gateway</th>
-                <th style={TH}>VLAN</th>
-                <th style={TH}>Site</th>
-                <th style={TH}>Used / Total</th>
-                <th style={TH}>Utilization</th>
-                <th style={TH}>Unknown</th>
-                <th style={TH}>Scan</th>
-                <th style={TH}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {subnets.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No subnets configured</td></tr>}
-              {subnets.map(sub => (
-                <tr key={sub.id} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }} onClick={() => setSelectedSubnet(sub)}>
-                  <td style={{ ...TD, fontFamily: 'monospace', fontWeight: 600 }}>{sub.network}/{sub.prefix_length}</td>
-                  <td style={TD}>{sub.name || '—'}</td>
-                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || '—'}</td>
-                  <td style={{ ...TD, fontFamily: 'monospace', fontSize: 11 }}>{sub.gateway || '—'}</td>
-                  <td style={TD}>{sub.vlan_id || '—'}</td>
-                  <td style={TD}>{sub.site || '—'}</td>
-                  <td style={TD}>{sub.used_hosts} / {sub.total_hosts || totalHosts(sub.prefix_length)}</td>
-                  <td style={{ ...TD, minWidth: 150 }}><UtilBar used={sub.used_hosts} total={sub.total_hosts || totalHosts(sub.prefix_length)} /></td>
-                  <td style={TD}>{sub.unknown_hosts > 0 ? <span style={{ color: '#ea580c', fontWeight: 600 }}>{sub.unknown_hosts}</span> : <span style={{ color: '#16a34a' }}>0</span>}</td>
-                  <td style={TD}>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {sub.scan_status === 'scanning' ? '⟳ Scanning...' :
-                       sub.scan_status === 'done' && sub.last_scanned ? new Date(sub.last_scanned).toLocaleDateString() :
-                       sub.scan_status === 'error' ? '⚠ Error' : 'Never'}
-                    </span>
-                  </td>
-                  <td style={TD} onClick={e => e.stopPropagation()}>
-                    <button onClick={() => scanSubnet(sub)} style={{ fontSize: 11, color: '#C8102E', background: 'none', border: 'none', cursor: 'pointer' }}>Scan</button>
-                    <button onClick={() => deleteSubnet(sub.id)} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ── VLAN VIEW ── */}
-      {view === 'vlans' && (
-        <div style={CARD}>
-          <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ fontWeight: 600 }}>VLAN Registry</div>
-            <button onClick={() => setShowAddVlan(true)} style={BTN_RED}>+ Add VLAN</button>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={TH}>VLAN ID</th><th style={TH}>Name</th><th style={TH}>Description</th><th style={TH}>Site</th>
-              <th style={TH}>Subnets</th><th style={TH}></th>
-            </tr></thead>
-            <tbody>
-              {vlans.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No VLANs configured</td></tr>}
-              {vlans.map(v => (
-                <tr key={v.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ ...TD, fontWeight: 700, fontFamily: 'monospace' }}>VLAN {v.vlan_id}</td>
-                  <td style={TD}>{v.name || '—'}</td>
-                  <td style={{ ...TD, color: 'var(--text-muted)' }}>{v.description || '—'}</td>
-                  <td style={TD}>{v.site || '—'}</td>
-                  <td style={TD}>{subnets.filter(s => s.vlan_id === v.vlan_id).length}</td>
-                  <td style={TD}>
-                    <button onClick={() => api(`/ipam/vlans/${v.id}`, { method: 'DELETE' }).then(loadAll)}
-                      style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      ) : view === 'tree' ? (
+        <TreeView
+          supernets={supernets} subnets={subnets} orphanSubnets={orphanSubnets}
+          expanded={expanded} onToggle={toggleExpanded}
+          onViewSubnet={setSelectedSubnet} onScanSubnet={scanSubnet} onDeleteSubnet={deleteSubnet}
+          onAddSubnet={openAddSubnet} onDeleteSupernet={deleteSupernet}
+          prefixSel={prefixSel} setPrefixSel={setPrefixSel}
+          nextSubnetResult={nextSubnetResult} onFindNextSubnet={findNextSubnet}
+        />
+      ) : view === 'flat' ? (
+        <FlatView subnets={subnets} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} />
+      ) : (
+        <VlanView vlans={vlans} subnets={subnets} onAdd={() => setAddVlan(true)} onDelete={deleteVlan} />
       )}
 
       {/* ── MODALS ── */}
-
       {showImport && <IPAMImport onDone={() => { setShowImport(false); loadAll(); }} />}
-      {showAddSupernet && (
-        <Modal title="Add Supernet" onClose={() => setShowAddSupernet(false)}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {[
-              { k: 'network', l: 'Network (e.g. 10.0.0.0)', full: true },
-              { k: 'prefix_length', l: 'Prefix Length (e.g. 8)' },
-              { k: 'name', l: 'Name' },
-              { k: 'description', l: 'Description', full: true },
-            ].map(f => (
-              <div key={f.k} style={f.full ? { gridColumn: '1/-1' } : {}}>
-                <Field label={f.l}>
-                  <input value={(supernetForm as any)[f.k]} onChange={e => setSupernetForm(p => ({ ...p, [f.k]: e.target.value }))} style={INPUT} />
-                </Field>
-              </div>
-            ))}
-            <div style={{ gridColumn: '1/-1' }}>
-              <Field label="Site (from NetVault)">
-                <select value={supernetForm.site} onChange={e => setSupernetForm(p => ({ ...p, site: e.target.value }))} style={INPUT}>
-                  <option value="">— No site —</option>
-                  {sites.map(s => <option key={s.id} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}</option>)}
-                </select>
-              </Field>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={() => setShowAddSupernet(false)} style={BTN}>Cancel</button>
-            <button onClick={addSupernet} style={BTN_RED}>Add Supernet</button>
-          </div>
-        </Modal>
-      )}
-
+      {showAddSupernet && <AddSupernetModal sites={sites} onClose={() => setAddSupernet(false)} onSaved={loadAll} />}
       {showAddSubnet && (
-        <Modal title="Add Subnet" onClose={() => setShowAddSubnet(false)}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {[
-              { k: 'network', l: 'Network (e.g. 192.168.1.0)', full: true },
-              { k: 'prefix_length', l: 'Prefix (e.g. 24)' },
-              { k: 'name', l: 'Name' },
-              { k: 'gateway', l: 'Gateway IP' },
-              { k: 'vlan_id', l: 'VLAN ID' },
-              { k: 'owner', l: 'Owner' },
-              { k: 'location', l: 'Location' },
-              { k: 'description', l: 'Description', full: true },
-              { k: 'notes', l: 'Notes', full: true },
-            ].map(f => (
-              <div key={f.k} style={f.full ? { gridColumn: '1/-1' } : {}}>
-                <Field label={f.l}>
-                  <input value={(subnetForm as any)[f.k]} onChange={e => setSubnetForm(p => ({ ...p, [f.k]: e.target.value }))} style={INPUT} />
-                </Field>
-              </div>
-            ))}
-            <div style={{ gridColumn: '1/-1' }}>
-              <Field label="Site (from NetVault)">
-                <select value={subnetForm.site} onChange={e => setSubnetForm(p => ({ ...p, site: e.target.value }))} style={INPUT}>
-                  <option value="">— No site —</option>
-                  {sites.map(s => <option key={s.id} value={s.name}>{s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div style={{ gridColumn: '1/-1' }}>
-              <Field label="Supernet (optional)">
-                <select value={subnetSupernet || ''} onChange={e => setSubnetSupernet(e.target.value ? parseInt(e.target.value) : null)} style={INPUT}>
-                  <option value="">None</option>
-                  {supernets.map(sn => <option key={sn.id} value={sn.id}>{sn.name || `${sn.network}/${sn.prefix_length}`}</option>)}
-                </select>
-              </Field>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={() => setShowAddSubnet(false)} style={BTN}>Cancel</button>
-            <button onClick={addSubnet} style={BTN_RED}>Add Subnet</button>
-          </div>
-        </Modal>
+        <AddSubnetModal
+          sites={sites} supernets={supernets} defaultSupernetId={addSubnetFor}
+          onClose={() => setShowAddSubnet(false)} onSaved={loadAll}
+        />
       )}
+      {showAddVlan && <AddVlanModal sites={sites} onClose={() => setAddVlan(false)} onSaved={loadAll} />}
+    </div>
+  );
+}
 
-      {showAddVlan && (
-        <Modal title="Add VLAN" onClose={() => setShowAddVlan(false)}>
-          {[
-            { k: 'vlan_id', l: 'VLAN ID (number)' },
-            { k: 'name', l: 'Name' },
-            { k: 'site', l: 'Site' },
-            { k: 'description', l: 'Description' },
-          ].map(f => (
-            <Field key={f.k} label={f.l}>
-              <input value={(vlanForm as any)[f.k]} onChange={e => setVlanForm(p => ({ ...p, [f.k]: e.target.value }))} style={INPUT} />
-            </Field>
-          ))}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={() => setShowAddVlan(false)} style={BTN}>Cancel</button>
-            <button onClick={addVlan} style={BTN_RED}>Add VLAN</button>
+// ════════════════════════════════════════════════════════════
+// TREE VIEW (module scope)
+// ════════════════════════════════════════════════════════════
+function TreeView({
+  supernets, subnets, orphanSubnets, expanded, onToggle,
+  onViewSubnet, onScanSubnet, onDeleteSubnet, onAddSubnet, onDeleteSupernet,
+  prefixSel, setPrefixSel, nextSubnetResult, onFindNextSubnet,
+}: {
+  supernets: Supernet[]; subnets: Subnet[]; orphanSubnets: Subnet[];
+  expanded: Set<number>; onToggle: (id: number) => void;
+  onViewSubnet: (s: Subnet) => void; onScanSubnet: (s: Subnet) => void; onDeleteSubnet: (id: number) => void;
+  onAddSubnet: (supernetId: number | null) => void; onDeleteSupernet: (id: number) => void;
+  prefixSel: Record<number, number>; setPrefixSel: (f: (p: Record<number, number>) => Record<number, number>) => void;
+  nextSubnetResult: Record<number, string>; onFindNextSubnet: (sn: Supernet) => void;
+}) {
+  const CARD: React.CSSProperties = {
+    background: 'var(--bg-card)', border: '1px solid var(--border)',
+    borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden',
+  };
+
+  if (supernets.length === 0 && orphanSubnets.length === 0) {
+    return (
+      <div style={CARD}>
+        <EmptyState
+          icon="🗂"
+          title="No networks configured yet"
+          message="Add a Supernet (e.g. 10.0.0.0/8) then add Subnets under it to begin managing your IP space."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {supernets.map(sn => {
+        const children  = subnets.filter(s => s.supernet_id === sn.id);
+        const isOpen    = expanded.has(sn.id);
+        const totalUsed = children.reduce((a, s) => a + (s.used_hosts || 0), 0);
+        const totalAll  = children.reduce((a, s) => a + (s.total_hosts || 0), 0);
+        const prefix    = prefixSel[sn.id] || 24;
+
+        return (
+          <div key={sn.id} style={CARD}>
+            {/* Supernet header */}
+            <div
+              onClick={() => onToggle(sn.id)}
+              style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderBottom: isOpen ? '1px solid var(--border)' : 'none' }}
+            >
+              <span style={{ fontSize: 13, color: 'var(--text-muted)', display: 'inline-block', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--navy)', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
+                  {sn.name || `${sn.network}/${sn.prefix_length}`}
+                  <span style={{ ...MONO, fontSize: 12, color: 'var(--text-muted)', marginLeft: 10, fontWeight: 400 }}>{sn.network}/{sn.prefix_length}</span>
+                </div>
+                {sn.site && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sn.site}</div>}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 80 }}>{children.length} subnets</div>
+              {totalAll > 0 && <div style={{ width: 200 }}><UtilBar pct={utilPct(totalUsed, totalAll)} /></div>}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onAddSubnet(sn.id)}>+ Subnet</button>
+                <select
+                  value={prefix}
+                  onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
+                  style={{ fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                >
+                  {PREFIX_OPTIONS.map(p => <option key={p} value={p}>/{p}</option>)}
+                </select>
+                <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onFindNextSubnet(sn)}>Next Free</button>
+                {nextSubnetResult[sn.id] && (
+                  <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
+                )}
+                <button onClick={() => onDeleteSupernet(sn.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+              </div>
+            </div>
+
+            {/* Children */}
+            {isOpen && children.map(sub => (
+              <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} />
+            ))}
+            {isOpen && children.length === 0 && (
+              <div style={{ padding: '16px 48px', color: 'var(--text-muted)', fontSize: 13 }}>
+                No subnets yet — click + Subnet to add one
+              </div>
+            )}
           </div>
-        </Modal>
+        );
+      })}
+
+      {/* Unassigned */}
+      {orphanSubnets.length > 0 && (
+        <div style={CARD}>
+          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)' }} />
+            Unassigned Subnets <span style={{ fontWeight: 400 }}>({orphanSubnets.length})</span>
+          </div>
+          {orphanSubnets.map(sub => (
+            <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-// ── Subnet row component ──────────────────────────────────────
-function SubnetRow({ subnet, onView, onScan, onDelete }: { subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void }) {
-  const total   = subnet.total_hosts || Math.max(0, Math.pow(2, 32 - subnet.prefix_length) - 2);
-  const used    = subnet.used_hosts  || 0;
-  const unknown = subnet.unknown_hosts || 0;
+// ════════════════════════════════════════════════════════════
+// FLAT VIEW (sortable) — module scope
+// ════════════════════════════════════════════════════════════
+function ipToNum(ip: string): number {
+  const p = (ip || '').split('.').map(Number);
+  if (p.length !== 4 || p.some(isNaN)) return 0;
+  return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
+}
+
+function FlatView({ subnets, onView, onScan, onDelete }: {
+  subnets: Subnet[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void;
+}) {
+  const [sortKey, setSortKey] = useState<SortKey>('network');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(k); setSortDir('asc'); }
+  };
+
+  const sorted = useMemo(() => {
+    const arr = [...subnets];
+    arr.sort((a, b) => {
+      let va: number | string, vb: number | string;
+      switch (sortKey) {
+        case 'name':    va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); break;
+        case 'used':    va = a.used_hosts || 0; vb = b.used_hosts || 0; break;
+        case 'unknown': va = a.unknown_hosts || 0; vb = b.unknown_hosts || 0; break;
+        case 'util':
+          va = utilPct(a.used_hosts || 0, a.total_hosts || totalHosts(a.prefix_length));
+          vb = utilPct(b.used_hosts || 0, b.total_hosts || totalHosts(b.prefix_length));
+          break;
+        default:        va = ipToNum(a.network); vb = ipToNum(b.network); break;
+      }
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [subnets, sortKey, sortDir]);
+
+  const arrow = (k: SortKey) => sortKey === k ? <span className="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span> : null;
+  const SH = (k: SortKey, label: string) => (
+    <th className="th-sortable" onClick={() => toggleSort(k)}>{label}{arrow(k)}</th>
+  );
 
   return (
-    <div
-      onClick={onView}
-      style={{ padding: '10px 16px 10px 40px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderBottom: '1px solid var(--border)', transition: 'background 0.15s' }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-primary)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-    >
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#2563eb', flexShrink: 0 }} />
-      <div style={{ minWidth: 160 }}>
-        <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600 }}>{subnet.network}/{subnet.prefix_length}</div>
-        {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      {subnets.length === 0 ? (
+        <EmptyState icon="📋" title="No subnets configured" message="Add subnets in the Tree view or import them from CSV." />
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              {SH('network', 'Network')}
+              {SH('name', 'Name')}
+              <th>Supernet</th>
+              <th>Gateway</th>
+              <th>VLAN</th>
+              <th>Site</th>
+              {SH('used', 'Used / Total')}
+              {SH('util', 'Utilization')}
+              {SH('unknown', 'Unknown')}
+              <th>Scan</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(sub => {
+              const total = sub.total_hosts || totalHosts(sub.prefix_length);
+              return (
+                <tr key={sub.id} className="clickable" onClick={() => onView(sub)}>
+                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{sub.network}/{sub.prefix_length}</td>
+                  <td style={TD}>{sub.name || '—'}</td>
+                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${sub.supernet_network}/${sub.supernet_prefix}` : '—')}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 11 }}>{sub.gateway || '—'}</td>
+                  <td style={TD}>{sub.vlan_id ? <span className="badge badge-blue">{sub.vlan_id}</span> : '—'}</td>
+                  <td style={TD}>{sub.site || '—'}</td>
+                  <td style={{ ...TD, ...MONO }}>{sub.used_hosts || 0} / {total}</td>
+                  <td style={{ ...TD, minWidth: 150 }}><UtilBar pct={utilPct(sub.used_hosts || 0, total)} /></td>
+                  <td style={TD}>{sub.unknown_hosts > 0
+                    ? <span className="badge badge-orange">{sub.unknown_hosts}</span>
+                    : <span style={{ color: 'var(--green)' }}>0</span>}</td>
+                  <td style={{ ...TD, fontSize: 11, color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)' }}>
+                    {scanLabel(sub.scan_status, sub.last_scanned)}
+                  </td>
+                  <td style={TD} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => onScan(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+                    <button onClick={() => onDelete(sub.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// VLAN VIEW (module scope)
+// ════════════════════════════════════════════════════════════
+function VlanView({ vlans, subnets, onAdd, onDelete }: {
+  vlans: Vlan[]; subnets: Subnet[]; onAdd: () => void; onDelete: (id: number) => void;
+}) {
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontWeight: 600 }}>VLAN Registry</div>
+        <button className="btn btn-primary" onClick={onAdd}>+ Add VLAN</button>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 80 }}>{subnet.gateway ? `GW: ${subnet.gateway}` : ''}</div>
-      {subnet.vlan_id && <div style={{ fontSize: 11 }}><span className="badge badge-blue">VLAN {subnet.vlan_id}</span></div>}
-      <div style={{ flex: 1 }}><UtilBar used={used} total={total} /></div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 80, textAlign: 'right' }}>{used}/{total} used</div>
-      {unknown > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: '#ea580c', minWidth: 60 }}>⚠ {unknown} unknown</div>}
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 70 }}>
-        {subnet.scan_status === 'scanning' ? '⟳ Scanning' :
-         subnet.scan_status === 'done' && subnet.last_scanned ? `✓ ${new Date(subnet.last_scanned).toLocaleDateString()}` :
-         subnet.scan_status === 'error' ? '⚠ Error' : 'Not scanned'}
-      </div>
-      <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-        <button onClick={onScan} style={{ fontSize: 11, color: '#C8102E', background: 'none', border: 'none', cursor: 'pointer' }}>Scan</button>
-        <button onClick={onDelete} style={{ fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
-      </div>
+      {vlans.length === 0 ? (
+        <EmptyState icon="🏷" title="No VLANs configured" message="Add a VLAN to track it across your subnets." actionLabel="Add VLAN" onAction={onAdd} />
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>VLAN ID</th><th>Name</th><th>Description</th><th>Site</th><th>Subnets</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {vlans.map(v => (
+              <tr key={v.id}>
+                <td style={{ ...TD, ...MONO, fontWeight: 700 }}>VLAN {v.vlan_id}</td>
+                <td style={TD}>{v.name || '—'}</td>
+                <td style={{ ...TD, color: 'var(--text-muted)' }}>{v.description || '—'}</td>
+                <td style={TD}>{v.site || '—'}</td>
+                <td style={TD}>{subnets.filter(s => s.vlan_id === v.vlan_id).length}</td>
+                <td style={TD}>
+                  <button onClick={() => onDelete(v.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

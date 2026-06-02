@@ -10,24 +10,50 @@ interface HeaderProps {
   collectorOnline: boolean;
 }
 
+interface AlertItem {
+  id: number;
+  message: string;
+  severity: string;
+  scope_id: string;
+  fired_at: string;
+}
+
+const SEVERITY_COLOR: Record<string, string> = { critical: '#dc2626', warning: '#ca8a04' };
+
 export function Header(props: HeaderProps) {
   const { collectorOnline, onNavigate } = props;
   const { theme, toggle } = useTheme();
   const { data: session } = useSession();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [alertTotal, setAlertTotal] = useState(0);
   const dropRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLDivElement>(null);
   const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
   const userName    = session?.user?.name  || session?.user?.email || 'User';
   const userEmail   = session?.user?.email || '';
   const userInitial = userName[0]?.toUpperCase() || 'U';
 
-  // Close dropdown on outside click
+  // Poll unacknowledged alerts for the notifications bell
+  useEffect(() => {
+    const load = () => {
+      fetch('/api/alerts?unacked=true&limit=5')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { setAlerts(d.data || []); setAlertTotal(d.total || 0); } })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Close dropdowns on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setDropdownOpen(false);
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setNotifOpen(false);
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -89,6 +115,81 @@ export function Header(props: HeaderProps) {
         <span style={{ fontSize: 11, fontWeight: 600, color: collectorOnline ? '#86efac' : '#fca5a5', letterSpacing: '0.03em' }}>
           {collectorOnline ? 'COLLECTOR' : 'OFFLINE'}
         </span>
+      </div>
+
+      {/* Notifications bell */}
+      <div ref={bellRef} style={{ position: 'relative' }}>
+        <button
+          onClick={() => setNotifOpen(o => !o)}
+          title="Alerts"
+          style={{
+            width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: notifOpen ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, cursor: 'pointer',
+            color: 'rgba(255,255,255,0.7)', position: 'relative', transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
+          onMouseLeave={e => { if (!notifOpen) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          {alertTotal > 0 && (
+            <span style={{
+              position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, padding: '0 4px',
+              background: '#C8102E', color: '#fff', borderRadius: 9, fontSize: 10, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: '2px solid #1a2744', boxShadow: '0 0 0 1px rgba(200,16,46,0.4)',
+            }}>
+              {alertTotal > 99 ? '99+' : alertTotal}
+            </span>
+          )}
+        </button>
+
+        {notifOpen && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 340,
+            background: '#fff', border: '1px solid var(--border)', borderRadius: 12,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.15)', overflow: 'hidden', zIndex: 999, animation: 'fadeIn 0.15s ease',
+          }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>Alerts</div>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{alertTotal} unacknowledged</span>
+            </div>
+            {alerts.length === 0 ? (
+              <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 13, color: '#16a34a', fontWeight: 500 }}>
+                ✓ No active alerts
+              </div>
+            ) : (
+              <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                {alerts.map(a => (
+                  <div key={a.id}
+                    onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
+                    style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', gap: 10 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+                  >
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: SEVERITY_COLOR[a.severity] || '#64748b', marginTop: 5, flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, color: '#0f172a', lineHeight: 1.4 }}>{a.message}</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                        {a.scope_id ? `${a.scope_id} · ` : ''}{new Date(a.fired_at).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
+              style={{ width: '100%', padding: '11px 16px', background: '#fff', border: 'none', borderTop: '1px solid #f1f5f9', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#C8102E', textAlign: 'center' }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+            >
+              View all alerts →
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Dark mode toggle */}

@@ -270,3 +270,124 @@ tbody tr:hover td { background: var(--bg-primary); }
   border-left: 3px solid var(--primary) !important;
   color: #fff !important;
 }
+
+/* ── Skeleton loaders ──────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -480px 0; }
+  100% { background-position: 480px 0; }
+}
+.skeleton {
+  display: block;
+  background: linear-gradient(90deg,
+    var(--border-light) 25%,
+    var(--border) 37%,
+    var(--border-light) 63%);
+  background-size: 480px 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+/* ── Breadcrumb ────────────────────────────────────────────── */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.breadcrumb button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--text-muted);
+  transition: color 0.12s;
+}
+.breadcrumb button:hover { color: var(--primary); }
+.breadcrumb .crumb-current { color: var(--text-primary); font-weight: 600; }
+.breadcrumb .crumb-sep { color: var(--border); }
+
+/* ── Keyboard hint ─────────────────────────────────────────── */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  line-height: 1.5;
+}
+
+/* ── Sortable table headers ────────────────────────────────── */
+.th-sortable { cursor: pointer; user-select: none; transition: color 0.12s; }
+.th-sortable:hover { color: var(--text-secondary); }
+.th-sortable .sort-arrow { margin-left: 4px; opacity: 0.9; }
+
+/* ── Data table (dense, consistent) ────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table thead th { position: sticky; top: 0; z-index: 2; }
+.data-table td { padding: 9px 14px; font-size: 13px; }
+.data-table tbody tr { cursor: default; }
+.data-table tbody tr.clickable { cursor: pointer; }
+
+/* ── Inline progress bar ───────────────────────────────────── */
+.util-track {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.util-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+
+/* ── KPI card with status border ───────────────────────────── */
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.kpi-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+
+/* ── Segmented control ─────────────────────────────────────── */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-card);
+}
+.segmented button {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.segmented button.active { background: var(--navy); color: #fff; }
+.segmented button:not(.active):hover { background: var(--bg-primary); }
+
+/* ── Modal overlay ─────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,23,42,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease;
+}
