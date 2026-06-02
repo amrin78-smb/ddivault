@@ -121,6 +121,17 @@ RETENTION_DAYS=90
 cp .env.local frontend/.env.local
 ```
 
+### ⚠️ Important — .env.local variable names
+The hub URL variables MUST be:
+```env
+NOCVAULT_HUB_URL=http://YOUR-SERVER:3000
+NEXT_PUBLIC_NOCVAULT_HUB_URL=http://YOUR-SERVER:3000
+```
+
+Do NOT use `NETVAULT_HUB_URL` or `NEXT_PUBLIC_NETVAULT_HUB_URL` — those are the old names and will cause SSO to fail silently by falling back to `localhost:3000`.
+
+Existing installations must update their `.env.local` manually — this is a one-time rename.
+
 ## Database
 
 ### Connection
