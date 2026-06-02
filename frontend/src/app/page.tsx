@@ -553,7 +553,7 @@ function SettingsTab() {
           <Field
             label="DNS Server for Scans"
             settingKey="scan_dns_server"
-            placeholder="e.g. 192.168.6.10 (leave blank for system default)"
+            placeholder="e.g. 192.168.1.10 (leave blank for system default)"
             helpText="Used for PTR/reverse DNS lookups during IPAM subnet scans. If blank, the system's default DNS is used."
           />
           <div style={{ marginBottom: 16 }}>
@@ -598,7 +598,7 @@ function SettingsTab() {
               <span style={{ fontSize: 12, background: 'var(--bg-primary)', padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)' }}>App :3006</span>
             </div>
             <div style={{ marginTop: 12 }}>
-              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000'}/launcher`}
+              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`}
                 style={{ color: '#C8102E', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>
                 ← NocVault Hub
               </a>

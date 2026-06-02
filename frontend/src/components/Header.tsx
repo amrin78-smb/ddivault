@@ -16,7 +16,7 @@ export function Header(props: HeaderProps) {
   const { data: session } = useSession();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
-  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000';
+  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
   const userName    = session?.user?.name  || session?.user?.email || 'User';
   const userEmail   = session?.user?.email || '';
@@ -240,7 +240,7 @@ export function Header(props: HeaderProps) {
                     });
                   } catch (_) {}
                   // Hard redirect — no callbackUrl, goes straight to launcher
-                  window.location.replace(`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://192.168.6.111:3000'}/launcher`);
+                  window.location.replace(`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`);
                 }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,

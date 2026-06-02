@@ -35,10 +35,10 @@ function parseCSV(text: string): Record<string, string>[] {
 
 // ── Template CSV content ──────────────────────────────────────
 const TEMPLATE_CSV = `network,prefix_length,name,gateway,vlan_id,site,description,owner,location,supernet
-192.168.1.0,24,Office LAN,192.168.1.1,10,IDC,Main office network,IT Team,Building A,192.168.0.0/16
-192.168.2.0,24,WiFi Guest,192.168.2.1,20,IDC,Guest wireless network,IT Team,Building A,192.168.0.0/16
-10.10.0.0,24,Server VLAN,10.10.0.1,100,TUFF,Production servers,Infra Team,Data Center,10.0.0.0/8
-10.20.0.0,24,Management,10.20.0.1,999,TUFF,Network management,NOC Team,Data Center,10.0.0.0/8
+192.168.1.0,24,Office LAN,192.168.1.1,10,HQ,Main office network,IT Team,Building A,192.168.0.0/16
+192.168.2.0,24,WiFi Guest,192.168.2.1,20,HQ,Guest wireless network,IT Team,Building A,192.168.0.0/16
+10.10.0.0,24,Server VLAN,10.10.0.1,100,DC1,Production servers,Infra Team,Data Center,10.0.0.0/8
+10.20.0.0,24,Management,10.20.0.1,999,DC1,Network management,NOC Team,Data Center,10.0.0.0/8
 `;
 
 function downloadTemplate() {

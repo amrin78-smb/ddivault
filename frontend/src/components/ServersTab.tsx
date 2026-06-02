@@ -48,7 +48,7 @@ async function api(path: string, opts?: RequestInit) {
 const AUTH_MODE_INFO: Record<string, { label: string; desc: string; color: string }> = {
   kerberos:   { label: 'Kerberos (Domain SSO)',    desc: 'Uses the Windows identity of the DDIVault service. No credentials stored. Requires DDIVault server and target to be in the same AD domain.', color: '#16a34a' },
   credential: { label: 'Stored Credentials',       desc: 'Username and password stored encrypted in the database. Required for workgroup servers, cross-domain, or when Kerberos is not available.', color: '#2563eb' },
-  local:      { label: 'Local (Same Machine)',      desc: 'Runs PowerShell directly on this server. Use only if the DHCP/DNS server IS the same machine as NocVault (192.168.6.111).', color: '#7c3aed' },
+  local:      { label: 'Local (Same Machine)',      desc: 'Runs PowerShell directly on this server. Use only if the DHCP/DNS server IS the same machine as this NocVault server.', color: '#7c3aed' },
 };
 
 // ── Server Form Modal ─────────────────────────────────────────
@@ -241,10 +241,10 @@ function ServerModal({ server, sites, onClose, onDone }: {
           <pre style={{ fontSize: 11, background: '#1e293b', color: '#e2e8f0', padding: 12, borderRadius: 6, marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
 {`# On the DHCP/DNS server:
 Enable-PSRemoting -Force
-Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value "192.168.6.111" -Force
+Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value "<NOCVAULT-SERVER-IP>" -Force
 Set-NetFirewallRule -Name "WINRM-HTTP-In-TCP-PUBLIC" -Enabled True
 
-# Test from NocVault server (192.168.6.111):
+# Test from the NocVault server:
 Test-WSMan -ComputerName ${form.ip_address || '<SERVER-IP>'}
 Invoke-Command -ComputerName ${form.ip_address || '<SERVER-IP>'} -ScriptBlock { hostname }`}
           </pre>
