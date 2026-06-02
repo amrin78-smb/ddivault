@@ -5,9 +5,9 @@
 
 ALTER TABLE ddi_servers
   ADD COLUMN IF NOT EXISTS auth_mode      TEXT DEFAULT 'kerberos',
-  -- 'kerberos'   = domain-joined, use NexVault server's own identity (no creds needed)
+  -- 'kerberos'   = domain-joined, use NocVault server's own identity (no creds needed)
   -- 'credential' = explicit username + password
-  -- 'local'      = DHCP server IS the NexVault server, run PS locally
+  -- 'local'      = DHCP server IS the NocVault server, run PS locally
   ADD COLUMN IF NOT EXISTS ps_username    TEXT,
   ADD COLUMN IF NOT EXISTS ps_password    TEXT,   -- stored encrypted (AES via Node crypto)
   ADD COLUMN IF NOT EXISTS winrm_port     INT DEFAULT 5985,
