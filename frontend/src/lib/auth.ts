@@ -13,7 +13,7 @@ const netvaultDb = new Pool({
   max:      3,
 });
 
-const HUB_URL = process.env.NETVAULT_HUB_URL || 'http://localhost:3000';
+const HUB_URL = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
 export const authOptions: NextAuthOptions = {
   providers: [

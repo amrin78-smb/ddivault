@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const HUB_URL = process.env.NETVAULT_HUB_URL || 'http://localhost:3000';
+const HUB_URL = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
 /**
  * SSO proxy — avoids CORS by making the sso-verify call server-side.
