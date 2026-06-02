@@ -373,3 +373,119 @@ grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-
 | `scripts/schema-ipam.sql` | IPAM Phase A+B tables + columns added to existing tables |
 | `scripts/schema-server-auth.sql` | Per-server auth columns on `ddi_servers` |
 | `scripts/schema-sites.sql` | `site_id` columns on `ddi_servers`, `ipam_supernets`, `ipam_subnets` |
+
+## Adding New API Routes
+
+### ⚠️ Always add new routes to next.config.js
+Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
+
+```js
+// frontend/next.config.js
+{ source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
+```
+
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+
+---
+
+## Code Editing Rules
+
+### Never use PowerShell heredoc for Node.js/JSX files
+PowerShell heredoc corrupts JSX syntax. Always use Python scripts or `node -e` with a file:
+```bash
+# Correct — write script to file first
+cat > /tmp/fix.js << 'ENDOFFILE'
+// your Node.js script
+
+## Adding New API Routes
+
+### ⚠️ Always add new routes to next.config.js
+Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
+
+```js
+// frontend/next.config.js
+{ source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
+```
+
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+
+---
+
+## Code Editing Rules
+
+### Never use PowerShell heredoc for Node.js/JSX files
+PowerShell heredoc corrupts JSX syntax. Always use Python scripts or `node -e` with a file:
+```bash
+# Correct — write script to file first
+cat > /tmp/fix.js << 'ENDOFFILE'
+// your Node.js script
+
+## Adding New API Routes
+
+### Always add new routes to next.config.js
+Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
+
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+
+---
+
+## Code Editing Rules
+
+### Never use PowerShell heredoc for Node.js/JSX files
+PowerShell heredoc corrupts JSX syntax. Always write to a temp file first then run with node.
+
+### Making file edits in Codespaces
+- Prefer targeted replacements over full file rewrites
+- Use node script for complex replacements
+- Use sed only for simple single-line changes
+- Always verify with grep after editing
+- Always read current file state before editing to avoid stale replacements
+
+---
+
+## Troubleshooting
+
+### Check service logs
+- API errors: `Get-Content C:\Apps\ddivault\logs\api-err.log -Tail 30`
+- App errors: `Get-Content C:\Apps\ddivault\logs\app-err.log -Tail 30`
+- Collector errors: `Get-Content C:\Apps\ddivault\logs\collector-err.log -Tail 30`
+
+### API returns 500
+- Run health check: `Invoke-WebRequest -Uri "http://localhost:3007/api/health" -UseBasicParsing`
+- Should return: `{"status":"ok","db":"connected"}`
+
+### Build fails
+- Always stop DDIVault-App before building — running service locks .next files
+- Check build log: `Get-Content C:\Apps\ddivault\logs\npm-build.log -Tail 30`
+
+### NSSM env vars not taking effect
+- Verify vars use backtick-n separators not spaces: `nssm get DDIVault-API AppEnvironmentExtra`
+
+### Collector crashes with column does not exist
+- A schema migration was not run — check which column is missing and run the appropriate schema file
+
+### WinRM connection fails
+- Test: `Test-WSMan -ComputerName TARGET_IP`
+- Enable on target: `Enable-PSRemoting -Force`
+
+---
+
+## Environment — Thai Union Production
+
+### Server
+- IP: 192.168.6.111
+- Domain: thaiunion.co.th
+- PostgreSQL service name: postgresql-x64-16
+- Node.js: v20.19.0
+- PowerShell: 5.1 (NOT PS7 — all PS code must be PS5 compatible)
+
+### Network
+- Thailand servers: thaiunion.co.th domain — use Kerberos auth
+- EMEA servers: mwbrands.net domain — use Stored Credentials
+- Devices: Fortinet, Sangfor, Aruba, Cisco, Palo Alto
+
+### Install paths
+- App: C:\Apps\ddivault
+- NSSM: C:\Apps\NetVault\nssm\nssm-2.24\win64\nssm.exe
+- PostgreSQL: C:\Program Files\PostgreSQL\16\bin
+- Logs: C:\Apps\ddivault\logs
