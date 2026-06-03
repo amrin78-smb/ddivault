@@ -8,6 +8,10 @@ import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
 import ServersTab from '@/components/ServersTab';
+import AuditTab   from '@/components/AuditTab';
+import ReportsTab from '@/components/ReportsTab';
+import InfraHealthTab from '@/components/InfraHealthTab';
+import { ApiKeysSection } from '@/components/ApiKeysSection';
 import {
   PageHeader, EmptyState, UtilBar, Trend, TableSkeleton, Skeleton, pctColor,
 } from '@/components/ui';
@@ -57,7 +61,7 @@ interface ScopeHistory {
   history: { percent_used: number; in_use: number; recorded_at: string }[];
 }
 
-type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'settings';
+type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'infra' | 'reports' | 'audit' | 'settings';
 
 // ── Shared styles ─────────────────────────────────────────────
 const CARD: React.CSSProperties = {
@@ -118,6 +122,59 @@ function Sparkline({ data, color, width = 220, height = 44 }: {
   );
 }
 
+// ── Donut chart (IP status distribution) ──────────────────────
+function Donut({ data }: { data: { label: string; value: number; color: string }[] }) {
+  const total = data.reduce((a, b) => a + b.value, 0);
+  if (total === 0) return <div style={{ ...MUTED, padding: 20, textAlign: 'center' }}>No address data yet</div>;
+  const R = 52, SW = 18, C = 2 * Math.PI * R;
+  let offset = 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+      <svg width="140" height="140" viewBox="0 0 140 140">
+        <g transform="rotate(-90 70 70)">
+          {data.filter(d => d.value > 0).map((d, i) => {
+            const frac = d.value / total;
+            const dash = frac * C;
+            const seg = <circle key={i} cx="70" cy="70" r={R} fill="none" stroke={d.color} strokeWidth={SW} strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={-offset} />;
+            offset += dash;
+            return seg;
+          })}
+        </g>
+        <text x="70" y="66" textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--text-primary)">{total}</text>
+        <text x="70" y="84" textAnchor="middle" fontSize="10" fill="var(--text-muted)">addresses</text>
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {data.map(d => (
+          <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-secondary)', minWidth: 76 }}>{d.label}</span>
+            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{d.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Simple line chart (lease trend) ───────────────────────────
+function LineChart({ points, color = 'var(--blue)', height = 120 }: { points: number[]; color?: string; height?: number }) {
+  if (points.length < 2) return <div style={{ ...MUTED, height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Not enough history yet</div>;
+  const W = 480, H = height, pad = 8;
+  const max = Math.max(1, ...points), min = Math.min(...points);
+  const span = Math.max(1, max - min);
+  const xy = points.map((p, i) => {
+    const x = pad + (i / (points.length - 1)) * (W - pad * 2);
+    const y = pad + (1 - (p - min) / span) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return (
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+      <polygon points={`${pad},${H - pad} ${xy.join(' ')} ${W - pad},${H - pad}`} fill={color} opacity="0.08" />
+      <polyline points={xy.join(' ')} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // ════════════════════════════════════════════════════════════
 // TAB: DASHBOARD — operations center
 // ════════════════════════════════════════════════════════════
@@ -126,6 +183,11 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
   const [scopes, setScopes] = useState<Scope[]>([]);
   const [scopeHistory, setScopeHistory] = useState<ScopeHistory[]>([]);
   const [events, setEvents] = useState<DhcpEvent[]>([]);
+  const [infra, setInfra]   = useState<any>(null);
+  const [ipDist, setIpDist] = useState<Record<string, number> | null>(null);
+  const [leaseTrend, setLeaseTrend] = useState<{ day: string; leases: number }[]>([]);
+  const [audit, setAudit]   = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -134,13 +196,28 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
       api('/scopes'),
       api('/dashboard/recent-events?limit=20'),
       api('/scopes/history/all?hours=168'),
+      api('/infrastructure/health'),
+      api('/dashboard/ip-distribution'),
+      api('/dashboard/lease-trend?days=7'),
+      api('/audit?limit=10'),
+      api('/alerts?limit=10'),
     ]);
-    const [s, sc, ev, hist] = results;
+    const [s, sc, ev, hist, inf, dist, lt, au, al] = results;
     if (s.status  === 'fulfilled') setStats(s.value);
     if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
     if (ev.status === 'fulfilled') setEvents(ev.value.data || []);
     if (hist.status === 'fulfilled') setScopeHistory(hist.value.data || []);
+    if (inf.status === 'fulfilled') setInfra(inf.value);
+    if (dist.status === 'fulfilled') setIpDist(dist.value.data || null);
+    if (lt.status === 'fulfilled') setLeaseTrend((lt.value.data || []).map((d: any) => ({ day: d.day, leases: parseInt(d.leases) || 0 })));
+    if (au.status === 'fulfilled') setAudit(au.value.data || []);
+    if (al.status === 'fulfilled') setAlerts((al.value.data || []).filter((a: AlertEvent) => !a.acknowledged));
     setLoading(false);
+  }, []);
+
+  const ackAlert = useCallback(async (id: number) => {
+    await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) }).catch(() => {});
+    setAlerts(prev => prev.filter(a => a.id !== id));
   }, []);
 
   useEffect(() => {
@@ -179,21 +256,71 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
   }, [scopeHistory]);
 
   const kpis = stats ? [
-    { label: 'Total Scopes',   value: stats.scopes?.total ?? 0,    sub: 'DHCP scopes monitored',     color: 'var(--navy)',  delta: 0,            invert: false },
-    { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false },
-    { label: 'Warning Scopes',  value: stats.scopes?.warning ?? 0,  sub: '80 – 90% utilization',      color: (stats.scopes?.warning ?? 0) > 0 ? 'var(--yellow)' : 'var(--green)', delta: trends.warn, invert: false },
+    { label: 'Managed IPs',     value: stats.ips?.total ?? 0,       sub: 'across all scopes',         color: 'var(--navy)',  delta: 0,            invert: false },
     { label: 'Active Leases',   value: stats.active_leases ?? 0,    sub: 'live DHCP clients',         color: 'var(--blue)',  delta: trends.used,  invert: true },
     { label: 'DNS Zones',       value: stats.dns_zones ?? 0,        sub: 'forward & reverse',         color: 'var(--teal)',  delta: 0,            invert: false },
+    { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false },
+    { label: 'Unknown Devices', value: ipDist?.unknown ?? 0,        sub: 'rogue / unmanaged',         color: (ipDist?.unknown ?? 0) > 0 ? 'var(--yellow)' : 'var(--green)', delta: 0, invert: false },
+    { label: 'Open Alerts',     value: stats.unacked_alerts ?? 0,   sub: 'unacknowledged',            color: (stats.unacked_alerts ?? 0) > 0 ? 'var(--red)' : 'var(--green)',  delta: 0, invert: false },
   ] : [];
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
       <PageHeader title="Operations Center" subtitle="Live DDI health — scope exhaustion, recent activity, and utilization trends. Refreshes every 30s." />
 
+      {/* Real-time status strip */}
+      {(() => {
+        const ov = infra?.overall || 'healthy';
+        const c = ov === 'critical' ? 'var(--red)' : ov === 'warning' ? 'var(--yellow)' : 'var(--green)';
+        const txt = ov === 'critical' ? 'Critical issues detected' : ov === 'warning' ? 'Warnings present' : 'All systems healthy';
+        const srvCount = infra?.data?.length ?? 0;
+        return (
+          <div onClick={() => onNavigate('infra')} className="clickable" style={{ borderRadius: 'var(--radius)', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 14, background: c, color: '#fff', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>
+            <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#fff', boxShadow: '0 0 0 4px rgba(255,255,255,0.3)' }} />
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{txt}</span>
+            <span style={{ opacity: 0.9, fontSize: 12.5 }}>{srvCount} server{srvCount === 1 ? '' : 's'} monitored{infra?.worst_score != null && ` · lowest health ${infra.worst_score}/100`}</span>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 12.5, opacity: 0.9 }}>Infrastructure →</span>
+          </div>
+        );
+      })()}
+
+      {/* Infrastructure status — server health cards */}
+      {(infra?.data?.length ?? 0) > 0 && (
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Infrastructure Status</div>
+            <span style={MUTED}>{infra.data.length} servers</span>
+          </div>
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+            {infra.data.map((s: any) => {
+              const score = s.health_score;
+              const col = score == null ? 'var(--text-muted)' : score >= 90 ? 'var(--green)' : score >= 70 ? 'var(--yellow)' : 'var(--red)';
+              return (
+                <div key={s.id} onClick={() => onNavigate('infra')} className="clickable" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderLeft: `4px solid ${col}`, borderRadius: 10, padding: 12, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.hostname}</div>
+                      <div style={{ ...MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{s.ip}</div>
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1 }}>{score ?? '—'}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                    <span className="badge badge-gray">{(s.role || '').toUpperCase()}</span>
+                    <span className={`badge ${s.winrm_test_ok === false ? 'badge-red' : s.winrm_test_ok ? 'badge-green' : 'badge-gray'}`}>WinRM</span>
+                  </div>
+                  <div style={{ ...MUTED, marginTop: 8 }}>{s.scope_count} scopes · {s.zone_count} zones</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* KPI row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
         {loading && !stats
-          ? Array.from({ length: 5 }).map((_, i) => (
+          ? Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="kpi-card" style={{ borderLeftColor: 'var(--border)' }}>
                 <Skeleton height={30} width="45%" /><div style={{ height: 8 }} /><Skeleton height={12} width="75%" />
               </div>
@@ -275,6 +402,79 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Charts row: IP distribution donut + lease trend */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 14 }}>
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
+          <div style={{ padding: 18 }}>
+            {loading ? <Skeleton height={140} /> : (
+              <Donut data={[
+                { label: 'Available', value: ipDist?.available ?? 0, color: 'var(--green)' },
+                { label: 'DHCP', value: ipDist?.dhcp ?? 0, color: 'var(--blue)' },
+                { label: 'Reserved', value: ipDist?.reserved ?? 0, color: 'var(--teal)' },
+                { label: 'Unknown', value: ipDist?.unknown ?? 0, color: 'var(--yellow)' },
+                { label: 'Offline', value: ipDist?.offline ?? 0, color: 'var(--text-muted)' },
+              ]} />
+            )}
+          </div>
+        </div>
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Active Lease Trend</div>
+            <span style={MUTED}>last 7 days</span>
+          </div>
+          <div style={{ padding: 18 }}>
+            {loading ? <Skeleton height={120} /> : <LineChart points={leaseTrend.map(d => d.leases)} />}
+          </div>
+        </div>
+      </div>
+
+      {/* Recent alerts + recent audit activity */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Open Alerts</div>
+            <button onClick={() => onNavigate('events')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>View all →</button>
+          </div>
+          {loading ? <TableSkeleton rows={4} cols={2} /> : alerts.length === 0 ? (
+            <EmptyState title="No open alerts" message="All fired alerts have been acknowledged." />
+          ) : (
+            <table className="data-table">
+              <tbody>
+                {alerts.map(a => (
+                  <tr key={a.id}>
+                    <td style={{ width: 70 }}><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
+                    <td style={{ fontSize: 12.5 }}>{a.message}</td>
+                    <td style={{ width: 50 }}><button onClick={() => ackAlert(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div style={CARD}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={TITLE}>Recent Changes</div>
+            <button onClick={() => onNavigate('audit')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>Audit log →</button>
+          </div>
+          {loading ? <TableSkeleton rows={4} cols={3} /> : audit.length === 0 ? (
+            <EmptyState title="No changes yet" message="Configuration changes will appear here as they happen." />
+          ) : (
+            <table className="data-table">
+              <tbody>
+                {audit.map((a: any) => (
+                  <tr key={a.id}>
+                    <td style={{ width: 70 }}><span className={`badge ${a.action === 'create' ? 'badge-green' : a.action === 'delete' ? 'badge-red' : a.action === 'modify' ? 'badge-yellow' : 'badge-gray'}`}>{(a.action || '').toUpperCase()}</span></td>
+                    <td style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{a.change_summary || `${a.action} ${a.entity_type}`}<div style={MUTED}>{a.username}</div></td>
+                    <td style={{ ...MUTED, whiteSpace: 'nowrap', width: 90 }}>{a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
@@ -490,6 +690,9 @@ function SettingsTab() {
             </div>
           </div>
         </div>
+
+        {/* API key management spans the full grid width */}
+        <ApiKeysSection />
       </div>
     </div>
   );
@@ -506,6 +709,9 @@ const ICONS: Record<string, React.ReactNode> = {
   events:    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
   servers:   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>,
   settings:  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  infra:     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+  reports:   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  audit:     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
 };
 
 const SIDEBAR_ITEMS: { id: Tab; label: string }[] = [
@@ -515,6 +721,9 @@ const SIDEBAR_ITEMS: { id: Tab; label: string }[] = [
   { id: 'dns',       label: 'DNS' },
   { id: 'events',    label: 'Events & Alerts' },
   { id: 'servers',   label: 'Known Servers' },
+  { id: 'infra',     label: 'Infrastructure' },
+  { id: 'reports',   label: 'Reports' },
+  { id: 'audit',     label: 'Audit Log' },
   { id: 'settings',  label: 'Settings' },
 ];
 
@@ -631,6 +840,9 @@ export default function DDIVaultApp() {
             {tab === 'dns'       && <DNSTab />}
             {tab === 'events'    && <EventsTab />}
             {tab === 'servers'   && <ServersTab />}
+            {tab === 'infra'     && <InfraHealthTab />}
+            {tab === 'reports'   && <ReportsTab />}
+            {tab === 'audit'     && <AuditTab />}
             {tab === 'settings'  && <SettingsTab />}
           </ErrorBoundary>
         </main>

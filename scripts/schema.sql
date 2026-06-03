@@ -245,6 +245,113 @@ CREATE OR REPLACE TRIGGER trg_ipam_subnets_updated
   BEFORE UPDATE ON ipam_subnets
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- ════════════════════════════════════════════════════════════
+-- ENTERPRISE FEATURES (audit, API keys, HA, infra health)
+-- All IF NOT EXISTS — safe to re-run on existing installs.
+-- ════════════════════════════════════════════════════════════
+
+-- ── Audit Log ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS audit_log (
+  id              BIGSERIAL PRIMARY KEY,
+  timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id         INTEGER,
+  username        TEXT NOT NULL DEFAULT 'system',
+  user_role       TEXT,
+  action          TEXT NOT NULL,
+  entity_type     TEXT NOT NULL,
+  entity_id       TEXT,
+  entity_name     TEXT,
+  old_value       JSONB,
+  new_value       JSONB,
+  change_summary  TEXT,
+  ip_address      TEXT,
+  user_agent      TEXT,
+  session_id      TEXT,
+  result          TEXT NOT NULL DEFAULT 'success',
+  error_message   TEXT,
+  duration_ms     INTEGER,
+  site_id         INTEGER,
+  server_id       INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(username);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_site ON audit_log(site_id);
+
+-- ── API Keys ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS api_keys (
+  id           SERIAL PRIMARY KEY,
+  key_hash     TEXT NOT NULL UNIQUE,
+  key_prefix   TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  description  TEXT,
+  created_by   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ,
+  is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+  permissions  JSONB DEFAULT '{"read": true, "write": false, "admin": false}',
+  allowed_ips  TEXT[],
+  request_count BIGINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
+
+-- ── DHCP Failover Pairs ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS dhcp_failover_pairs (
+  id                  SERIAL PRIMARY KEY,
+  primary_server_id   INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  secondary_server_id INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  relationship_name   TEXT,
+  mode                TEXT, -- 'hot-standby' or 'load-balance'
+  state               TEXT, -- 'normal','communication-interrupted','partner-down','recover'
+  last_checked        TIMESTAMPTZ DEFAULT NOW(),
+  mclt                INTEGER, -- maximum client lead time seconds
+  split_ratio         INTEGER  -- for load-balance mode
+);
+CREATE INDEX IF NOT EXISTS idx_failover_primary ON dhcp_failover_pairs(primary_server_id);
+
+CREATE TABLE IF NOT EXISTS dhcp_scope_sync_status (
+  id               SERIAL PRIMARY KEY,
+  scope_id         INTEGER REFERENCES dhcp_scopes(id) ON DELETE CASCADE,
+  failover_pair_id INTEGER REFERENCES dhcp_failover_pairs(id) ON DELETE CASCADE,
+  primary_leases   INTEGER,
+  secondary_leases INTEGER,
+  sync_delta       INTEGER, -- difference in lease counts
+  sync_status      TEXT,    -- 'in-sync','out-of-sync','unknown'
+  checked_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_scope_sync_pair ON dhcp_scope_sync_status(failover_pair_id);
+
+-- ── Server Health History (for uptime trend + health score) ──
+CREATE TABLE IF NOT EXISTS server_health_history (
+  id              BIGSERIAL PRIMARY KEY,
+  server_id       INTEGER NOT NULL REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  health_score    INTEGER,        -- 0-100
+  winrm_ok        BOOLEAN,
+  scope_count     INTEGER,
+  lease_count     INTEGER,
+  zone_count      INTEGER,
+  record_count    INTEGER,
+  query_ms        INTEGER,        -- DNS query response time
+  soa_in_sync     BOOLEAN,
+  failover_state  TEXT,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_health_server_time ON server_health_history(server_id, recorded_at DESC);
+
+-- ── DNS Zone SOA tracking (replication lag) ──────────────────
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS soa_serial      BIGINT;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS soa_checked_at  TIMESTAMPTZ;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS replication_lag BOOLEAN DEFAULT FALSE;
+
+-- ── Per-server live health columns (latest snapshot) ─────────
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS health_score   INTEGER;
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ;
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS query_ms       INTEGER;
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt

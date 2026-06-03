@@ -268,10 +268,56 @@ function removeDnsZone(serverIp, zoneName, auth) {
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
+// ════════════════════════════════════════════════════════════
+// HA / FAILOVER / HEALTH — READ
+// ════════════════════════════════════════════════════════════
+
+/** DHCP failover relationships configured on a server. */
+function getDhcpFailover(serverIp, auth) {
+  const r = runPS(serverIp,
+    `Get-DhcpServerv4Failover -ErrorAction SilentlyContinue | Select-Object Name,PrimaryServerName,SecondaryServerName,State,Mode,LoadBalancePercent,MaxClientLeadTime,ScopeId | ConvertTo-Json -Depth 5 -Compress`,
+    auth);
+  if (!r) return [];
+  return Array.isArray(r) ? r : [r];
+}
+
+/** Per-scope state inside a named failover relationship. */
+function getDhcpFailoverScopeState(serverIp, relationshipName, auth) {
+  const r = runPS(serverIp,
+    `Get-DhcpServerv4Failover -Name '${String(relationshipName).replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ScopeId | ForEach-Object { [PSCustomObject]@{ ScopeId = $_.IPAddressToString } } | ConvertTo-Json -Depth 4 -Compress`,
+    auth);
+  if (!r) return [];
+  return Array.isArray(r) ? r : [r];
+}
+
+/** SOA serial for a zone (replication-lag detection). */
+function getDnsZoneSoa(serverIp, zoneName, auth) {
+  const script = `
+$rec = Get-DnsServerResourceRecord -ZoneName '${String(zoneName).replace(/'/g, "''")}' -RRType SOA -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($rec) { [PSCustomObject]@{ ZoneName='${String(zoneName).replace(/'/g, "''")}'; Serial=[int64]$rec.RecordData.SerialNumber } | ConvertTo-Json -Compress }`;
+  return runPS(serverIp, script, auth);
+}
+
+/** Measure DNS query response time (ms) for a name against this server. */
+function testDnsQuery(serverIp, queryName, auth) {
+  const q = String(queryName || serverIp).replace(/'/g, "''");
+  const script = `
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+try { Resolve-DnsName -Name '${q}' -Server '${serverIp}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }
+$sw.Stop()
+[PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
+  return runPS(serverIp, script, auth);
+}
+
 module.exports = {
   runPS,
   runLocalPS,
   testWinRM,
+  // HA / health
+  getDhcpFailover,
+  getDhcpFailoverScopeState,
+  getDnsZoneSoa,
+  testDnsQuery,
   // DHCP read
   getDhcpScopeStats,
   getDhcpScopes,

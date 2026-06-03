@@ -39,9 +39,18 @@ const db = new Pool({
 
 db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 
+// ── Enterprise modules ────────────────────────────────────────
+const { auditContext } = require('./middleware/audit');
+const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
+const { createReportsRouter } = require('./reports');
+const { createV1Router } = require('./v1');
+
 // ── Middleware ────────────────────────────────────────────────
-app.use(cors({ origin: 'http://localhost:3006' }));
+app.use(cors({ origin: 'http://localhost:3006', exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'] }));
 app.use(express.json());
+
+// Audit context — attaches req.audit() + auto-fallback for mutating routes
+app.use(auditContext(db));
 
 // Request logger
 app.use((req, _res, next) => {
@@ -644,6 +653,7 @@ app.post('/api/servers', async (req, res) => {
         notes || null, site_id ? parseInt(site_id) : null,
       ]
     );
+    if (req.audit) req.audit({ action: 'create', entity_type: 'server', entity_id: result.rows[0].id, entity_name: hostname || ip_address, server_id: result.rows[0].id, new_value: { hostname, ip_address, role, auth_mode } });
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('[API] server create error:', err.message);
@@ -688,6 +698,7 @@ app.put('/api/servers/:id', async (req, res) => {
            parseInt(winrm_port||'5985'), winrm_https===true, notes||null]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'server', entity_id: id, entity_name: result.rows[0].hostname, server_id: id, new_value: { hostname, role, auth_mode, is_active: is_active !== false } });
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('[API] server update error:', err.message);
@@ -697,7 +708,10 @@ app.put('/api/servers/:id', async (req, res) => {
 
 app.delete('/api/servers/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM ddi_servers WHERE id=$1', [parseInt(req.params.id)]);
+    const id = parseInt(req.params.id);
+    const prev = await db.query('SELECT hostname FROM ddi_servers WHERE id=$1', [id]);
+    await db.query('DELETE FROM ddi_servers WHERE id=$1', [id]);
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'server', entity_id: id, entity_name: prev.rows[0] ? prev.rows[0].hostname : String(id), server_id: id });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] server delete error:', err.message);
@@ -722,6 +736,7 @@ app.post('/api/servers/:id/test-connection', async (req, res) => {
       [id, result.ok, result.error || null]
     );
 
+    if (req.audit) req.audit({ action: 'test', entity_type: 'server', entity_id: id, entity_name: ip, server_id: id, result: result.ok ? 'success' : 'failure', error_message: result.error || null, change_summary: `WinRM test ${result.ok ? 'succeeded' : 'failed'} for ${ip}` });
     res.json({
       ok:         result.ok,
       latency_ms: result.latencyMs,
@@ -752,11 +767,13 @@ app.post('/api/settings', async (req, res) => {
   try {
     const { key, value } = req.body;
     if (!key) return res.status(400).json({ error: 'key required' });
+    const prev = await db.query('SELECT value FROM app_settings WHERE key=$1', [key]);
     await db.query(
       `INSERT INTO app_settings (key, value, updated_at) VALUES ($1,$2,NOW())
        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
       [key, value || '']
     );
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'setting', entity_id: key, entity_name: key, old_value: prev.rows[0] ? { value: prev.rows[0].value } : null, new_value: { value: value || '' }, change_summary: `Setting "${key}" changed` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] settings update error:', err.message);
@@ -868,6 +885,7 @@ app.post('/api/ipam/subnets', async (req, res) => {
        gateway||null, vlan_id?parseInt(vlan_id):null, site||null, owner||null,
        supernet_id?parseInt(supernet_id):null, location||null, notes||null, totalHosts]
     );
+    if (req.audit) req.audit({ action: 'create', entity_type: 'subnet', entity_id: result.rows[0].id, entity_name: `${network}/${prefix_length}`, new_value: { network, prefix_length, name, site, vlan_id } });
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('[API] ipam subnet create error:', err.message);
@@ -898,7 +916,10 @@ app.put('/api/ipam/subnets/:id', async (req, res) => {
 
 app.delete('/api/ipam/subnets/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM ipam_subnets WHERE id=$1', [parseInt(req.params.id)]);
+    const id = parseInt(req.params.id);
+    const prev = await db.query('SELECT host(network) AS network, prefix_length FROM ipam_subnets WHERE id=$1', [id]);
+    await db.query('DELETE FROM ipam_subnets WHERE id=$1', [id]);
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'subnet', entity_id: id, entity_name: prev.rows[0] ? `${prev.rows[0].network}/${prev.rows[0].prefix_length}` : String(id) });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] ipam subnet delete error:', err.message);
@@ -949,6 +970,7 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/reserve', async (req, res) => {
        VALUES ($1,$2,'reserved','reserved',$3,$4)`,
       [ip, subnetId, reserved_by||'admin', description||null]
     );
+    if (req.audit) req.audit({ action: 'reserve', entity_type: 'ip_address', entity_id: ip, entity_name: ip, new_value: { description, owner }, change_summary: `Reserved IP ${ip}` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] reserve ip error:', err.message);
@@ -972,6 +994,7 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/release', async (req, res) => {
        VALUES ($1,$2,'released','reserved','available','admin')`,
       [ip, subnetId]
     );
+    if (req.audit) req.audit({ action: 'release', entity_type: 'ip_address', entity_id: ip, entity_name: ip, change_summary: `Released IP ${ip}` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] release ip error:', err.message);
@@ -995,6 +1018,7 @@ app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const subnet = subnetRes.rows[0];
 
+    if (req.audit) req.audit({ action: 'scan', entity_type: 'subnet', entity_id: id, entity_name: `${subnet.network}/${subnet.prefix_length}`, change_summary: `Started scan of ${subnet.network}/${subnet.prefix_length}` });
     res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });
 
     // Run scan in a completely separate child process — does NOT block the API
@@ -1221,6 +1245,7 @@ app.post('/api/dns/records', async (req, res) => {
       );
     }
 
+    if (req.audit) req.audit({ action: 'create', entity_type: 'dns_record', entity_name: `${hostname} ${record_type.toUpperCase()}`, server_id, new_value: { hostname, record_type, record_data, zone_name }, change_summary: `Added ${record_type.toUpperCase()} record ${hostname} → ${record_data}` });
     res.json({ success: true, message: `${record_type} record created: ${hostname} → ${record_data}` });
   } catch (err) {
     console.error('[API] dns add record error:', err.message);
@@ -1248,6 +1273,7 @@ app.delete('/api/dns/records', async (req, res) => {
       [hostname, record_type, record_data||'', zone_name, parseInt(server_id)]
     ).catch(() => {});
 
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_record', entity_name: `${hostname} ${record_type}`, server_id, old_value: { hostname, record_type, record_data, zone_name }, change_summary: `Deleted ${record_type} record ${hostname}` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] dns delete record error:', err.message);
@@ -1272,6 +1298,7 @@ app.post('/api/dns/zones', async (req, res) => {
       [parseInt(server_id), zone_name, zone_type || 'Primary']
     );
 
+    if (req.audit) req.audit({ action: 'create', entity_type: 'dns_zone', entity_name: zone_name, server_id, new_value: { zone_name, zone_type: zone_type || 'Primary' }, change_summary: `Created zone ${zone_name}` });
     res.json({ success: true, message: `Zone ${zone_name} created` });
   } catch (err) {
     console.error('[API] dns add zone error:', err.message);
@@ -1302,6 +1329,7 @@ app.delete('/api/dns/zones/:id', async (req, res) => {
     if (!ok) return res.status(500).json({ error: 'Zone deletion failed on DNS server' });
 
     await db.query('DELETE FROM dns_zones WHERE id=$1', [zone.id]);
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_zone', entity_id: zone.id, entity_name: zone.zone_name, server_id: zone.server_id, change_summary: `Deleted zone ${zone.zone_name}` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] dns delete zone error:', err.message);
@@ -1349,6 +1377,7 @@ app.post('/api/dhcp/reservations', async (req, res) => {
       [ip_address, name||null, mac_address, description||null]
     ).catch(() => {});
 
+    if (req.audit) req.audit({ action: 'reserve', entity_type: 'dhcp_reservation', entity_name: ip_address, server_id, new_value: { ip_address, mac_address, name }, change_summary: `Created reservation ${ip_address} → ${mac_address}` });
     res.json({ success: true, message: `Reservation created: ${ip_address} → ${mac_address}` });
   } catch (err) {
     console.error('[API] dhcp reservation error:', err.message);
@@ -1374,6 +1403,7 @@ app.delete('/api/dhcp/reservations', async (req, res) => {
       [parseInt(server_id), ip_address]
     ).catch(() => {});
 
+    if (req.audit) req.audit({ action: 'release', entity_type: 'dhcp_reservation', entity_name: ip_address, server_id, change_summary: `Removed reservation ${ip_address}` });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] dhcp remove reservation error:', err.message);
@@ -1484,6 +1514,7 @@ app.post('/api/ipam/import', async (req, res) => {
       imported++;
     }
 
+    if (req.audit) req.audit({ action: 'import', entity_type: 'subnet', entity_name: `${imported} subnets`, change_summary: `Imported ${imported} subnets (${skipped} skipped)`, new_value: { imported, skipped, errors: errors.length } });
     res.json({ success: true, imported, skipped, errors });
   } catch (err) {
     console.error('[API] ipam import error:', err.message);
@@ -1805,6 +1836,239 @@ app.get('/api/scopes/history/all', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// ════════════════════════════════════════════════════════════
+// AUDIT LOG (internal API for the Audit Log tab)
+// ════════════════════════════════════════════════════════════
+function buildAuditFilters(q) {
+  const conds = [], vals = [];
+  if (q.action)      { vals.push(q.action);             conds.push(`action = $${vals.length}`); }
+  if (q.entity_type) { vals.push(q.entity_type);        conds.push(`entity_type = $${vals.length}`); }
+  if (q.username)    { vals.push(q.username);           conds.push(`username = $${vals.length}`); }
+  if (q.result)      { vals.push(q.result);             conds.push(`result = $${vals.length}`); }
+  if (q.site_id)     { vals.push(parseInt(q.site_id));  conds.push(`site_id = $${vals.length}`); }
+  if (q.from)        { vals.push(q.from);               conds.push(`timestamp >= $${vals.length}`); }
+  if (q.to)          { vals.push(q.to);                 conds.push(`timestamp <= $${vals.length}`); }
+  if (q.q) { vals.push(`%${q.q}%`); conds.push(`(entity_name ILIKE $${vals.length} OR change_summary ILIKE $${vals.length})`); }
+  return { where: conds.length ? `WHERE ${conds.join(' AND ')}` : '', vals };
+}
+
+app.get('/api/audit', async (req, res) => {
+  try {
+    const page = safePage(req.query.page);
+    const limit = safeLimit(req.query.limit);
+    const { where, vals } = buildAuditFilters(req.query);
+    const totalRes = await db.query(`SELECT COUNT(*) AS c FROM audit_log ${where}`, vals);
+    const total = parseInt(totalRes.rows[0].c);
+    const rows = await db.query(
+      `SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`,
+      [...vals, limit, (page - 1) * limit]);
+    res.json({ data: rows.rows, total, page, limit });
+  } catch (err) {
+    console.error('[API] audit list error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/audit/stats', async (req, res) => {
+  try {
+    const [today, week, topUsers, topActions, topEntities] = await Promise.all([
+      db.query("SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= date_trunc('day', NOW())"),
+      db.query("SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'"),
+      db.query("SELECT username, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY username ORDER BY c DESC LIMIT 5"),
+      db.query("SELECT action, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY action ORDER BY c DESC LIMIT 5"),
+      db.query("SELECT entity_type, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY entity_type ORDER BY c DESC LIMIT 5"),
+    ]);
+    res.json({
+      today: parseInt(today.rows[0].c),
+      week: parseInt(week.rows[0].c),
+      top_user: topUsers.rows[0] ? topUsers.rows[0].username : '—',
+      top_users: topUsers.rows,
+      top_actions: topActions.rows,
+      top_entity: topEntities.rows[0] ? topEntities.rows[0].entity_type : '—',
+      top_entities: topEntities.rows,
+    });
+  } catch (err) {
+    console.error('[API] audit stats error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/audit/export', async (req, res) => {
+  try {
+    const { where, vals } = buildAuditFilters(req.query);
+    const rows = await db.query(`SELECT timestamp, username, user_role, action, entity_type, entity_name, change_summary, result, ip_address, duration_ms FROM audit_log ${where} ORDER BY timestamp DESC LIMIT 50000`, vals);
+    const cols = ['timestamp', 'username', 'user_role', 'action', 'entity_type', 'entity_name', 'change_summary', 'result', 'ip_address', 'duration_ms'];
+    const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [cols.join(','), ...rows.rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n') + '\n';
+    if (req.audit) req.audit({ action: 'export', entity_type: 'audit_log', change_summary: `Exported ${rows.rows.length} audit rows as CSV` });
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="audit-log-${Date.now()}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    console.error('[API] audit export error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/audit/:id', async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM audit_log WHERE id = $1', [parseInt(req.params.id)]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Audit entry not found' });
+    res.json({ data: r.rows[0] });
+  } catch (err) {
+    console.error('[API] audit detail error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// API KEYS (management for the Settings tab)
+// ════════════════════════════════════════════════════════════
+app.get('/api/api-keys', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT id, key_prefix, name, description, created_by, created_at, last_used_at,
+              expires_at, is_active, permissions, allowed_ips, request_count
+         FROM api_keys ORDER BY created_at DESC`);
+    res.json({ data: r.rows.map(k => ({ ...k, key_masked: maskedDisplay(k.key_prefix) })) });
+  } catch (err) {
+    console.error('[API] api-keys list error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/api-keys', async (req, res) => {
+  try {
+    const { name, description, permissions, allowed_ips, expires_at } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const gen = generateKey();
+    const perms = {
+      read:  permissions ? !!permissions.read  : true,
+      write: permissions ? !!permissions.write : false,
+      admin: permissions ? !!permissions.admin : false,
+    };
+    const ips = Array.isArray(allowed_ips) ? allowed_ips.filter(Boolean)
+      : (typeof allowed_ips === 'string' && allowed_ips.trim() ? allowed_ips.split(',').map(s => s.trim()).filter(Boolean) : null);
+    const actor = req.headers['x-ddi-actor'] || 'admin';
+    const r = await db.query(
+      `INSERT INTO api_keys (key_hash, key_prefix, name, description, created_by, permissions, allowed_ips, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [gen.key_hash, gen.key_prefix, name, description || null, actor, JSON.stringify(perms), ips, expires_at || null]);
+    if (req.audit) req.audit({ action: 'create', entity_type: 'api_key', entity_id: r.rows[0].id, entity_name: name, new_value: { name, permissions: perms, allowed_ips: ips } });
+    // Full key returned ONCE — never stored or shown again.
+    res.json({ id: r.rows[0].id, key: gen.key, key_prefix: gen.key_prefix, permissions: perms });
+  } catch (err) {
+    console.error('[API] api-keys create error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/api-keys/:id', async (req, res) => {
+  try {
+    const r = await db.query('UPDATE api_keys SET is_active = FALSE WHERE id = $1 RETURNING name', [parseInt(req.params.id)]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Key not found' });
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'api_key', entity_id: req.params.id, entity_name: r.rows[0].name, change_summary: `Revoked API key "${r.rows[0].name}"` });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] api-keys revoke error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// INFRASTRUCTURE HEALTH (HA, failover, SOA sync)
+// ════════════════════════════════════════════════════════════
+app.get('/api/infrastructure/health', async (req, res) => {
+  try {
+    const servers = await db.query(
+      `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.is_active, s.poll_status,
+              s.last_polled, s.health_score, s.health_checked_at, s.query_ms, s.winrm_test_ok, s.site_id,
+              (SELECT COUNT(*) FROM dhcp_scopes sc WHERE sc.server_id = s.id) AS scope_count,
+              (SELECT COUNT(*) FROM dhcp_leases l WHERE l.server_id = s.id) AS lease_count,
+              (SELECT COUNT(*) FROM dns_zones z WHERE z.server_id = s.id) AS zone_count,
+              (SELECT COALESCE(SUM(z.record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count
+         FROM ddi_servers s WHERE s.is_active = TRUE ORDER BY s.hostname`);
+    // overall status
+    const scores = servers.rows.map(s => s.health_score).filter(v => v != null);
+    const worst = scores.length ? Math.min(...scores) : null;
+    let overall = 'healthy';
+    if (worst != null && worst < 70) overall = 'critical';
+    else if (worst != null && worst < 90) overall = 'warning';
+    else if (servers.rows.some(s => s.poll_status === 'error' || s.winrm_test_ok === false)) overall = 'warning';
+    res.json({ data: servers.rows, overall, worst_score: worst });
+  } catch (err) {
+    console.error('[API] infra health error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/infrastructure/failover', async (req, res) => {
+  try {
+    const pairs = await db.query(
+      `SELECT f.*, p.hostname AS primary_name, sec.hostname AS secondary_name
+         FROM dhcp_failover_pairs f
+         LEFT JOIN ddi_servers p   ON p.id   = f.primary_server_id
+         LEFT JOIN ddi_servers sec ON sec.id = f.secondary_server_id
+        ORDER BY f.relationship_name`);
+    const sync = await db.query(
+      `SELECT s.*, sc.scope_id AS scope_label FROM dhcp_scope_sync_status s
+         LEFT JOIN dhcp_scopes sc ON sc.id = s.scope_id
+        WHERE s.checked_at > NOW() - INTERVAL '1 day' ORDER BY s.checked_at DESC LIMIT 200`);
+    res.json({ data: pairs.rows, sync: sync.rows });
+  } catch (err) {
+    console.error('[API] failover error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/infrastructure/servers/:id/history', async (req, res) => {
+  try {
+    const hours = safeHours(req.query.hours, 720);
+    const r = await db.query(
+      `SELECT health_score, winrm_ok, query_ms, soa_in_sync, recorded_at
+         FROM server_health_history
+        WHERE server_id = $1 AND recorded_at > NOW() - ($2 || ' hours')::interval
+        ORDER BY recorded_at ASC`, [parseInt(req.params.id), hours]);
+    res.json({ data: r.rows });
+  } catch (err) {
+    console.error('[API] server health history error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Distribution of IPAM address statuses (for dashboard donut)
+app.get('/api/dashboard/ip-distribution', async (req, res) => {
+  try {
+    const r = await db.query('SELECT status, COUNT(*) AS c FROM ipam_addresses GROUP BY status');
+    const out = { available: 0, dhcp: 0, reserved: 0, unknown: 0, offline: 0 };
+    r.rows.forEach(row => { out[row.status] = parseInt(row.c); });
+    res.json({ data: out });
+  } catch (err) {
+    console.error('[API] ip-distribution error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Lease trend over last N days (for dashboard line chart)
+app.get('/api/dashboard/lease-trend', async (req, res) => {
+  try {
+    const days = safeInt(req.query.days, 7, 90);
+    const r = await db.query(
+      `SELECT date_trunc('day', recorded_at) AS day, ROUND(AVG(in_use)) AS leases
+         FROM dhcp_scope_history
+        WHERE recorded_at > NOW() - ($1 || ' days')::interval
+        GROUP BY day ORDER BY day ASC`, [days]);
+    res.json({ data: r.rows });
+  } catch (err) {
+    console.error('[API] lease-trend error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Reports router + public REST API v1 ───────────────────────
+app.use('/api/reports', createReportsRouter(db));
+app.use('/api/v1', createV1Router({ db, psWrite, getServerWithAuth }));
 
 // ── Generic error handler ─────────────────────────────────────
 app.use((err, req, res, _next) => {

@@ -5,6 +5,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.loc
 const { Pool } = require('pg');
 const ps        = require('./powershellRunner');
 const dhcp      = require('./dhcpReader');
+const ha        = require('./haMonitor');
 const { decrypt } = require('./credStore');
 
 process.on('uncaughtException', (err) => {
@@ -35,6 +36,9 @@ const INTERVAL_LOG_TAIL    = 60  * 1000;
 const INTERVAL_SCOPE_STATS = 5   * 60 * 1000;
 const INTERVAL_LEASE_SYNC  = 15  * 60 * 1000;
 const INTERVAL_DNS_SYNC    = 60  * 60 * 1000;
+const INTERVAL_FAILOVER    = 5   * 60 * 1000;   // DHCP failover state
+const INTERVAL_SOA_SYNC    = 15  * 60 * 1000;   // DNS SOA replication lag
+const INTERVAL_HEALTH      = 5   * 60 * 1000;   // per-server health score
 
 const lastLogEventTime = {};
 
@@ -361,6 +365,11 @@ async function syncDns(server) {
   log(`[DNS] ${ip} — synced ${zoneCount} zones`);
 }
 
+// ── HA / health wrappers (adapt ha module signature to pollAll) ──
+async function pollFailover(server) { return ha.pollFailover(db, ps, server, serverAuth(server)); }
+async function pollDnsSoa(server)   { return ha.pollDnsSoa(db, ps, server, serverAuth(server)); }
+async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serverAuth(server)); }
+
 async function pollAll(fn, label) {
   const servers = await getActiveServers().catch(err => {
     console.error(`[DB] Cannot fetch servers for ${label}:`, err.message);
@@ -394,11 +403,16 @@ async function main() {
   await pollAll(collectScopeStats, 'Scopes');
   await pollAll(syncLeases,        'Leases');
   await pollAll(syncDns,           'DNS');
+  await pollAll(pollFailover,      'Failover');
+  await pollAll(pollHealth,        'Health');
 
-  setInterval(() => pollAll(tailDhcpLog,       'Log'),    INTERVAL_LOG_TAIL);
-  setInterval(() => pollAll(collectScopeStats, 'Scopes'), INTERVAL_SCOPE_STATS);
-  setInterval(() => pollAll(syncLeases,        'Leases'), INTERVAL_LEASE_SYNC);
-  setInterval(() => pollAll(syncDns,           'DNS'),    INTERVAL_DNS_SYNC);
+  setInterval(() => pollAll(tailDhcpLog,       'Log'),      INTERVAL_LOG_TAIL);
+  setInterval(() => pollAll(collectScopeStats, 'Scopes'),   INTERVAL_SCOPE_STATS);
+  setInterval(() => pollAll(syncLeases,        'Leases'),   INTERVAL_LEASE_SYNC);
+  setInterval(() => pollAll(syncDns,           'DNS'),      INTERVAL_DNS_SYNC);
+  setInterval(() => pollAll(pollFailover,      'Failover'), INTERVAL_FAILOVER);
+  setInterval(() => pollAll(pollDnsSoa,        'DNS-SOA'),  INTERVAL_SOA_SYNC);
+  setInterval(() => pollAll(pollHealth,        'Health'),   INTERVAL_HEALTH);
 
   log('=== DDIVault Collector running ===');
 }

@@ -22,6 +22,14 @@ const nextConfig = {
       { source: '/api/search', destination: 'http://127.0.0.1:3007/api/search' },
       { source: '/api/scopes/history/:path*', destination: 'http://127.0.0.1:3007/api/scopes/history/:path*' },
       { source: '/api/sites',              destination: 'http://127.0.0.1:3007/api/sites' },
+      { source: '/api/audit/:path*',          destination: 'http://127.0.0.1:3007/api/audit/:path*' },
+      { source: '/api/audit',                 destination: 'http://127.0.0.1:3007/api/audit' },
+      { source: '/api/reports/:path*',        destination: 'http://127.0.0.1:3007/api/reports/:path*' },
+      { source: '/api/reports',               destination: 'http://127.0.0.1:3007/api/reports' },
+      { source: '/api/api-keys/:path*',       destination: 'http://127.0.0.1:3007/api/api-keys/:path*' },
+      { source: '/api/api-keys',              destination: 'http://127.0.0.1:3007/api/api-keys' },
+      { source: '/api/infrastructure/:path*', destination: 'http://127.0.0.1:3007/api/infrastructure/:path*' },
+      { source: '/api/v1/:path*',             destination: 'http://127.0.0.1:3007/api/v1/:path*' },
     ];
   },
 };
