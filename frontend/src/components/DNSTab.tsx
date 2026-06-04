@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
+import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import {
   PageHeader, EmptyState, TableSkeleton, Skeleton,
   useRefreshKey, useEscape,
@@ -310,6 +311,7 @@ function ServerPill({ server, active, onClick }: {
 function ZoneRow({ zone, selected, onSelect, onDelete }: {
   zone: DnsZone; selected: boolean; onSelect: () => void; onDelete: () => void;
 }) {
+  const { canWrite } = useRBAC();
   return (
     <div
       onClick={onSelect}
@@ -328,13 +330,15 @@ function ZoneRow({ zone, selected, onSelect, onDelete }: {
           {zone.zone_name}
         </span>
         <span className="badge badge-blue" style={{ fontSize: 9 }}>{zone.zone_type}</span>
-        <button
-          onClick={e => { e.stopPropagation(); onDelete(); }}
-          title="Delete zone"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0, lineHeight: 1 }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-        >×</button>
+        {canWrite && (
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(); }}
+            title="Delete zone"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0, lineHeight: 1 }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+          >×</button>
+        )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>
         <span>{zone.record_count || 0} {zone.record_count === 1 ? 'record' : 'records'}</span>
@@ -367,6 +371,7 @@ export default function DNSTab() {
   const [loadingRecords, setLoadingRecords] = useState(false);
 
   const { toast } = useToast();
+  const { canWrite } = useRBAC();
 
   // global search is active when the toolbar search box has text
   const globalSearch = recordSearch.trim().length > 0;
@@ -471,13 +476,19 @@ export default function DNSTab() {
 
       {/* ── Page header ── */}
       <PageHeader title="DNS" subtitle="Manage forward and reverse zones and their records across your DNS servers">
-        <button onClick={() => setShowAddZone(true)} className="btn" disabled={servers.length === 0}
-          style={{ opacity: servers.length === 0 ? 0.5 : 1 }}>+ Zone</button>
-        <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
-          style={{ opacity: selectedZone ? 1 : 0.5 }}>+ Record</button>
+        {canWrite && (
+          <button onClick={() => setShowAddZone(true)} className="btn" disabled={servers.length === 0}
+            style={{ opacity: servers.length === 0 ? 0.5 : 1 }}>+ Zone</button>
+        )}
+        {canWrite && (
+          <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
+            style={{ opacity: selectedZone ? 1 : 0.5 }}>+ Record</button>
+        )}
         <button onClick={() => { loadServers(); loadZones(); loadBreakdown(); if (selectedZone || globalSearch) loadRecords(recordPage); toast('Refreshed', 'info'); }}
           className="btn" title="Refresh">↻</button>
       </PageHeader>
+
+      <ReadOnlyBanner />
 
       {/* ── Server selector pills ── */}
       {servers.length > 0 && (
@@ -516,8 +527,8 @@ export default function DNSTab() {
           <EmptyState
             title="No DNS zones"
             message="Add a server with the DNS role in Known Servers, or create a zone."
-            actionLabel={servers.length > 0 ? '+ Create Zone' : undefined}
-            onAction={servers.length > 0 ? () => setShowAddZone(true) : undefined}
+            actionLabel={canWrite && servers.length > 0 ? '+ Create Zone' : undefined}
+            onAction={canWrite && servers.length > 0 ? () => setShowAddZone(true) : undefined}
           />
         </div>
       ) : (
@@ -584,8 +595,10 @@ export default function DNSTab() {
                 <option value="">All types</option>
                 {RECORD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
-                style={{ opacity: selectedZone ? 1 : 0.5, whiteSpace: 'nowrap' }}>+ Add Record</button>
+              {canWrite && (
+                <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
+                  style={{ opacity: selectedZone ? 1 : 0.5, whiteSpace: 'nowrap' }}>+ Add Record</button>
+              )}
               <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                 {recordTotal.toLocaleString()} {recordTotal === 1 ? 'record' : 'records'}
               </span>
@@ -632,8 +645,10 @@ export default function DNSTab() {
                         <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.ttl}s</td>
                         <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.zone_name}</td>
                         <td style={{ textAlign: 'right' }}>
-                          <button onClick={() => deleteRecord(r)}
-                            style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                          {canWrite && (
+                            <button onClick={() => deleteRecord(r)}
+                              style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                          )}
                         </td>
                       </tr>
                     ))}

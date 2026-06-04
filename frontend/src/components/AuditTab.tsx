@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { PageHeader, EmptyState, TableSkeleton, Skeleton, useRefreshKey } from '@/components/ui';
+import { useRBAC } from '@/components/RBACContext';
 
 // ── Types ─────────────────────────────────────────────────────
 interface AuditEntry {
@@ -82,6 +83,7 @@ function StatTile({ value, label, sub, color }: { value: React.ReactNode; label:
 }
 
 export default function AuditTab() {
+  const { canManageSystem } = useRBAC();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [stats, setStats] = useState<AuditStats | null>(null);
   const [total, setTotal] = useState(0);
@@ -147,7 +149,9 @@ export default function AuditTab() {
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="Audit Log" subtitle="Every change across DNS, DHCP, IPAM and settings — who, what, when, and from where. Live-updates every 10s.">
-        <button className="btn" onClick={exportCsv}>Export CSV</button>
+        {canManageSystem && (
+          <button className="btn" onClick={exportCsv}>Export CSV</button>
+        )}
       </PageHeader>
 
       {/* Stat tiles */}

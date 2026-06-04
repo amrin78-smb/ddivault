@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
+import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import IPAMImport from '@/components/IPAMImport';
 import {
   PageHeader, EmptyState, Skeleton, TableSkeleton, Breadcrumb,
@@ -355,6 +356,7 @@ function ReserveModal({ ip, onClose, onConfirm }: {
 function SubnetRow({ subnet, onView, onScan, onDelete }: {
   subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void;
 }) {
+  const { canWrite } = useRBAC();
   const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
   const used    = subnet.used_hosts || 0;
   const unknown = subnet.unknown_hosts || 0;
@@ -382,10 +384,12 @@ function SubnetRow({ subnet, onView, onScan, onDelete }: {
       <div style={{ fontSize: 11, color: subnet.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', minWidth: 96 }}>
         {scanLabel(subnet.scan_status, subnet.last_scanned)}
       </div>
-      <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
-        <button onClick={onScan} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
-        <button onClick={onDelete} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+          <button onClick={onScan} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+          <button onClick={onDelete} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -401,6 +405,7 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
   const [scanning, setScanning]   = useState(false);
   const [reserveIp, setReserveIp] = useState<string | null>(null);
   const { toast } = useToast();
+  const { canWrite } = useRBAC();
   useEscape(onClose);
 
   const load = useCallback(async () => {
@@ -512,9 +517,11 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
             </div>
           ))}
           <button className="btn" onClick={nextIp} style={{ fontSize: 12 }}>Next Available IP</button>
-          <button className="btn btn-primary" onClick={startScan} disabled={scanning} style={{ opacity: scanning ? 0.7 : 1 }}>
-            {scanning ? <><Spinner color="#fff" /> Scanning…</> : '⟳ Scan Now'}
-          </button>
+          {canWrite && (
+            <button className="btn btn-primary" onClick={startScan} disabled={scanning} style={{ opacity: scanning ? 0.7 : 1 }}>
+              {scanning ? <><Spinner color="#fff" /> Scanning…</> : '⟳ Scan Now'}
+            </button>
+          )}
           <button className="btn" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -545,8 +552,8 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
             icon="🛰"
             title="No addresses yet"
             message="Run a scan to discover live hosts, DHCP leases and free addresses in this subnet."
-            actionLabel="Scan Now"
-            onAction={startScan}
+            actionLabel={canWrite ? 'Scan Now' : undefined}
+            onAction={canWrite ? startScan : undefined}
           />
         ) : filtered.length === 0 ? (
           <EmptyState icon="🔍" title="No results" message="No addresses match your search or filter." />
@@ -578,7 +585,8 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
                     {addr.is_reserved && addr.reserved_by ? <span style={{ color: 'var(--purple)', marginLeft: 4 }}>· {addr.reserved_by}</span> : ''}
                   </td>
                   <td style={TD}>
-                    {addr.is_reserved ? (
+                    {!canWrite ? '—'
+                      : addr.is_reserved ? (
                       <button onClick={() => release(addr.ip_address)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Release</button>
                     ) : (addr.status === 'available' || addr.status === 'unknown') ? (
                       <button onClick={() => setReserveIp(addr.ip_address)} style={{ fontSize: 11, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Reserve</button>
@@ -604,6 +612,7 @@ type SortKey = 'network' | 'name' | 'used' | 'unknown' | 'util';
 
 export default function IPAMTab() {
   const { toast } = useToast();
+  const { canWrite } = useRBAC();
 
   const [supernets, setSupernets] = useState<Supernet[]>([]);
   const [subnets, setSubnets]     = useState<Subnet[]>([]);
@@ -734,11 +743,13 @@ export default function IPAMTab() {
             </button>
           ))}
         </div>
-        <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>
-        <button className="btn" onClick={() => setAddSupernet(true)}>+ Supernet</button>
-        <button className="btn" onClick={() => openAddSubnet(null)}>+ Subnet</button>
-        <button className="btn btn-primary" onClick={scanAll}>⟳ Scan All</button>
+        {canWrite && <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>}
+        {canWrite && <button className="btn" onClick={() => setAddSupernet(true)}>+ Supernet</button>}
+        {canWrite && <button className="btn" onClick={() => openAddSubnet(null)}>+ Subnet</button>}
+        {canWrite && <button className="btn btn-primary" onClick={scanAll}>⟳ Scan All</button>}
       </PageHeader>
+
+      <ReadOnlyBanner />
 
       {/* ── CONFLICT BANNER ── */}
       {conflicts.length > 0 && (
@@ -891,6 +902,7 @@ function TreeView({
   prefixSel: Record<number, number>; setPrefixSel: (f: (p: Record<number, number>) => Record<number, number>) => void;
   nextSubnetResult: Record<number, string>; onFindNextSubnet: (sn: Supernet) => void;
 }) {
+  const { canWrite } = useRBAC();
   const CARD: React.CSSProperties = {
     background: 'var(--bg-card)', border: '1px solid var(--border)',
     borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden',
@@ -936,7 +948,7 @@ function TreeView({
               <div style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 80 }}>{children.length} subnets</div>
               {totalAll > 0 && <div style={{ width: 200 }}><UtilBar pct={utilPct(totalUsed, totalAll)} /></div>}
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onAddSubnet(sn.id)}>+ Subnet</button>
+                {canWrite && <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onAddSubnet(sn.id)}>+ Subnet</button>}
                 <select
                   value={prefix}
                   onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
@@ -948,7 +960,7 @@ function TreeView({
                 {nextSubnetResult[sn.id] && (
                   <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
                 )}
-                <button onClick={() => onDeleteSupernet(sn.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                {canWrite && <button onClick={() => onDeleteSupernet(sn.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
               </div>
             </div>
 
@@ -993,6 +1005,7 @@ function ipToNum(ip: string): number {
 function FlatView({ subnets, onView, onScan, onDelete }: {
   subnets: Subnet[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void;
 }) {
+  const { canWrite } = useRBAC();
   const [sortKey, setSortKey] = useState<SortKey>('network');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -1067,8 +1080,10 @@ function FlatView({ subnets, onView, onScan, onDelete }: {
                     {scanLabel(sub.scan_status, sub.last_scanned)}
                   </td>
                   <td style={TD} onClick={e => e.stopPropagation()}>
-                    <button onClick={() => onScan(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
-                    <button onClick={() => onDelete(sub.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
+                    {canWrite && <>
+                      <button onClick={() => onScan(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+                      <button onClick={() => onDelete(sub.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
+                    </>}
                   </td>
                 </tr>
               );
@@ -1086,14 +1101,15 @@ function FlatView({ subnets, onView, onScan, onDelete }: {
 function VlanView({ vlans, subnets, onAdd, onDelete }: {
   vlans: Vlan[]; subnets: Subnet[]; onAdd: () => void; onDelete: (id: number) => void;
 }) {
+  const { canWrite } = useRBAC();
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
       <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontWeight: 600 }}>VLAN Registry</div>
-        <button className="btn btn-primary" onClick={onAdd}>+ Add VLAN</button>
+        {canWrite && <button className="btn btn-primary" onClick={onAdd}>+ Add VLAN</button>}
       </div>
       {vlans.length === 0 ? (
-        <EmptyState icon="🏷" title="No VLANs configured" message="Add a VLAN to track it across your subnets." actionLabel="Add VLAN" onAction={onAdd} />
+        <EmptyState icon="🏷" title="No VLANs configured" message="Add a VLAN to track it across your subnets." actionLabel={canWrite ? 'Add VLAN' : undefined} onAction={canWrite ? onAdd : undefined} />
       ) : (
         <table className="data-table">
           <thead>
@@ -1110,7 +1126,7 @@ function VlanView({ vlans, subnets, onAdd, onDelete }: {
                 <td style={TD}>{v.site || '—'}</td>
                 <td style={TD}>{subnets.filter(s => s.vlan_id === v.vlan_id).length}</td>
                 <td style={TD}>
-                  <button onClick={() => onDelete(v.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                  {canWrite && <button onClick={() => onDelete(v.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
                 </td>
               </tr>
             ))}

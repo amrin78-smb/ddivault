@@ -4,6 +4,7 @@ import GlobalSearch from './GlobalSearch';
 import { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
+import { useRBAC } from '@/components/RBACContext';
 
 interface HeaderProps {
   onNavigate?: (tab: any) => void;
@@ -20,10 +21,18 @@ interface AlertItem {
 
 const SEVERITY_COLOR: Record<string, string> = { critical: '#dc2626', warning: '#ca8a04' };
 
+const ROLE_META: Record<string, { label: string; color: string }> = {
+  super_admin: { label: 'Super Admin', color: '#C8102E' },
+  admin:       { label: 'Admin',       color: '#2563eb' },
+  site_admin:  { label: 'Site Admin',  color: '#16a34a' },
+  viewer:      { label: 'Viewer',      color: '#64748b' },
+};
+
 export function Header(props: HeaderProps) {
   const { collectorOnline, onNavigate } = props;
   const { theme, toggle } = useTheme();
   const { data: session } = useSession();
+  const { role } = useRBAC();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -274,7 +283,25 @@ export function Header(props: HeaderProps) {
           }}>
             {/* User info header */}
             <div style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{userName}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{userName}</div>
+                {(() => {
+                  const meta = ROLE_META[role] || ROLE_META.viewer;
+                  return (
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: meta.color,
+                      background: meta.color + '1a',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {meta.label}
+                    </span>
+                  );
+                })()}
+              </div>
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{userEmail}</div>
             </div>
 

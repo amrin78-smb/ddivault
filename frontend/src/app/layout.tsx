@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/components/AuthProvider';
+import { RBACProvider } from '@/components/RBACContext';
 import { ThemeProvider } from '@/components/ThemeContext';
 import { ToastProvider } from '@/components/Toast';
+import { FetchInterceptor } from '@/components/FetchInterceptor';
 import { IdleTimeout } from '@/components/IdleTimeout';
 import { AuditActor } from '@/components/AuditActor';
 
@@ -16,13 +18,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body>
         <AuthProvider>
-          <AuditActor />
-          <IdleTimeout />
-          <ThemeProvider>
-            <ToastProvider>
-              {children}
-            </ToastProvider>
-          </ThemeProvider>
+          <RBACProvider>
+            <AuditActor />
+            <IdleTimeout />
+            <ThemeProvider>
+              <ToastProvider>
+                <FetchInterceptor />
+                {children}
+              </ToastProvider>
+            </ThemeProvider>
+          </RBACProvider>
         </AuthProvider>
       </body>
     </html>

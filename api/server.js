@@ -42,6 +42,7 @@ db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 // ── Enterprise modules ────────────────────────────────────────
 const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
+const { requireWrite, requireSuperAdmin, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
 const { createV1Router } = require('./v1');
 
@@ -144,13 +145,17 @@ app.get('/api/dashboard/recent-events', async (req, res) => {
 });
 
 // ── DHCP Scopes ───────────────────────────────────────────────
-app.get('/api/scopes', async (req, res) => {
+app.get('/api/scopes', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE srv.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT sc.*, srv.hostname as server_hostname, srv.ip_address as server_ip
        FROM dhcp_scopes sc
        LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
-       ORDER BY sc.percent_used DESC, sc.scope_id`
+       ${siteFilter}
+       ORDER BY sc.percent_used DESC, sc.scope_id`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -377,7 +382,7 @@ app.get('/api/subnets', async (req, res) => {
   }
 });
 
-app.post('/api/subnets', async (req, res) => {
+app.post('/api/subnets', requireWrite, async (req, res) => {
   try {
     const { network, prefix_length, name, description, gateway, vlan_id, site, owner } = req.body;
     if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
@@ -400,7 +405,7 @@ app.post('/api/subnets', async (req, res) => {
   }
 });
 
-app.put('/api/subnets/:id', async (req, res) => {
+app.put('/api/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { name, description, gateway, vlan_id, site, owner } = req.body;
@@ -419,7 +424,7 @@ app.put('/api/subnets/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/subnets/:id', async (req, res) => {
+app.delete('/api/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await db.query('DELETE FROM ipam_subnets WHERE id = $1', [id]);
@@ -431,13 +436,17 @@ app.delete('/api/subnets/:id', async (req, res) => {
 });
 
 // ── DNS ───────────────────────────────────────────────────────
-app.get('/api/dns/zones', async (req, res) => {
+app.get('/api/dns/zones', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT z.*, s.hostname as server_hostname
        FROM dns_zones z
        LEFT JOIN ddi_servers s ON s.id = z.server_id
-       ORDER BY z.is_reverse ASC, z.zone_name`
+       ${siteFilter}
+       ORDER BY z.is_reverse ASC, z.zone_name`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -540,7 +549,7 @@ app.get('/api/alerts', async (req, res) => {
   }
 });
 
-app.post('/api/alerts/:id/acknowledge', async (req, res) => {
+app.post('/api/alerts/:id/acknowledge', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const user = req.body.user || 'admin';
@@ -556,7 +565,7 @@ app.post('/api/alerts/:id/acknowledge', async (req, res) => {
   }
 });
 
-app.post('/api/alerts/acknowledge-all', async (req, res) => {
+app.post('/api/alerts/acknowledge-all', requireWrite, async (req, res) => {
   try {
     const user = req.body.user || 'admin';
     await db.query(
@@ -581,7 +590,7 @@ app.get('/api/alert-rules', async (req, res) => {
   }
 });
 
-app.put('/api/alert-rules/:id', async (req, res) => {
+app.put('/api/alert-rules/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { threshold_value, is_enabled } = req.body;
@@ -628,7 +637,7 @@ app.get('/api/servers', async (req, res) => {
   }
 });
 
-app.post('/api/servers', async (req, res) => {
+app.post('/api/servers', requireWrite, async (req, res) => {
   try {
     const {
       hostname, ip_address, role, description,
@@ -661,7 +670,7 @@ app.post('/api/servers', async (req, res) => {
   }
 });
 
-app.put('/api/servers/:id', async (req, res) => {
+app.put('/api/servers/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
@@ -706,7 +715,7 @@ app.put('/api/servers/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/servers/:id', async (req, res) => {
+app.delete('/api/servers/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const prev = await db.query('SELECT hostname FROM ddi_servers WHERE id=$1', [id]);
@@ -720,7 +729,7 @@ app.delete('/api/servers/:id', async (req, res) => {
 });
 
 // Test WinRM connection for a server
-app.post('/api/servers/:id/test-connection', async (req, res) => {
+app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
   try {
     const id  = parseInt(req.params.id);
     const serverData = await getServerWithAuth(id);
@@ -763,7 +772,7 @@ app.get('/api/settings', async (req, res) => {
   }
 });
 
-app.post('/api/settings', async (req, res) => {
+app.post('/api/settings', requireSuperAdmin, async (req, res) => {
   try {
     const { key, value } = req.body;
     if (!key) return res.status(400).json({ error: 'key required' });
@@ -782,8 +791,10 @@ app.post('/api/settings', async (req, res) => {
 });
 
 // ── IPAM — Supernets ─────────────────────────────────────────
-app.get('/api/ipam/supernets', async (req, res) => {
+app.get('/api/ipam/supernets', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT s.*,
          COUNT(sub.id) as subnet_count,
@@ -792,8 +803,10 @@ app.get('/api/ipam/supernets', async (req, res) => {
          COALESCE(SUM(sub.free_hosts),0)  as free_hosts
        FROM ipam_supernets s
        LEFT JOIN ipam_subnets sub ON sub.supernet_id = s.id
+       ${siteFilter}
        GROUP BY s.id
-       ORDER BY s.network`
+       ORDER BY s.network`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -802,7 +815,7 @@ app.get('/api/ipam/supernets', async (req, res) => {
   }
 });
 
-app.post('/api/ipam/supernets', async (req, res) => {
+app.post('/api/ipam/supernets', requireWrite, async (req, res) => {
   try {
     const { network, prefix_length, name, description, site } = req.body;
     if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
@@ -821,7 +834,7 @@ app.post('/api/ipam/supernets', async (req, res) => {
   }
 });
 
-app.delete('/api/ipam/supernets/:id', async (req, res) => {
+app.delete('/api/ipam/supernets/:id', requireWrite, async (req, res) => {
   try {
     await db.query('DELETE FROM ipam_supernets WHERE id=$1', [parseInt(req.params.id)]);
     res.json({ success: true });
@@ -832,15 +845,20 @@ app.delete('/api/ipam/supernets/:id', async (req, res) => {
 });
 
 // ── IPAM — Subnets (enhanced) ────────────────────────────────
-app.get('/api/ipam/subnets', async (req, res) => {
+app.get('/api/ipam/subnets', attachSiteFilter, async (req, res) => {
   try {
     const supernet_id = req.query.supernet_id;
     const params = [];
-    let where = '';
+    const conds = [];
     if (supernet_id) {
       params.push(parseInt(supernet_id));
-      where = 'WHERE s.supernet_id = $1';
+      conds.push(`s.supernet_id = $${params.length}`);
     }
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      conds.push(`s.site_id = ANY($${params.length}::int[])`);
+    }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     const rows = await db.query(
       `SELECT s.*,
          sn.name as supernet_name,
@@ -863,7 +881,7 @@ app.get('/api/ipam/subnets', async (req, res) => {
   }
 });
 
-app.post('/api/ipam/subnets', async (req, res) => {
+app.post('/api/ipam/subnets', requireWrite, async (req, res) => {
   try {
     const { network, prefix_length, name, description, gateway, vlan_id,
             site, owner, supernet_id, location, notes } = req.body;
@@ -893,7 +911,7 @@ app.post('/api/ipam/subnets', async (req, res) => {
   }
 });
 
-app.put('/api/ipam/subnets/:id', async (req, res) => {
+app.put('/api/ipam/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes } = req.body;
@@ -914,7 +932,7 @@ app.put('/api/ipam/subnets/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/ipam/subnets/:id', async (req, res) => {
+app.delete('/api/ipam/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const prev = await db.query('SELECT host(network) AS network, prefix_length FROM ipam_subnets WHERE id=$1', [id]);
@@ -928,13 +946,17 @@ app.delete('/api/ipam/subnets/:id', async (req, res) => {
 });
 
 // ── IPAM — IP Addresses ───────────────────────────────────────
-app.get('/api/ipam/subnets/:id/addresses', async (req, res) => {
+app.get('/api/ipam/subnets/:id/addresses', attachSiteFilter, async (req, res) => {
   try {
     const id     = parseInt(req.params.id);
     const status = req.query.status || '';
     const params = [id];
     let where = 'WHERE a.subnet_id = $1';
     if (status) { params.push(status); where += ` AND a.status = $${params.length}`; }
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where += ` AND EXISTS (SELECT 1 FROM ipam_subnets sn WHERE sn.id = a.subnet_id AND sn.site_id = ANY($${params.length}::int[]))`;
+    }
     const rows = await db.query(
       `SELECT a.*, l.lease_expiry, l.address_state
        FROM ipam_addresses a
@@ -951,7 +973,7 @@ app.get('/api/ipam/subnets/:id/addresses', async (req, res) => {
 });
 
 // Reserve an IP
-app.post('/api/ipam/subnets/:id/addresses/:ip/reserve', async (req, res) => {
+app.post('/api/ipam/subnets/:id/addresses/:ip/reserve', requireWrite, async (req, res) => {
   try {
     const subnetId  = parseInt(req.params.id);
     const ip        = req.params.ip;
@@ -979,7 +1001,7 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/reserve', async (req, res) => {
 });
 
 // Release a reserved IP
-app.post('/api/ipam/subnets/:id/addresses/:ip/release', async (req, res) => {
+app.post('/api/ipam/subnets/:id/addresses/:ip/release', requireWrite, async (req, res) => {
   try {
     const subnetId = parseInt(req.params.id);
     const ip       = req.params.ip;
@@ -1006,7 +1028,7 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/release', async (req, res) => {
 const { scanAllSubnets } = require('../collector/ipamScanner');
 const scanningSubnets = new Set(); // prevent concurrent scans of same subnet
 
-app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
+app.post('/api/ipam/subnets/:id/scan', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (scanningSubnets.has(id)) {
@@ -1043,7 +1065,7 @@ app.post('/api/ipam/subnets/:id/scan', async (req, res) => {
   }
 });
 
-app.post('/api/ipam/scan-all', async (req, res) => {
+app.post('/api/ipam/scan-all', requireWrite, async (req, res) => {
   try {
     res.json({ success: true, message: 'Full IPAM scan started' });
     scanAllSubnets().catch(err => console.error('[API] scan-all error:', err.message));
@@ -1123,7 +1145,7 @@ app.get('/api/ipam/vlans', async (req, res) => {
   }
 });
 
-app.post('/api/ipam/vlans', async (req, res) => {
+app.post('/api/ipam/vlans', requireWrite, async (req, res) => {
   try {
     const { vlan_id, name, description, site } = req.body;
     if (!vlan_id) return res.status(400).json({ error: 'vlan_id required' });
@@ -1141,7 +1163,7 @@ app.post('/api/ipam/vlans', async (req, res) => {
   }
 });
 
-app.delete('/api/ipam/vlans/:id', async (req, res) => {
+app.delete('/api/ipam/vlans/:id', requireWrite, async (req, res) => {
   try {
     await db.query('DELETE FROM ipam_vlans WHERE id=$1', [parseInt(req.params.id)]);
     res.json({ success: true });
@@ -1209,7 +1231,7 @@ app.get('/api/dns/servers', async (req, res) => {
 });
 
 // Add DNS record — runs PowerShell on the actual DNS server
-app.post('/api/dns/records', async (req, res) => {
+app.post('/api/dns/records', requireWrite, async (req, res) => {
   try {
     const { server_id, zone_name, hostname, record_type, record_data, ttl, preference } = req.body;
     if (!server_id || !zone_name || !hostname || !record_type || !record_data) {
@@ -1254,7 +1276,7 @@ app.post('/api/dns/records', async (req, res) => {
 });
 
 // Delete DNS record
-app.delete('/api/dns/records', async (req, res) => {
+app.delete('/api/dns/records', requireWrite, async (req, res) => {
   try {
     const { server_id, zone_name, hostname, record_type, record_data } = req.body;
     if (!server_id || !zone_name || !hostname || !record_type) {
@@ -1282,7 +1304,7 @@ app.delete('/api/dns/records', async (req, res) => {
 });
 
 // Add DNS zone
-app.post('/api/dns/zones', async (req, res) => {
+app.post('/api/dns/zones', requireWrite, async (req, res) => {
   try {
     const { server_id, zone_name, zone_type, replication_scope } = req.body;
     if (!server_id || !zone_name) return res.status(400).json({ error: 'server_id and zone_name required' });
@@ -1307,7 +1329,7 @@ app.post('/api/dns/zones', async (req, res) => {
 });
 
 // Delete DNS zone
-app.delete('/api/dns/zones/:id', async (req, res) => {
+app.delete('/api/dns/zones/:id', requireWrite, async (req, res) => {
   try {
     const zoneRes = await db.query(
       `SELECT z.*, s.ip_address::text as server_ip, s.auth_mode, s.ps_username,
@@ -1351,7 +1373,7 @@ app.get('/api/dns/stats/:serverId', async (req, res) => {
 });
 
 // ── DHCP Reservation — write via PowerShell ───────────────────
-app.post('/api/dhcp/reservations', async (req, res) => {
+app.post('/api/dhcp/reservations', requireWrite, async (req, res) => {
   try {
     const { server_id, scope_id, ip_address, mac_address, name, description } = req.body;
     if (!server_id || !scope_id || !ip_address || !mac_address) {
@@ -1386,7 +1408,7 @@ app.post('/api/dhcp/reservations', async (req, res) => {
 });
 
 // Remove DHCP reservation
-app.delete('/api/dhcp/reservations', async (req, res) => {
+app.delete('/api/dhcp/reservations', requireWrite, async (req, res) => {
   try {
     const { server_id, scope_id, ip_address } = req.body;
     if (!server_id || !scope_id || !ip_address) {
@@ -1453,7 +1475,7 @@ app.get('/api/sites', async (req, res) => {
 });
 
 // ── IPAM — CSV/Excel Import ───────────────────────────────────
-app.post('/api/ipam/import', async (req, res) => {
+app.post('/api/ipam/import', requireWrite, async (req, res) => {
   try {
     const { rows } = req.body; // array of subnet objects from parsed CSV
     if (!rows || !Array.isArray(rows) || !rows.length) {
@@ -1840,7 +1862,7 @@ app.get('/api/scopes/history/all', async (req, res) => {
 // ════════════════════════════════════════════════════════════
 // AUDIT LOG (internal API for the Audit Log tab)
 // ════════════════════════════════════════════════════════════
-function buildAuditFilters(q) {
+function buildAuditFilters(q, allowedSiteIds) {
   const conds = [], vals = [];
   if (q.action)      { vals.push(q.action);             conds.push(`action = $${vals.length}`); }
   if (q.entity_type) { vals.push(q.entity_type);        conds.push(`entity_type = $${vals.length}`); }
@@ -1850,14 +1872,16 @@ function buildAuditFilters(q) {
   if (q.from)        { vals.push(q.from);               conds.push(`timestamp >= $${vals.length}`); }
   if (q.to)          { vals.push(q.to);                 conds.push(`timestamp <= $${vals.length}`); }
   if (q.q) { vals.push(`%${q.q}%`); conds.push(`(entity_name ILIKE $${vals.length} OR change_summary ILIKE $${vals.length})`); }
+  // Site-scope restriction for site_admin (null = unrestricted)
+  if (allowedSiteIds != null) { vals.push(allowedSiteIds); conds.push(`site_id = ANY($${vals.length}::int[])`); }
   return { where: conds.length ? `WHERE ${conds.join(' AND ')}` : '', vals };
 }
 
-app.get('/api/audit', async (req, res) => {
+app.get('/api/audit', attachSiteFilter, async (req, res) => {
   try {
     const page = safePage(req.query.page);
     const limit = safeLimit(req.query.limit);
-    const { where, vals } = buildAuditFilters(req.query);
+    const { where, vals } = buildAuditFilters(req.query, req.allowedSiteIds);
     const totalRes = await db.query(`SELECT COUNT(*) AS c FROM audit_log ${where}`, vals);
     const total = parseInt(totalRes.rows[0].c);
     const rows = await db.query(
@@ -1894,7 +1918,7 @@ app.get('/api/audit/stats', async (req, res) => {
   }
 });
 
-app.get('/api/audit/export', async (req, res) => {
+app.get('/api/audit/export', requireSuperAdmin, async (req, res) => {
   try {
     const { where, vals } = buildAuditFilters(req.query);
     const rows = await db.query(`SELECT timestamp, username, user_role, action, entity_type, entity_name, change_summary, result, ip_address, duration_ms FROM audit_log ${where} ORDER BY timestamp DESC LIMIT 50000`, vals);
@@ -1925,7 +1949,7 @@ app.get('/api/audit/:id', async (req, res) => {
 // ════════════════════════════════════════════════════════════
 // API KEYS (management for the Settings tab)
 // ════════════════════════════════════════════════════════════
-app.get('/api/api-keys', async (req, res) => {
+app.get('/api/api-keys', requireSuperAdmin, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT id, key_prefix, name, description, created_by, created_at, last_used_at,
@@ -1938,7 +1962,7 @@ app.get('/api/api-keys', async (req, res) => {
   }
 });
 
-app.post('/api/api-keys', async (req, res) => {
+app.post('/api/api-keys', requireSuperAdmin, async (req, res) => {
   try {
     const { name, description, permissions, allowed_ips, expires_at } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
@@ -1964,7 +1988,7 @@ app.post('/api/api-keys', async (req, res) => {
   }
 });
 
-app.delete('/api/api-keys/:id', async (req, res) => {
+app.delete('/api/api-keys/:id', requireSuperAdmin, async (req, res) => {
   try {
     const r = await db.query('UPDATE api_keys SET is_active = FALSE WHERE id = $1 RETURNING name', [parseInt(req.params.id)]);
     if (!r.rows.length) return res.status(404).json({ error: 'Key not found' });

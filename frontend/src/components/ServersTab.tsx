@@ -5,6 +5,7 @@ import { useToast } from '@/components/Toast';
 import {
   PageHeader, EmptyState, CardSkeleton, Spinner, useRefreshKey, useEscape,
 } from '@/components/ui';
+import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -315,6 +316,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
   onEdit: (s: Server) => void;
   onDelete: (id: number) => void;
 }) {
+  const { canWrite } = useRBAC();
   const aColor = authColor(s.auth_mode);
   const ok = s.winrm_test_ok;
 
@@ -413,14 +415,18 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
         >
           {testing ? <><Spinner size={13} color="#fff" /> Testing…</> : <>⚡ Test Connection</>}
         </button>
-        <button className="btn" onClick={() => onEdit(s)} style={{ fontSize: 12.5 }}>Edit</button>
-        <button
-          className="btn"
-          onClick={() => onDelete(s.id)}
-          style={{ fontSize: 12.5, color: 'var(--red)', marginLeft: 'auto' }}
-        >
-          Remove
-        </button>
+        {canWrite && (
+          <button className="btn" onClick={() => onEdit(s)} style={{ fontSize: 12.5 }}>Edit</button>
+        )}
+        {canWrite && (
+          <button
+            className="btn"
+            onClick={() => onDelete(s.id)}
+            style={{ fontSize: 12.5, color: 'var(--red)', marginLeft: 'auto' }}
+          >
+            Remove
+          </button>
+        )}
       </div>
     </div>
   );
@@ -438,6 +444,7 @@ export default function ServersTab() {
   const [testing, setTesting] = useState<Record<number, boolean>>({});
   const [testResults, setTestResults] = useState<Record<number, TestResult>>({});
   const { toast } = useToast();
+  const { canWrite } = useRBAC();
 
   const load = useCallback(async () => {
     const [d, s] = await Promise.allSettled([api('/servers'), api('/sites')]);
@@ -488,8 +495,12 @@ export default function ServersTab() {
         title="Known Servers"
         subtitle="DHCP and DNS servers monitored via WinRM / PowerShell remoting"
       >
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Server</button>
+        {canWrite && (
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Server</button>
+        )}
       </PageHeader>
+
+      <ReadOnlyBanner />
 
       {/* KPI tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
@@ -538,8 +549,8 @@ export default function ServersTab() {
             icon="🖥️"
             title="No servers configured"
             message="Add your first DHCP/DNS server to start monitoring."
-            actionLabel="+ Add Server"
-            onAction={() => setShowAdd(true)}
+            actionLabel={canWrite ? '+ Add Server' : undefined}
+            onAction={canWrite ? () => setShowAdd(true) : undefined}
           />
         </div>
       ) : (

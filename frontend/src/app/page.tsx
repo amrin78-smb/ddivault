@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
+import { useRBAC } from '@/components/RBACContext';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -732,6 +733,19 @@ export default function DDIVaultApp() {
   const [collectorOnline, setCollectorOnline] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
+  const { canManageSystem, isViewer } = useRBAC();
+
+  // Settings is super_admin only; Audit Log is hidden from viewers.
+  const visibleItems = useMemo(() => SIDEBAR_ITEMS.filter(item => {
+    if (item.id === 'settings') return canManageSystem;
+    if (item.id === 'audit')    return !isViewer;
+    return true;
+  }), [canManageSystem, isViewer]);
+
+  // If the active tab is no longer permitted, fall back to the dashboard.
+  useEffect(() => {
+    if (!visibleItems.some(i => i.id === tab)) setTab('dashboard');
+  }, [visibleItems, tab]);
 
   useEffect(() => {
     const check = () => fetch('/api/health').then(r => setCollectorOnline(r.ok)).catch(() => setCollectorOnline(false));
@@ -780,7 +794,7 @@ export default function DDIVaultApp() {
           )}
           {collapsed && <div style={{ height: 12 }} />}
 
-          {SIDEBAR_ITEMS.map(item => {
+          {visibleItems.map(item => {
             const active = tab === item.id;
             return (
               <button
@@ -842,8 +856,8 @@ export default function DDIVaultApp() {
             {tab === 'servers'   && <ServersTab />}
             {tab === 'infra'     && <InfraHealthTab />}
             {tab === 'reports'   && <ReportsTab />}
-            {tab === 'audit'     && <AuditTab />}
-            {tab === 'settings'  && <SettingsTab />}
+            {tab === 'audit'     && !isViewer && <AuditTab />}
+            {tab === 'settings'  && canManageSystem && <SettingsTab />}
           </ErrorBoundary>
         </main>
       </div>

@@ -12,6 +12,7 @@
 
 const express = require('express');
 const PDFDocument = require('pdfkit');
+const { attachSiteFilter } = require('./middleware/rbac');
 
 // ── Brand palette (matches the frontend design system) ────────
 const RED = '#C8102E';
@@ -76,10 +77,12 @@ async function companyName(db) {
 // columns: [{ key, label, width, align, color? }]
 // ════════════════════════════════════════════════════════════
 
-async function reportSubnetUtilization(db, q) {
+async function reportSubnetUtilization(db, q, allowedSiteIds) {
   const params = [];
-  let where = '';
-  if (q.site_id) { params.push(parseInt(q.site_id)); where = `WHERE s.site_id = $${params.length}`; }
+  const conds = [];
+  if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`s.site_id = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`s.site_id = ANY($${params.length}::int[])`); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
     `SELECT s.id, host(s.network) AS network, s.prefix_length, s.name, s.site,
             s.total_hosts, s.used_hosts, s.free_hosts, s.unknown_hosts, s.last_scanned,
@@ -120,12 +123,13 @@ async function reportSubnetUtilization(db, q) {
   };
 }
 
-async function reportIpInventory(db, q) {
+async function reportIpInventory(db, q, allowedSiteIds) {
   const params = [];
   const conds = [];
   if (q.subnet_id) { params.push(parseInt(q.subnet_id)); conds.push(`a.subnet_id = $${params.length}`); }
   if (q.status) { params.push(q.status); conds.push(`a.status = $${params.length}`); }
   if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`sn.site_id = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`sn.site_id = ANY($${params.length}::int[])`); }
   const staleDays = parseInt(q.stale_days || '30');
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
@@ -171,10 +175,12 @@ async function reportIpInventory(db, q) {
   };
 }
 
-async function reportDhcpHealth(db, q) {
+async function reportDhcpHealth(db, q, allowedSiteIds) {
   const params = [];
-  let where = '';
-  if (q.server_id) { params.push(parseInt(q.server_id)); where = `WHERE sc.server_id = $${params.length}`; }
+  const conds = [];
+  if (q.server_id) { params.push(parseInt(q.server_id)); conds.push(`sc.server_id = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
     `SELECT sc.id, sc.scope_id, sc.name, sc.in_use, sc.total_ips, sc.free, sc.percent_used, sc.state,
             srv.hostname AS server, srv.poll_status, srv.health_score
@@ -230,10 +236,12 @@ async function reportDhcpHealth(db, q) {
   };
 }
 
-async function reportDnsZones(db, q) {
+async function reportDnsZones(db, q, allowedSiteIds) {
   const params = [];
-  let where = '';
-  if (q.server_id) { params.push(parseInt(q.server_id)); where = `WHERE z.server_id = $${params.length}`; }
+  const conds = [];
+  if (q.server_id) { params.push(parseInt(q.server_id)); conds.push(`z.server_id = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
     `SELECT z.id, z.zone_name, z.zone_type, z.is_reverse, z.record_count, z.last_updated,
             z.soa_serial, z.replication_lag, srv.hostname AS server,
@@ -281,12 +289,13 @@ async function reportDnsZones(db, q) {
   };
 }
 
-async function reportNetworkChanges(db, q) {
+async function reportNetworkChanges(db, q, allowedSiteIds) {
   const params = [];
   const conds = [];
   if (q.from) { params.push(q.from); conds.push(`timestamp >= $${params.length}`); }
   if (q.to) { params.push(q.to); conds.push(`timestamp <= $${params.length}`); }
   if (q.username) { params.push(q.username); conds.push(`username = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`site_id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
     `SELECT timestamp, username, user_role, action, entity_type, entity_name, change_summary, result, ip_address
@@ -326,11 +335,12 @@ async function reportNetworkChanges(db, q) {
   };
 }
 
-async function reportRogueDevices(db, q) {
+async function reportRogueDevices(db, q, allowedSiteIds) {
   const days = parseInt(q.days || '30');
   const params = [days];
   const conds = [`a.status = 'unknown'`];
   if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`sn.site_id = $${params.length}`); }
+  if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`sn.site_id = ANY($${params.length}::int[])`); }
   const r = await db.query(
     `SELECT host(a.ip_address) AS ip, a.mac_address, a.hostname,
             host(sn.network) || '/' || sn.prefix_length AS subnet, sn.site,
@@ -528,12 +538,12 @@ function createReportsRouter(db) {
     });
   });
 
-  router.get('/:type', async (req, res) => {
+  router.get('/:type', attachSiteFilter, async (req, res) => {
     const def = REPORTS[req.params.type];
     if (!def) return res.status(404).json({ error: 'Unknown report type' });
     const format = (req.query.format || 'json').toLowerCase();
     try {
-      const { columns, rows, summary } = await def.gather(db, req.query);
+      const { columns, rows, summary } = await def.gather(db, req.query, req.allowedSiteIds);
       const safeCols = columns.map(c => ({ key: c.key, label: c.label, align: c.align || 'left' }));
 
       if (format === 'csv') {

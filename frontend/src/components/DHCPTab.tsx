@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
+import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import {
   PageHeader, EmptyState, TableSkeleton, UtilBar, Spinner,
   pctColor, useRefreshKey, useEscape,
@@ -168,6 +169,7 @@ function ReserveModal({ scope, lease, onClose, onDone }: {
 // ════════════════════════════════════════════════════════════
 export default function DHCPTab({ focusScope }: { focusScope?: string | null }) {
   const { toast } = useToast();
+  const { canWrite } = useRBAC();
 
   // Scopes state
   const [scopes, setScopes]       = useState<Scope[]>([]);
@@ -378,6 +380,8 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
         <button className="btn" onClick={loadScopes} title="Refresh (R)">⟳ Refresh</button>
       </PageHeader>
 
+      <ReadOnlyBanner />
+
       {/* KPI tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {kpis.map((k, i) => (
@@ -529,7 +533,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                       <td><span className={`badge ${stateBadge(l.address_state)}`}>{l.address_state}</span></td>
                       <td style={{ fontSize: 12 }}>{fmtDate(l.lease_expiry)}</td>
                       <td style={{ textAlign: 'right' }}>
-                        {canReserve && (
+                        {canWrite && canReserve && (
                           <button onClick={() => setReserveTarget({ scope: scope!, lease: l })}
                             style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                             Reserve
@@ -644,6 +648,7 @@ function ScopeRow({
   onLeaseSearch: (v: string) => void;
   onReserveLease: (l: Lease) => void;
 }) {
+  const { canWrite } = useRBAC();
   return (
     <>
       <tr
@@ -669,12 +674,14 @@ function ScopeRow({
         <td><UtilBar pct={pct} /></td>
         <td><span className={`badge ${stateBadge((scope.free ?? 0) <= 0 ? 'Full' : scope.state)}`}>{(scope.free ?? 0) <= 0 ? 'Full' : scope.state}</span></td>
         <td style={{ textAlign: 'right' }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); onReserve(); }}
-            style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-          >
-            Reserve
-          </button>
+          {canWrite && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onReserve(); }}
+              style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Reserve
+            </button>
+          )}
         </td>
       </tr>
 
@@ -694,7 +701,9 @@ function ScopeRow({
                   {leasesLoading ? 'Loading…' : `${leases.length} lease${leases.length === 1 ? '' : 's'}`}
                 </span>
                 <div style={{ flex: 1 }} />
-                <button className="btn btn-primary" onClick={(e) => { e.stopPropagation(); onReserve(); }}>+ Reserve IP</button>
+                {canWrite && (
+                  <button className="btn btn-primary" onClick={(e) => { e.stopPropagation(); onReserve(); }}>+ Reserve IP</button>
+                )}
               </div>
 
               <div className="card" style={{ overflow: 'hidden', maxHeight: 420, overflowY: 'auto' }}>
@@ -722,7 +731,7 @@ function ScopeRow({
                           <td><span className={`badge ${stateBadge(l.address_state)}`}>{l.address_state}</span></td>
                           <td style={{ fontSize: 12 }}>{fmtDate(l.lease_expiry)}</td>
                           <td style={{ textAlign: 'right' }}>
-                            {canReserve && (
+                            {canWrite && canReserve && (
                               <button onClick={(e) => { e.stopPropagation(); onReserveLease(l); }}
                                 style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                                 Reserve
