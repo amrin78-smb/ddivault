@@ -1057,9 +1057,16 @@ app.get('/api/forecasts/scopes', async (req, res) => {
        LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
        ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`
     );
+    if (rows.rows.length === 0) {
+      return res.json({ data: [], message: 'Forecasts will appear after 7 days of scope history data' });
+    }
     res.json({ data: rows.rows });
   } catch (err) {
-    console.error('[API] forecasts scopes error:', err.message);
+    console.error('[API] forecasts scopes error:', err.code, err.message);
+    // 42P01 = undefined_table — schema migration not run yet
+    if (err.code === '42P01') {
+      return res.json({ data: [], message: 'Forecast tables not migrated yet — run scripts/schema.sql' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1079,7 +1086,8 @@ app.get('/api/forecasts/scopes/:id', async (req, res) => {
     );
     res.json({ data: rows.rows[0] || null });
   } catch (err) {
-    console.error('[API] forecast scope error:', err.message);
+    console.error('[API] forecast scope error:', err.code, err.message);
+    if (err.code === '42P01') return res.json({ data: null, message: 'Forecast tables not migrated yet' });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1095,7 +1103,8 @@ app.get('/api/forecasts/summary', async (req, res) => {
     );
     res.json({ data: r.rows[0] });
   } catch (err) {
-    console.error('[API] forecasts summary error:', err.message);
+    console.error('[API] forecasts summary error:', err.code, err.message);
+    if (err.code === '42P01') return res.json({ data: { critical: 0, warning: 0, healthy: 0 }, message: 'Forecast tables not migrated yet' });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2302,8 +2311,10 @@ app.get('/api/search', async (req, res) => {
             else if (val[0] === '<') { op = '<'; numStr = val.slice(1); }
             const num = parseFloat(numStr);
             const r = await db.query(
-              `SELECT scope_id, name, start_range::text, end_range::text, percent_used, server_hostname
-               FROM dhcp_scopes WHERE percent_used ${op} $1 ORDER BY percent_used DESC LIMIT 100`,
+              `SELECT sc.scope_id, sc.name, sc.start_range::text, sc.end_range::text, sc.percent_used,
+                      srv.hostname AS server_hostname
+               FROM dhcp_scopes sc LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+               WHERE sc.percent_used ${op} $1 ORDER BY sc.percent_used DESC LIMIT 100`,
               [isNaN(num) ? 0 : num]
             );
             rows = r.rows.map(x => ({
@@ -2463,13 +2474,13 @@ app.get('/api/search', async (req, res) => {
       });
     }
 
-    // Search DHCP scopes
+    // Search DHCP scopes (scope_id like 172.24.215.0, or name like "TU-WiFi4")
     const scopes = await db.query(
-      `SELECT scope_id, name, start_range::text, end_range::text,
-              percent_used, server_hostname
-       FROM dhcp_scopes
-       WHERE scope_id ILIKE $1 OR name ILIKE $1
-       LIMIT 5`,
+      `SELECT sc.scope_id, sc.name, sc.start_range::text, sc.end_range::text,
+              sc.percent_used, srv.hostname AS server_hostname
+       FROM dhcp_scopes sc LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+       WHERE sc.scope_id ILIKE $1 OR sc.name ILIKE $1
+       LIMIT 10`,
       [`%${q}%`]
     );
     for (const r of scopes.rows) {
