@@ -1097,15 +1097,17 @@ app.get('/api/ipam/supernets', attachSiteFilter, async (req, res) => {
 
 app.post('/api/ipam/supernets', requireWrite, async (req, res) => {
   try {
-    const { network, prefix_length, name, description, site } = req.body;
+    const { network, prefix_length, name, description, site, site_id } = req.body;
     if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
+    const siteIdVal = site_id != null && site_id !== '' ? parseInt(site_id) : null;
     const result = await db.query(
-      `INSERT INTO ipam_supernets (network, prefix_length, name, description, site)
-       VALUES ($1,$2,$3,$4,$5)
+      `INSERT INTO ipam_supernets (network, prefix_length, name, description, site, site_id)
+       VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (network, prefix_length) DO UPDATE SET
-         name=EXCLUDED.name, description=EXCLUDED.description, site=EXCLUDED.site, updated_at=NOW()
+         name=EXCLUDED.name, description=EXCLUDED.description, site=EXCLUDED.site,
+         site_id=EXCLUDED.site_id, updated_at=NOW()
        RETURNING *`,
-      [network, parseInt(prefix_length), name||null, description||null, site||null]
+      [network, parseInt(prefix_length), name||null, description||null, site||null, siteIdVal]
     );
     res.json({ data: result.rows[0] });
   } catch (err) {
@@ -1187,24 +1189,25 @@ app.get('/api/ipam/subnets', attachSiteFilter, async (req, res) => {
 app.post('/api/ipam/subnets', requireWrite, async (req, res) => {
   try {
     const { network, prefix_length, name, description, gateway, vlan_id,
-            site, owner, supernet_id, location, notes } = req.body;
+            site, site_id, owner, supernet_id, location, notes } = req.body;
     if (!network || !prefix_length) return res.status(400).json({ error: 'network and prefix_length required' });
     const totalHosts = Math.max(0, Math.pow(2, 32 - parseInt(prefix_length)) - 2);
+    const siteIdVal = site_id != null && site_id !== '' ? parseInt(site_id) : null;
     const result = await db.query(
       `INSERT INTO ipam_subnets
          (network, prefix_length, name, description, gateway, vlan_id, site, owner,
-          supernet_id, location, notes, is_managed, total_hosts, free_hosts)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,$12,$12)
+          supernet_id, location, notes, site_id, is_managed, total_hosts, free_hosts)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,TRUE,$12,$12)
        ON CONFLICT (network, prefix_length) DO UPDATE SET
          name=EXCLUDED.name, description=EXCLUDED.description,
          gateway=EXCLUDED.gateway, vlan_id=EXCLUDED.vlan_id,
          site=EXCLUDED.site, owner=EXCLUDED.owner,
          supernet_id=EXCLUDED.supernet_id, location=EXCLUDED.location,
-         notes=EXCLUDED.notes, updated_at=NOW()
+         notes=EXCLUDED.notes, site_id=EXCLUDED.site_id, updated_at=NOW()
        RETURNING *`,
       [network, parseInt(prefix_length), name||null, description||null,
        gateway||null, vlan_id?parseInt(vlan_id):null, site||null, owner||null,
-       supernet_id?parseInt(supernet_id):null, location||null, notes||null, totalHosts]
+       supernet_id?parseInt(supernet_id):null, location||null, notes||null, totalHosts, siteIdVal]
     );
     if (req.audit) req.audit({ action: 'create', entity_type: 'subnet', entity_id: result.rows[0].id, entity_name: `${network}/${prefix_length}`, new_value: { network, prefix_length, name, site, vlan_id } });
     res.json({ data: result.rows[0] });

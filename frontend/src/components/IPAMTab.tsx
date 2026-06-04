@@ -232,14 +232,17 @@ function AddSupernetModal({ sites, onClose, onSaved }: {
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ network: '', prefix_length: '8', name: '', description: '', site: '' });
+  const [form, setForm] = useState({ network: '', prefix_length: '8', name: '', description: '', site_id: '' });
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
   const save = async () => {
     if (!form.network.trim()) { toast('Network is required', 'error'); return; }
     setBusy(true);
     try {
-      await api('/ipam/supernets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      await api('/ipam/supernets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, site_id: form.site_id || null }),
+      });
       toast('Supernet added', 'success');
       onSaved(); onClose();
     } catch (e: any) { toast(e.message, 'error'); }
@@ -253,7 +256,7 @@ function AddSupernetModal({ sites, onClose, onSaved }: {
         <Field label="Prefix Length"><input value={form.prefix_length} onChange={e => set('prefix_length', e.target.value)} style={INPUT} placeholder="8" /></Field>
         <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} placeholder="Corp Backbone" /></Field>
         <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
-        <Field label="Site (from NetVault)" full><SiteSelect value={form.site} onChange={v => set('site', v)} sites={sites} /></Field>
+        <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
       </div>
       <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Add Supernet" busy={busy} />
     </ModalShell>
@@ -269,7 +272,7 @@ function AddSubnetModal({ sites, supernets, defaultSupernetId, defaultNetwork, o
   const [supernetId, setSupernetId] = useState<number | null>(defaultSupernetId);
   const [form, setForm] = useState({
     network: defaultNetwork || '', prefix_length: '24', name: '', description: '',
-    gateway: '', vlan_id: '', site: '', owner: '', location: '', notes: '',
+    gateway: '', vlan_id: '', site_id: '', owner: '', location: '', notes: '',
   });
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
@@ -279,7 +282,7 @@ function AddSubnetModal({ sites, supernets, defaultSupernetId, defaultNetwork, o
     try {
       await api('/ipam/subnets', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, supernet_id: supernetId }),
+        body: JSON.stringify({ ...form, site_id: form.site_id || null, supernet_id: supernetId }),
       });
       toast('Subnet added', 'success');
       onSaved(); onClose();
@@ -299,7 +302,7 @@ function AddSubnetModal({ sites, supernets, defaultSupernetId, defaultNetwork, o
         <Field label="Location"><input value={form.location} onChange={e => set('location', e.target.value)} style={INPUT} /></Field>
         <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
         <Field label="Notes" full><input value={form.notes} onChange={e => set('notes', e.target.value)} style={INPUT} /></Field>
-        <Field label="Site (from NetVault)" full><SiteSelect value={form.site} onChange={v => set('site', v)} sites={sites} /></Field>
+        <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
         <Field label="Supernet (optional)" full>
           <select value={supernetId ?? ''} onChange={e => setSupernetId(e.target.value ? parseInt(e.target.value) : null)} style={INPUT}>
             <option value="">— Unassigned —</option>
