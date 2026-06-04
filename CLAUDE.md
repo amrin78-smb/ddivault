@@ -361,6 +361,12 @@ Progress is written to DB every 50 IPs — frontend polls `/api/ipam/scan-status
 - Tables: zebra hover, sticky headers
 - No bullet points in UI copy
 
+## License Enforcement
+DDIVault enforces a NocVault license fetched from `GET {NOCVAULT_HUB_URL}/api/license` (no auth).
+- **Backend** (`api/licenseCheck.js`): `getLicense()` caches for 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). `api/server.js` checks on startup + every 24h, exposes `GET /api/license-status`, and applies `enforceLicense` middleware (registered before all business routes).
+- **Enforcement**: `trial`/`active` ⇒ full access. `active` with ≤30 days ⇒ expiry warning banner. `expired`/`grace` within 30-day grace ⇒ **read-only** (writes return HTTP 402; acknowledge endpoints exempt). Past grace (`daysRemaining ≤ -30`) ⇒ **disabled** (all routes 402 except `/api/health` + `/api/license-status`).
+- **Frontend** (`components/LicenseGuard.tsx`): `LicenseProvider` polls `/api/license-status` every 6h; `useLicense()` hook; `LicenseBanner` (trial/expiring/grace/disabled/unreachable); `LicenseDisabledScreen` full-screen lock. Wired in `layout.tsx`; `page.tsx` shows the disabled screen when `state.disabled`. Frontend reads only `/api/license-status` (never the hub directly — avoids CORS).
+
 ## NocVault Suite Context
 DDIVault is one of several products:
 - **NetVault** — IT Asset Management / CMDB (port 3000)

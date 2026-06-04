@@ -42,6 +42,7 @@ const nextConfig = {
       { source: '/api/anomalies',              destination: 'http://127.0.0.1:3007/api/anomalies' },
       { source: '/api/site-health/:path*',     destination: 'http://127.0.0.1:3007/api/site-health/:path*' },
       { source: '/api/site-health',            destination: 'http://127.0.0.1:3007/api/site-health' },
+      { source: '/api/license-status',         destination: 'http://127.0.0.1:3007/api/license-status' },
     ];
   },
 };

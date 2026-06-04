@@ -45,6 +45,7 @@ const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
 const { requireWrite, requireSuperAdmin, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
 const { createV1Router } = require('./v1');
+const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
 const alertDispatcher = require('./alertDispatcher');
 
@@ -79,6 +80,47 @@ function safePage(val) {
 function safeLimit(val) {
   return safeInt(val, 50, 500);
 }
+
+// ── License enforcement ───────────────────────────────────────
+async function enforceLicense(req, res, next) {
+  const license = await getLicense();
+  const state   = getLicenseState(license);
+  req.licenseState = state;
+  req.license      = license;
+
+  // Block writes during grace/disabled (except acknowledge endpoints)
+  if (!state.canWrite && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    const isAck = req.method === 'POST'
+      && (req.path.startsWith('/api/alerts') || req.path.startsWith('/api/anomalies'))
+      && (req.path.includes('acknowledge') || req.path.includes('/ack'));
+    if (!isAck) {
+      return res.status(402).json({
+        error: 'License expired — write operations disabled',
+        license_status: license?.status,
+        days_remaining: license?.daysRemaining,
+        renew_url: `${process.env.NOCVAULT_HUB_URL || ''}/settings/license`,
+      });
+    }
+  }
+
+  // Block all access when fully disabled (health + license-status always allowed)
+  if (state.disabled && !req.path.startsWith('/api/health') && !req.path.startsWith('/api/license-status')) {
+    return res.status(402).json({
+      error: 'DDIVault license has expired. Please renew your NocVault license.',
+      license_status: license?.status,
+      renew_url: `${process.env.NOCVAULT_HUB_URL || ''}/settings/license`,
+    });
+  }
+  next();
+}
+
+app.get('/api/license-status', async (req, res) => {
+  const license = await getLicense();
+  const state   = getLicenseState(license);
+  res.json({ license, state });
+});
+
+app.use(enforceLicense);
 
 // ── Health ────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
@@ -2999,6 +3041,14 @@ async function clearStuckScansOnStartup() {
   await expireStuckScans();
 }
 clearStuckScansOnStartup();
+
+// License: check on startup + refresh every 24h
+getLicense(true).then(lic => {
+  const state = getLicenseState(lic);
+  if (state.disabled) console.warn('[License] DDIVault license expired — running in disabled mode');
+  else console.log(`[License] Status: ${lic?.status || 'unreachable'}, mode: ${state.mode}`);
+}).catch(() => {});
+setInterval(() => getLicense(true).catch(() => {}), 24 * 60 * 60 * 1000);
 
 // ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {

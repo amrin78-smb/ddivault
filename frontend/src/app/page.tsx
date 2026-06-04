@@ -5,6 +5,7 @@ import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
+import { useLicense, LicenseDisabledScreen } from '@/components/LicenseGuard';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -784,6 +785,7 @@ export default function DDIVaultApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
   const { canManageSystem, isViewer, isSiteAdmin } = useRBAC();
+  const { state: licenseState, loading: licenseLoading } = useLicense();
 
   // Settings is super_admin only; Audit Log is hidden from viewers and site_admins.
   const visibleItems = useMemo(() => SIDEBAR_ITEMS.filter(item => {
@@ -824,6 +826,10 @@ export default function DDIVaultApp() {
   const focusScopeNav = useCallback((scopeId: string) => { setFocusScope(scopeId); setTab('scopes'); }, []);
 
   const sidebarWidth = collapsed ? 64 : 240;
+
+  if (!licenseLoading && licenseState.disabled) {
+    return <LicenseDisabledScreen />;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
