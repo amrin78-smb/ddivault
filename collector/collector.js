@@ -203,12 +203,15 @@ async function collectScopeStats(server) {
   for (const stat of stats) {
     const scopeId  = scopeIdStr(stat.ScopeId);
     if (!scopeId) continue; // skip if no scope ID — avoids NOT NULL violation
-    const pct      = parseFloat(stat.PercentageInUse || 0);
+    // Total should only be InUse + Free (dynamic pool).
+    // Reserved IPs are not available for dynamic assignment, so they are
+    // excluded from total_ips and stored separately for info.
     const inUse    = parseInt(stat.InUse    || 0);
     const free     = parseInt(stat.Free     || 0);
     const reserved = parseInt(stat.Reserved || 0);
     const pending  = parseInt(stat.Pending  || 0);
-    const total    = inUse + free + reserved;
+    const total    = inUse + free;
+    const pct      = total > 0 ? parseFloat(((inUse / total) * 100).toFixed(2)) : 0;
     const cfg      = scopeConfig[scopeId] || {};
 
     const res = await db.query(

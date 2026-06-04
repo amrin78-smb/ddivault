@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS dhcp_scopes (
   UNIQUE(server_id, scope_id)
 );
 
+-- Reserved IPs are tracked separately; total_ips counts only the dynamic pool (in_use + free).
+ALTER TABLE dhcp_scopes ADD COLUMN IF NOT EXISTS reserved INT DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS idx_dhcp_scopes_server ON dhcp_scopes(server_id);
 CREATE INDEX IF NOT EXISTS idx_dhcp_scopes_percent ON dhcp_scopes(percent_used DESC);
 
