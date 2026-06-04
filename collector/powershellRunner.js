@@ -248,7 +248,7 @@ function deleteDhcpScope(serverIp, auth, scopeId) {
 
 function getDhcpScopeOptions(serverIp, auth, scopeId) {
   const ip = cleanIp(serverIp);
-  const script = `Get-DhcpServerv4OptionValue -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | Select-Object OptionId,Name,Value | ConvertTo-Json -Compress`;
+  const script = `Get-DhcpServerv4OptionValue -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | ForEach-Object { [PSCustomObject]@{ OptionId = $_.OptionId; Name = $_.Name; Value = ($_.Value -join ', ') } } | ConvertTo-Json -Compress`;
   return runPS(ip, script, auth);
 }
 

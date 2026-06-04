@@ -100,6 +100,17 @@ function optionValueToString(v: any): string {
   return String(v);
 }
 
+const formatDuration = (val: any) => {
+  if (!val) return '—';
+  if (typeof val === 'object') {
+    const d = val.Days || 0, h = val.Hours || 0;
+    if (d > 0) return `${d} day${d !== 1 ? 's' : ''}`;
+    if (h > 0) return `${h} hour${h !== 1 ? 's' : ''}`;
+    return JSON.stringify(val);
+  }
+  return String(val);
+};
+
 // Normalize an exclusion range endpoint (IP string or IPAddress-like object)
 function ipFromRange(v: any): string {
   if (v == null) return '';
@@ -694,7 +705,7 @@ function ScopeDetail({ scope }: { scope: Scope }) {
         </div>
         <div>
           <div style={lbl}>Lease Duration</div>
-          <div className="mono" style={cell}>{scope.lease_duration || '—'}</div>
+          <div className="mono" style={cell}>{formatDuration(scope.lease_duration)}</div>
         </div>
         <div>
           <div style={lbl}>Subnet Mask</div>

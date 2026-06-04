@@ -69,6 +69,24 @@ function parsePsDate(val) {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// PowerShell serializes a .NET TimeSpan (e.g. DHCP LeaseDuration) as an object with
+// Days/Hours/Minutes/Seconds. Convert to a human-readable string (or pass through).
+function parsePsDuration(val) {
+  if (!val) return null;
+  // .NET TimeSpan serialized as object with Days, Hours, Minutes, Seconds
+  if (typeof val === 'object' && val !== null) {
+    const d = val.Days || 0;
+    const h = val.Hours || 0;
+    const m = val.Minutes || 0;
+    const s = val.Seconds || 0;
+    if (d > 0) return `${d} day${d !== 1 ? 's' : ''}`;
+    if (h > 0) return `${h} hour${h !== 1 ? 's' : ''}`;
+    if (m > 0) return `${m} minute${m !== 1 ? 's' : ''}`;
+    return `${s} seconds`;
+  }
+  return String(val);
+}
+
 function isValidIp(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
@@ -203,7 +221,7 @@ async function collectScopeStats(server) {
       [server.id, scopeId, cfg.Name||null,
        scopeIdStr(cfg.StartRange)||null, scopeIdStr(cfg.EndRange)||null,
        scopeIdStr(cfg.SubnetMask)||null, cfg.State||'Active',
-       cfg.LeaseDuration ? String(cfg.LeaseDuration) : null,
+       parsePsDuration(cfg.LeaseDuration),
        total, inUse, free, reserved, pending, pct, cfg.Description||null]
     );
 
