@@ -506,7 +506,7 @@ function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
 // ════════════════════════════════════════════════════════════
 // Subnet detail (full-screen overlay) — module scope
 // ════════════════════════════════════════════════════════════
-function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void }) {
+function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[]; onClose: () => void }) {
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState('');
@@ -611,7 +611,7 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
             </div>
             <div style={{ ...MONO, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
               {subnet.network}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
-              {subnet.site ? ` · ${subnet.site}` : ''}
+              {siteName(subnet.site_id, sites, subnet.site) ? ` · ${siteName(subnet.site_id, sites, subnet.site)}` : ''}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -851,7 +851,7 @@ export default function IPAMTab() {
 
   // ── Subnet detail overlay ─────────────────────────────────
   if (selectedSubnet) {
-    return <SubnetDetail subnet={selectedSubnet} onClose={() => { setSelectedSubnet(null); loadAll(); }} />;
+    return <SubnetDetail subnet={selectedSubnet} sites={sites} onClose={() => { setSelectedSubnet(null); loadAll(); }} />;
   }
 
   return (
