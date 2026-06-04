@@ -18,6 +18,10 @@ const { execSync } = require('child_process');
 
 const PS_TIMEOUT = parseInt(process.env.PS_TIMEOUT_MS || '30000');
 
+// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PowerShell remoting functions reject — strip it before any PS use.
+const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
+
 // Global fallback auth (from .env.local)
 const DEFAULT_AUTH_MODE = process.env.PS_AUTH_MODE || 'kerberos';
 const DEFAULT_USERNAME  = process.env.PS_USERNAME  || '';
@@ -175,7 +179,16 @@ function getDhcpScopes(serverIp, auth) {
 }
 
 function getDhcpLeases(serverIp, auth) {
-  const r = runPS(serverIp, `Get-DhcpServerv4Lease -AllScope | Select-Object ScopeId,IPAddress,HostName,ClientId,AddressState,LeaseExpiryTime | ConvertTo-Json -Depth 5 -Compress`, auth);
+  // -AllScope not supported in PS5 — loop over each scope instead
+  const script = `
+$scopes = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId
+$all = foreach ($s in $scopes) {
+    Get-DhcpServerv4Lease -ScopeId $s -ErrorAction SilentlyContinue |
+        Select-Object ScopeId,IPAddress,HostName,ClientId,AddressState,LeaseExpiryTime
+}
+$all | ConvertTo-Json -Depth 5 -Compress
+`;
+  const r = runPS(cleanIp(serverIp), script, auth);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }

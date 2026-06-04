@@ -49,6 +49,15 @@ function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`);
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
+// PowerShell serializes a .NET IPAddress (e.g. a DHCP ScopeId) as an object
+// with an IPAddressToString property, not a plain string. Coerce to the IP
+// string so it never lands in the DB as an object / "[object Object]".
+function scopeIdStr(v) {
+  if (v == null) return '';
+  if (typeof v === 'object') return String(v.IPAddressToString || v.Address || '').trim();
+  return String(v).trim();
+}
+
 function isValidIp(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
@@ -146,13 +155,17 @@ async function collectScopeStats(server) {
   }
 
   const scopeConfig = {};
-  for (const s of (scopes || [])) scopeConfig[s.ScopeId] = s;
+  for (const s of (scopes || [])) {
+    const key = scopeIdStr(s.ScopeId);
+    if (key) scopeConfig[key] = s;
+  }
 
   let upserted = 0;
   const alertsToFire = [];
 
   for (const stat of stats) {
-    const scopeId  = stat.ScopeId;
+    const scopeId  = scopeIdStr(stat.ScopeId);
+    if (!scopeId) continue; // skip if no scope ID — avoids NOT NULL violation
     const pct      = parseFloat(stat.PercentageInUse || 0);
     const inUse    = parseInt(stat.InUse    || 0);
     const free     = parseInt(stat.Free     || 0);
@@ -239,10 +252,10 @@ async function syncLeases(server) {
 
   let upserted = 0;
   for (const lease of leases) {
-    const ip_addr = lease.IPAddress    || null;
+    const ip_addr = scopeIdStr(lease.IPAddress) || null; // IPAddress object → string
     const mac     = lease.ClientId     || null;
     const host    = lease.HostName     || null;
-    const scopeId = lease.ScopeId      || null;
+    const scopeId = scopeIdStr(lease.ScopeId) || null;   // IPAddress object → string
     const state   = lease.AddressState || 'Active';
     const expiry  = lease.LeaseExpiryTime || null;
     if (!ip_addr) continue;
