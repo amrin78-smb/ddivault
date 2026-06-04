@@ -363,6 +363,164 @@ BEGIN
   END IF;
 END $$;
 
+-- ════════════════════════════════════════════════════════════
+-- INTELLIGENCE & ALERTING (Features 1-6)
+-- ════════════════════════════════════════════════════════════
+
+-- ── Feature 1: Email alerting ────────────────────────────────
+CREATE TABLE IF NOT EXISTS smtp_config (
+  id          SERIAL PRIMARY KEY,
+  host        TEXT NOT NULL,
+  port        INT NOT NULL DEFAULT 587,
+  secure      BOOLEAN DEFAULT FALSE,
+  username    TEXT,
+  password    TEXT, -- AES-256-GCM encrypted via credStore.js pattern
+  from_email  TEXT NOT NULL,
+  from_name   TEXT DEFAULT 'DDIVault Alerts',
+  enabled     BOOLEAN DEFAULT FALSE,
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS alert_recipients (
+  id          SERIAL PRIMARY KEY,
+  email       TEXT NOT NULL,
+  name        TEXT,
+  role_filter TEXT, -- null=all, 'critical', 'warning', 'info'
+  site_id     INT,  -- null=all sites, int=specific site only
+  is_active   BOOLEAN DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS alert_rule_config (
+  id              SERIAL PRIMARY KEY,
+  rule_type       TEXT NOT NULL UNIQUE,
+  is_enabled      BOOLEAN DEFAULT TRUE,
+  threshold_value NUMERIC,
+  threshold_unit  TEXT,
+  severity        TEXT DEFAULT 'warning',
+  cooldown_mins   INT DEFAULT 60,
+  digest_mode     BOOLEAN DEFAULT FALSE,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS alert_email_log (
+  id          BIGSERIAL PRIMARY KEY,
+  alert_id    BIGINT REFERENCES alert_events(id),
+  recipient   TEXT NOT NULL,
+  subject     TEXT,
+  sent_at     TIMESTAMPTZ DEFAULT NOW(),
+  status      TEXT DEFAULT 'sent', -- sent, failed, skipped
+  error_msg   TEXT
+);
+
+-- Seed default alert rule configs (idempotent)
+INSERT INTO alert_rule_config (rule_type, threshold_value, threshold_unit, severity) VALUES
+  ('scope_critical', 90, 'percent', 'critical'),
+  ('scope_warning', 80, 'percent', 'warning'),
+  ('scope_exhaustion_forecast', 14, 'days', 'warning'),
+  ('unknown_device', NULL, NULL, 'warning'),
+  ('server_unreachable', 3, 'retries', 'critical'),
+  ('dhcp_failover_broken', NULL, NULL, 'critical'),
+  ('dns_replication_lag', NULL, NULL, 'warning'),
+  ('lease_spike', 20, 'percent', 'warning'),
+  ('ip_conflict', NULL, NULL, 'critical'),
+  ('new_device_vip_subnet', NULL, NULL, 'critical'),
+  ('after_hours_device', NULL, NULL, 'warning'),
+  ('mac_spoofing', NULL, NULL, 'critical'),
+  ('dhcp_starvation', 50, 'per_minute', 'critical'),
+  ('subnet_jumping', NULL, NULL, 'warning')
+ON CONFLICT (rule_type) DO NOTHING;
+
+-- ── Feature 2: Capacity planning ─────────────────────────────
+CREATE TABLE IF NOT EXISTS scope_forecasts (
+  id                  SERIAL PRIMARY KEY,
+  scope_id            INTEGER REFERENCES dhcp_scopes(id) ON DELETE CASCADE,
+  calculated_at       TIMESTAMPTZ DEFAULT NOW(),
+  current_pct         NUMERIC(5,2),
+  growth_rate_per_day NUMERIC(8,4),
+  days_to_80pct       INT,
+  days_to_90pct       INT,
+  days_to_full        INT,
+  confidence          TEXT,
+  recommendation      TEXT,
+  data_points         INT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_forecasts_scope ON scope_forecasts(scope_id);
+
+-- subnet_forecasts references ipam_subnets (created earlier in this file)
+CREATE TABLE IF NOT EXISTS subnet_forecasts (
+  id                  SERIAL PRIMARY KEY,
+  subnet_id           INTEGER REFERENCES ipam_subnets(id) ON DELETE CASCADE,
+  calculated_at       TIMESTAMPTZ DEFAULT NOW(),
+  current_used        INT,
+  total_hosts         INT,
+  growth_rate_per_day NUMERIC(8,4),
+  days_to_80pct       INT,
+  days_to_full        INT,
+  confidence          TEXT,
+  recommendation      TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subnet_forecasts_subnet ON subnet_forecasts(subnet_id);
+
+-- ── Feature 3 + 6: Device fingerprinting / security (dhcp_leases columns) ──
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS device_type TEXT;
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS device_vendor TEXT;
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS device_os TEXT;
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS risk_level TEXT DEFAULT 'unknown';
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS is_mac_randomized BOOLEAN DEFAULT FALSE;
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
+ALTER TABLE dhcp_leases ADD COLUMN IF NOT EXISTS last_seen_subnet TEXT;
+
+-- ipam_subnets columns (table created earlier in this file)
+ALTER TABLE ipam_subnets ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN DEFAULT FALSE;
+
+-- NOTE: ipam_addresses columns (device_type/device_vendor/risk_level/is_sensitive)
+-- live in schema-ipam.sql since that table is created there (runs after this file).
+
+-- ── Feature 4: Behavioral anomaly detection ──────────────────
+CREATE TABLE IF NOT EXISTS device_baselines (
+  id              BIGSERIAL PRIMARY KEY,
+  scope_id        INTEGER REFERENCES dhcp_scopes(id) ON DELETE CASCADE,
+  hour_of_day     INT,
+  day_of_week     INT,
+  avg_leases      NUMERIC(8,2),
+  stddev_leases   NUMERIC(8,2),
+  sample_count    INT,
+  calculated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_device_baselines_key ON device_baselines(scope_id, hour_of_day, day_of_week);
+
+CREATE TABLE IF NOT EXISTS anomaly_events (
+  id              BIGSERIAL PRIMARY KEY,
+  detected_at     TIMESTAMPTZ DEFAULT NOW(),
+  anomaly_type    TEXT NOT NULL,
+  severity        TEXT NOT NULL,
+  entity_type     TEXT,
+  entity_id       TEXT,
+  description     TEXT,
+  details         JSONB,
+  acknowledged    BOOLEAN DEFAULT FALSE,
+  acknowledged_at TIMESTAMPTZ,
+  acknowledged_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_anomaly_events_detected ON anomaly_events(detected_at DESC);
+
+-- ── Feature 5: Site health scoring ───────────────────────────
+CREATE TABLE IF NOT EXISTS site_health_scores (
+  id              SERIAL PRIMARY KEY,
+  site_id         INT NOT NULL,
+  site_name       TEXT,
+  calculated_at   TIMESTAMPTZ DEFAULT NOW(),
+  overall_score   INT,
+  dhcp_score      INT,
+  ipam_score      INT,
+  dns_score       INT,
+  security_score  INT,
+  details         JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_site_health_site ON site_health_scores(site_id, calculated_at DESC);
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt

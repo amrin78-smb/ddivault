@@ -49,6 +49,7 @@ interface Subnet {
   used_hosts: number;
   free_hosts: number;
   unknown_hosts: number;
+  is_sensitive?: boolean;
 }
 
 interface IPAddress {
@@ -65,6 +66,9 @@ interface IPAddress {
   is_reserved: boolean;
   reserved_by: string;
   lease_expiry: string;
+  device_type?: string;
+  device_vendor?: string;
+  risk_level?: string;
 }
 
 interface Vlan {
@@ -150,6 +154,11 @@ function scanLabel(status: string, last_scanned?: string) {
 }
 
 const cleanNetwork = (network: string) => (network || '').replace(/\/\d+$/, '');
+
+const DEVICE_ICONS: Record<string, string> = {
+  mobile: '📱', workstation: '💻', network: '🔌', printer: '🖨️', voip: '📞', unknown: '❓',
+};
+const deviceIcon = (t?: string) => DEVICE_ICONS[t || 'unknown'] || '';
 
 function scanEta(progressPct: number, elapsedSeconds: number): string {
   if (!progressPct || progressPct <= 0 || progressPct >= 100) return '';
@@ -434,6 +443,7 @@ function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
     gateway: subnet.gateway || '',
     vlan_id: subnet.vlan_id ? String(subnet.vlan_id) : '',
     site_id: subnet.site_id != null ? String(subnet.site_id) : '',
+    is_sensitive: subnet.is_sensitive ?? false,
   });
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
@@ -445,7 +455,7 @@ function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
         body: JSON.stringify({
           name: form.name, description: form.description,
           site_id: form.site_id || null, gateway: form.gateway || null,
-          vlan_id: form.vlan_id || null,
+          vlan_id: form.vlan_id || null, is_sensitive: form.is_sensitive,
         }),
       });
       toast('Subnet updated', 'success');
@@ -462,6 +472,17 @@ function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
         <Field label="VLAN ID"><input value={form.vlan_id} onChange={e => set('vlan_id', e.target.value)} style={INPUT} /></Field>
         <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
         <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
+        <Field label="Security" full>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+            <input
+              type="checkbox"
+              checked={form.is_sensitive}
+              onChange={e => setForm(p => ({ ...p, is_sensitive: e.target.checked }))}
+              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--primary)' }}
+            />
+            🔒 Mark as Sensitive (extra monitoring — alerts on any new device)
+          </label>
+        </Field>
       </div>
       <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Save Changes" busy={busy} />
     </ModalShell>
@@ -514,7 +535,10 @@ function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
     >
       <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
       <div style={{ minWidth: 170 }}>
-        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>{cleanNetwork(subnet.network)}/{subnet.prefix_length}</div>
+        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>
+          {subnet.is_sensitive && <span title="Sensitive subnet" style={{ marginRight: 5 }}>🔒</span>}
+          {cleanNetwork(subnet.network)}/{subnet.prefix_length}
+        </div>
         {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{siteName(subnet.site_id, sites, subnet.site)}</div>
@@ -688,7 +712,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
       {/* Table */}
       <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
         {loading ? (
-          <div style={{ marginTop: 12 }}><TableSkeleton rows={10} cols={7} /></div>
+          <div style={{ marginTop: 12 }}><TableSkeleton rows={10} cols={9} /></div>
         ) : addresses.length === 0 ? (
           <EmptyState
             icon="🛰"
@@ -705,6 +729,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
               <tr>
                 <th>IP Address</th>
                 <th>Status</th>
+                <th>Device</th>
                 <th>Hostname</th>
                 <th>MAC</th>
                 <th>Last Seen</th>
@@ -718,6 +743,11 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
                 <tr key={addr.ip_address} style={{ background: STATUS_TINT[addr.status] || 'transparent' }}>
                   <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{addr.ip_address}</td>
                   <td style={TD}><span className={`badge ${STATUS_BADGE[addr.status] || 'badge-gray'}`}>{addr.status}</span></td>
+                  <td style={{ ...TD, fontSize: 12 }}>
+                    {addr.device_type || addr.device_vendor
+                      ? <span>{deviceIcon(addr.device_type)} <span style={{ color: 'var(--text-muted)' }}>{addr.device_vendor || addr.device_type || ''}</span></span>
+                      : '—'}
+                  </td>
                   <td style={TD}>{addr.hostname || '—'}</td>
                   <td style={{ ...TD, ...MONO, fontSize: 11 }}>{addr.mac_address || '—'}</td>
                   <td style={{ ...TD, fontSize: 11 }}>{fmtDate(addr.last_seen)}</td>
@@ -1225,7 +1255,10 @@ function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
               const total = sub.total_hosts || totalHosts(sub.prefix_length);
               return (
                 <tr key={sub.id} className="clickable" onClick={() => onView(sub)}>
-                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{cleanNetwork(sub.network)}/{sub.prefix_length}</td>
+                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>
+                    {sub.is_sensitive && <span title="Sensitive subnet" style={{ marginRight: 5 }}>🔒</span>}
+                    {cleanNetwork(sub.network)}/{sub.prefix_length}
+                  </td>
                   <td style={TD}>{sub.name || '—'}</td>
                   <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${cleanNetwork(sub.supernet_network)}/${sub.supernet_prefix}` : '—')}</td>
                   <td style={{ ...TD, ...MONO, fontSize: 11 }}>{sub.gateway || '—'}</td>

@@ -8,6 +8,10 @@ const dhcp      = require('./dhcpReader');
 const ha        = require('./haMonitor');
 const ipamSync  = require('./ipamSync');
 const { decrypt } = require('./credStore');
+const forecastEngine  = require('./forecastEngine');   // { runForecasts(db) }
+const anomalyDetector = require('./anomalyDetector');   // { detectAnomalies(db), buildBaselines(db) }
+const healthScorer    = require('./healthScorer');      // { scoreSites(db) }
+const deviceClassifier = require('../api/deviceClassifier'); // { classifyDevice(mac,hostname), isMacRandomized(mac) }
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err.message, err.stack);
@@ -40,6 +44,10 @@ const INTERVAL_DNS_SYNC    = 60  * 60 * 1000;
 const INTERVAL_FAILOVER    = 5   * 60 * 1000;   // DHCP failover state
 const INTERVAL_SOA_SYNC    = 15  * 60 * 1000;   // DNS SOA replication lag
 const INTERVAL_HEALTH      = 5   * 60 * 1000;   // per-server health score
+const INTERVAL_FORECAST    = 6   * 60 * 60 * 1000; // 6 hours
+const INTERVAL_ANOMALY     = 30  * 60 * 1000;      // 30 minutes
+const INTERVAL_SITEHEALTH  = 15  * 60 * 1000;      // 15 minutes
+const INTERVAL_DIGEST      = 60  * 60 * 1000;      // hourly digest + nightly-baseline tick
 
 const lastLogEventTime = {};
 
@@ -305,6 +313,21 @@ async function syncScopesToIpam(server, auth, ip, scopeConfig) {
   }
 }
 
+// Classify a device and persist fingerprint columns on a dhcp_leases row.
+async function classifyAndTagLease(serverId, ip, mac, hostname) {
+  if (!mac) return;
+  try {
+    const c = deviceClassifier.classifyDevice(mac, hostname || '');
+    const randomized = deviceClassifier.isMacRandomized(mac);
+    await db.query(
+      `UPDATE dhcp_leases SET device_type=$1, device_vendor=$2, device_os=$3, risk_level=$4,
+         is_mac_randomized=$5, first_seen=COALESCE(first_seen, NOW())
+       WHERE server_id=$6 AND ip_address=$7::inet`,
+      [c.type || null, c.vendor || null, c.os || null, c.risk_level || 'unknown', !!randomized, serverId, ip]
+    ).catch(()=>{});
+  } catch (_) {}
+}
+
 async function syncLeases(server) {
   if (server.role === 'dns') return;
   const ip   = cleanIp(server.ip_address);
@@ -342,6 +365,7 @@ async function syncLeases(server) {
          lease_expiry=EXCLUDED.lease_expiry, last_seen=NOW()`,
       [server.id, scopeId, ip_addr, host, mac, state, expiry]
     );
+    await classifyAndTagLease(server.id, ip_addr, mac, host);
     upserted++;
   }
   log(`[Leases] ${ip} — synced ${upserted} leases`);
@@ -376,6 +400,7 @@ async function syncReservations(server) {
            last_seen     = NOW()`,
         [server.id, scopeId, ipAddr, name, mac]
       );
+      await classifyAndTagLease(server.id, ipAddr, mac, name);
       upserted++;
     }
     log(`[Reservations] ${ip} — synced ${upserted} reservation(s)`);
@@ -496,6 +521,23 @@ async function pollFailover(server) { return ha.pollFailover(db, ps, server, ser
 async function pollDnsSoa(server)   { return ha.pollDnsSoa(db, ps, server, serverAuth(server)); }
 async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serverAuth(server)); }
 
+// ── Intelligence job wrappers (whole-DB, no per-server arg) ──
+async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
+async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
+async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
+// hourly tick: send digest emails; run baselines once per day around 02:00
+let _lastBaselineDay = null;
+async function hourlyTick() {
+  try { const ad = require('../api/alertDispatcher'); await ad.sendHourlyDigest(db); } catch (e) { console.error('[Digest] error:', e.message); }
+  try {
+    const now = new Date(); const day = now.toISOString().slice(0,10);
+    if (now.getHours() === 2 && _lastBaselineDay !== day) {
+      _lastBaselineDay = day;
+      const r = await anomalyDetector.buildBaselines(db); log(`[Baselines] ${JSON.stringify(r)}`);
+    }
+  } catch (e) { console.error('[Baselines] error:', e.message); }
+}
+
 async function pollAll(fn, label) {
   const servers = await getActiveServers().catch(err => {
     console.error(`[DB] Cannot fetch servers for ${label}:`, err.message);
@@ -533,6 +575,11 @@ async function main() {
   await pollAll(pollFailover,      'Failover');
   await pollAll(pollHealth,        'Health');
 
+  // Initial intelligence runs (best-effort — failures must not stop startup)
+  try { await runForecasts(); }  catch (e) { console.error('[Forecast] startup error:', e.message); }
+  try { await runSiteHealth(); } catch (e) { console.error('[SiteHealth] startup error:', e.message); }
+  try { await runAnomalies(); }  catch (e) { console.error('[Anomaly] startup error:', e.message); }
+
   setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
   setInterval(() => pollAll(collectScopeStats, 'Scopes'),       INTERVAL_SCOPE_STATS);
   setInterval(() => pollAll(syncLeases,        'Leases'),       INTERVAL_LEASE_SYNC);
@@ -541,6 +588,11 @@ async function main() {
   setInterval(() => pollAll(pollFailover,      'Failover'), INTERVAL_FAILOVER);
   setInterval(() => pollAll(pollDnsSoa,        'DNS-SOA'),  INTERVAL_SOA_SYNC);
   setInterval(() => pollAll(pollHealth,        'Health'),   INTERVAL_HEALTH);
+
+  setInterval(runForecasts,  INTERVAL_FORECAST);
+  setInterval(runAnomalies,  INTERVAL_ANOMALY);
+  setInterval(runSiteHealth, INTERVAL_SITEHEALTH);
+  setInterval(hourlyTick,    INTERVAL_DIGEST);
 
   log('=== DDIVault Collector running ===');
 }

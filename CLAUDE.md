@@ -174,6 +174,35 @@ GRANT SELECT ON sites, countries TO ddivault_user;
 | `alert_rules` | Alert thresholds |
 | `app_settings` | Key-value app configuration |
 | `lease_history` | Historical lease events per IP |
+| `smtp_config` | SMTP server config (password AES-256-GCM encrypted) |
+| `alert_recipients` | Email recipients (site + severity filtered) |
+| `alert_rule_config` | Per-rule-type enable/threshold/severity/cooldown/digest |
+| `alert_email_log` | Sent/failed/skipped alert email audit |
+| `scope_forecasts` | DHCP scope capacity forecasts (regression) |
+| `subnet_forecasts` | IPAM subnet forecasts (reserved; no history source yet) |
+| `device_baselines` | Per-scope lease baselines (hour × day-of-week) |
+| `anomaly_events` | Behavioral/security anomalies detected |
+| `site_health_scores` | Per-site health score history (DHCP/IPAM/DNS/Security) |
+
+New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`.
+
+## Intelligence & Alerting (Features 1-6) — all on-premises, no external calls
+- **Email alerting** — `api/emailer.js` (nodemailer, HTML templates, HMAC ack tokens), `api/alertDispatcher.js` (cooldown, site/severity recipient filtering, hourly digest). SMTP/rule config is super-admin only.
+- **Capacity planning** — `collector/forecastEngine.js` (least-squares regression on `dhcp_scope_history`), runs every 6h, fires `scope_exhaustion_forecast` alerts.
+- **Device fingerprinting** — `api/ouiLookup.js` + bundled `data/oui.json` (curated real OUIs) + `api/deviceClassifier.js`; applied in `syncLeases`/`syncReservations`/`ipamScanner`.
+- **Anomaly detection** — `collector/anomalyDetector.js` (lease spikes vs baselines, after-hours, MAC spoofing, subnet jumping, IP conflict, sensitive-subnet new device, DHCP starvation), every 30m; nightly baseline builder at 02:00.
+- **Site health scoring** — `collector/healthScorer.js` (DHCP 40% / IPAM 20% / DNS 20% / Security 20%), every 15m.
+- **Smart search** — `GET /api/search` parses `type:`, `vendor:`, `subnet:`, `scope:>N`, `site:`, `new:today|7days`, `risk:`, `anomaly:today`, `status:` structured queries.
+- **Frontend** — Intelligence tab (anomaly console), Settings sections (SMTP/Recipients/Rules), Dashboard widgets (Capacity Forecast, Site Health, Security Overview, Device Donut), DHCP device+forecast columns, IPAM device icons + sensitive toggle.
+
+### New API endpoints
+- SMTP: `GET/POST /api/smtp`, `POST /api/smtp/test`
+- Recipients: `GET/POST /api/alert-recipients`, `PUT/DELETE /api/alert-recipients/:id`
+- Rules: `GET /api/alert-rule-config`, `PUT /api/alert-rule-config/:type`
+- One-click ack from email: `GET /api/alerts/:id/acknowledge?token=`
+- Forecasts: `GET /api/forecasts/scopes`, `/api/forecasts/scopes/:id`, `/api/forecasts/summary`
+- Anomalies: `GET /api/anomalies`, `/api/anomalies/summary`, `POST /api/anomalies/:id/ack`
+- Site health: `GET /api/site-health`, `/api/site-health/:siteId`
 
 ## API Endpoints
 

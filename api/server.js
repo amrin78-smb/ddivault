@@ -45,6 +45,8 @@ const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
 const { requireWrite, requireSuperAdmin, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
 const { createV1Router } = require('./v1');
+const emailer = require('./emailer');
+const alertDispatcher = require('./alertDispatcher');
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(cors({ origin: 'http://localhost:3006', exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'] }));
@@ -873,6 +875,321 @@ app.put('/api/alert-rules/:id', requireWrite, async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════
+// Intelligence & Alerting
+// ════════════════════════════════════════════════════════════════
+
+// ── Feature 1: Email alerting ─────────────────────────────────
+app.get('/api/smtp', requireSuperAdmin, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
+    if (!r.rows.length) return res.json({ data: null });
+    const row = { ...r.rows[0] };
+    row.password = row.password ? '********' : '';
+    res.json({ data: row });
+  } catch (err) {
+    console.error('[API] smtp get error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/smtp', requireSuperAdmin, async (req, res) => {
+  try {
+    const { host, port, secure, username, password, from_email, from_name, enabled } = req.body;
+    const existing = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
+
+    let encryptedPass;
+    if (password && password !== '********') {
+      encryptedPass = encryptCred(password);
+    } else if (existing.rows.length) {
+      encryptedPass = existing.rows[0].password; // preserve existing
+    } else {
+      encryptedPass = null;
+    }
+
+    if (existing.rows.length) {
+      await db.query(
+        `UPDATE smtp_config SET host=$1, port=$2, secure=$3, username=$4,
+           password=$5, from_email=$6, from_name=$7, enabled=$8, updated_at=NOW()
+         WHERE id=$9`,
+        [host, port, secure, username, encryptedPass, from_email, from_name, enabled, existing.rows[0].id]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO smtp_config (host, port, secure, username, password, from_email, from_name, enabled)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [host, port, secure, username, encryptedPass, from_email, from_name, enabled]
+      );
+    }
+    emailer.invalidateSmtpCache();
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'smtp_config', entity_name: 'SMTP configuration', change_summary: 'Updated SMTP configuration' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] smtp post error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/smtp/test', requireSuperAdmin, async (req, res) => {
+  try {
+    const { to } = req.body;
+    const r = await emailer.sendTestEmail(db, to);
+    res.json(r);
+  } catch (err) {
+    console.error('[API] smtp test error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/alert-recipients', async (req, res) => {
+  try {
+    const rows = await db.query('SELECT * FROM alert_recipients ORDER BY created_at DESC');
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] alert-recipients get error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/alert-recipients', requireWrite, async (req, res) => {
+  try {
+    const { email, name, role_filter, site_id, is_active } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const r = await db.query(
+      `INSERT INTO alert_recipients (email, name, role_filter, site_id, is_active)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [email, name || null, role_filter || null, site_id || null, is_active !== false]
+    );
+    if (req.audit) req.audit({ action: 'create', entity_type: 'alert_recipient', entity_id: r.rows[0].id, entity_name: email, change_summary: `Added alert recipient ${email}` });
+    res.json({ data: r.rows[0] });
+  } catch (err) {
+    console.error('[API] alert-recipients post error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/alert-recipients/:id', requireWrite, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { email, name, role_filter, site_id, is_active } = req.body;
+    const r = await db.query(
+      `UPDATE alert_recipients SET email=$1, name=$2, role_filter=$3, site_id=$4, is_active=$5
+       WHERE id=$6 RETURNING *`,
+      [email, name || null, role_filter || null, site_id || null, is_active !== false, id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Recipient not found' });
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'alert_recipient', entity_id: id, entity_name: r.rows[0].email, change_summary: `Updated alert recipient ${r.rows[0].email}` });
+    res.json({ data: r.rows[0] });
+  } catch (err) {
+    console.error('[API] alert-recipients put error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/alert-recipients/:id', requireWrite, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const prev = await db.query('SELECT email FROM alert_recipients WHERE id=$1', [id]);
+    await db.query('DELETE FROM alert_recipients WHERE id=$1', [id]);
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'alert_recipient', entity_id: id, entity_name: prev.rows[0] ? prev.rows[0].email : String(id), change_summary: 'Removed alert recipient' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] alert-recipients delete error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/alert-rule-config', async (req, res) => {
+  try {
+    const rows = await db.query('SELECT * FROM alert_rule_config ORDER BY rule_type');
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] alert-rule-config get error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/alert-rule-config/:type', requireSuperAdmin, async (req, res) => {
+  try {
+    const type = req.params.type;
+    const { is_enabled, threshold_value, severity, cooldown_mins, digest_mode } = req.body;
+    const r = await db.query(
+      `UPDATE alert_rule_config
+         SET is_enabled=$2, threshold_value=$3, severity=$4, cooldown_mins=$5, digest_mode=$6, updated_at=NOW()
+       WHERE rule_type=$1 RETURNING *`,
+      [type, is_enabled, threshold_value, severity, cooldown_mins, digest_mode]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Rule config not found' });
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'alert_rule_config', entity_name: type, change_summary: `Updated alert rule config ${type}` });
+    res.json({ data: r.rows[0] });
+  } catch (err) {
+    console.error('[API] alert-rule-config put error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// One-click email acknowledgement (token-guarded GET that mutates)
+app.get('/api/alerts/:id/acknowledge', async (req, res) => {
+  try {
+    if (!emailer.verifyAckToken(req.params.id, req.query.token)) {
+      return res.status(403).send('Invalid or expired link');
+    }
+    await db.query(
+      `UPDATE alert_events SET acknowledged=TRUE, acknowledged_by='email-link', acknowledged_at=NOW()
+       WHERE id=$1`,
+      [parseInt(req.params.id)]
+    );
+    res.send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>✓ Alert acknowledged</h2><p>You can close this window.</p></body></html>');
+  } catch (err) {
+    console.error('[API] email ack error:', err.message);
+    res.status(500).send('Error acknowledging alert');
+  }
+});
+
+// ── Feature 2: Forecasts ──────────────────────────────────────
+app.get('/api/forecasts/scopes', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT f.*, sc.scope_id as scope_cidr, sc.name as scope_name, sc.percent_used,
+              srv.hostname as server_hostname, srv.site_id
+       FROM scope_forecasts f
+       JOIN dhcp_scopes sc ON sc.id = f.scope_id
+       LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+       ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] forecasts scopes error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/forecasts/scopes/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const rows = await db.query(
+      `SELECT f.*, sc.scope_id as scope_cidr, sc.name as scope_name, sc.percent_used,
+              srv.hostname as server_hostname, srv.site_id
+       FROM scope_forecasts f
+       JOIN dhcp_scopes sc ON sc.id = f.scope_id
+       LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+       WHERE f.scope_id=$1
+       ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`,
+      [id]
+    );
+    res.json({ data: rows.rows[0] || null });
+  } catch (err) {
+    console.error('[API] forecast scope error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/forecasts/summary', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE days_to_full IS NOT NULL AND days_to_full < 14) as critical,
+         COUNT(*) FILTER (WHERE days_to_full >= 14 AND days_to_full <= 30) as warning,
+         COUNT(*) FILTER (WHERE days_to_full IS NULL OR days_to_full > 30) as healthy
+       FROM scope_forecasts`
+    );
+    res.json({ data: r.rows[0] });
+  } catch (err) {
+    console.error('[API] forecasts summary error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Feature 4: Anomalies ──────────────────────────────────────
+app.get('/api/anomalies', async (req, res) => {
+  try {
+    const { type, severity, acknowledged, since } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+    const conditions = [];
+    const params = [];
+    if (type) { params.push(type); conditions.push(`anomaly_type = $${params.length}`); }
+    if (severity) { params.push(severity); conditions.push(`severity = $${params.length}`); }
+    if (acknowledged === 'true') conditions.push('acknowledged = TRUE');
+    else if (acknowledged === 'false') conditions.push('acknowledged = FALSE');
+    if (since) { params.push(since); conditions.push(`detected_at > NOW() - $${params.length}::interval`); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit);
+    const rows = await db.query(
+      `SELECT * FROM anomaly_events ${where} ORDER BY detected_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] anomalies error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/anomalies/summary', async (req, res) => {
+  try {
+    const byType = await db.query(
+      `SELECT anomaly_type, severity, COUNT(*) as count
+       FROM anomaly_events
+       WHERE detected_at > NOW() - INTERVAL '7 days'
+       GROUP BY anomaly_type, severity`
+    );
+    const counts = await db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE detected_at > date_trunc('day', NOW())) as today,
+         COUNT(*) FILTER (WHERE detected_at > NOW() - INTERVAL '7 days') as week
+       FROM anomaly_events`
+    );
+    res.json({ data: { byType: byType.rows, today: parseInt(counts.rows[0].today), week: parseInt(counts.rows[0].week) } });
+  } catch (err) {
+    console.error('[API] anomalies summary error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/anomalies/:id/ack', requireWrite, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const by = (req.user && req.user.email) || 'admin';
+    await db.query(
+      `UPDATE anomaly_events SET acknowledged=TRUE, acknowledged_at=NOW(), acknowledged_by=$2 WHERE id=$1`,
+      [id, by]
+    );
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'anomaly_event', entity_id: id, entity_name: String(id), change_summary: `Acknowledged anomaly ${id}` });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] anomaly ack error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Feature 5: Site health ────────────────────────────────────
+app.get('/api/site-health', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT DISTINCT ON (site_id) * FROM site_health_scores
+       ORDER BY site_id, calculated_at DESC`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] site-health error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/site-health/:siteId', async (req, res) => {
+  try {
+    const siteId = parseInt(req.params.siteId);
+    const rows = await db.query(
+      `SELECT * FROM site_health_scores WHERE site_id=$1 ORDER BY calculated_at DESC LIMIT 100`,
+      [siteId]
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] site-health history error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Servers (enhanced with auth) ──────────────────────────────
 app.get('/api/servers', attachSiteFilter, async (req, res) => {
   try {
@@ -1221,16 +1538,18 @@ app.post('/api/ipam/subnets', requireWrite, async (req, res) => {
 app.put('/api/ipam/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes, site_id } = req.body;
+    const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes, site_id, is_sensitive } = req.body;
     const result = await db.query(
       `UPDATE ipam_subnets SET
          name=$2, description=$3, gateway=$4, vlan_id=$5, site=$6, owner=$7,
-         supernet_id=$8, location=$9, notes=$10, site_id=$11, updated_at=NOW()
+         supernet_id=$8, location=$9, notes=$10, site_id=$11,
+         is_sensitive=COALESCE($12, is_sensitive), updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [id, name||null, description||null, gateway||null,
        vlan_id?parseInt(vlan_id):null, site||null, owner||null,
        supernet_id?parseInt(supernet_id):null, location||null, notes||null,
-       site_id != null && site_id !== '' ? parseInt(site_id) : null]
+       site_id != null && site_id !== '' ? parseInt(site_id) : null,
+       typeof is_sensitive === 'boolean' ? is_sensitive : null]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json({ data: result.rows[0] });
@@ -1933,6 +2252,148 @@ app.get('/api/search', async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     if (!q || q.length < 2) return res.json({ data: [] });
+
+    // ── Structured query parsing (key:value) ──────────────────
+    const m = q.match(/^(\w+):(.+)$/);
+    if (m) {
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      const known = ['type', 'vendor', 'subnet', 'scope', 'site', 'new', 'risk', 'anomaly', 'status'];
+      if (known.includes(key)) {
+        try {
+          let rows = [];
+          if (key === 'type') {
+            const r = await db.query(
+              `SELECT ip_address::text, hostname, mac_address, device_type, device_vendor, address_state, scope_id
+               FROM dhcp_leases
+               WHERE device_type ILIKE $1 LIMIT 100`,
+              [`%${val}%`]
+            );
+            rows = r.rows.map(x => ({
+              type: 'lease', title: x.ip_address,
+              subtitle: [x.hostname, x.device_type, x.device_vendor, x.mac_address].filter(Boolean).join(' · '),
+              status: x.address_state, meta: { device_type: x.device_type, device_vendor: x.device_vendor },
+            }));
+          } else if (key === 'vendor') {
+            const r = await db.query(
+              `SELECT ip_address::text, hostname, mac_address, device_type, device_vendor, address_state
+               FROM dhcp_leases WHERE device_vendor ILIKE $1 LIMIT 100`,
+              [`%${val}%`]
+            );
+            rows = r.rows.map(x => ({
+              type: 'lease', title: x.ip_address,
+              subtitle: [x.hostname, x.device_vendor, x.device_type, x.mac_address].filter(Boolean).join(' · '),
+              status: x.address_state, meta: { device_vendor: x.device_vendor },
+            }));
+          } else if (key === 'subnet') {
+            const r = await db.query(
+              `SELECT ip_address::text, hostname, mac_address, device_type, address_state, scope_id
+               FROM dhcp_leases WHERE host(ip_address) LIKE $1 LIMIT 100`,
+              [`${val}%`]
+            );
+            rows = r.rows.map(x => ({
+              type: 'lease', title: x.ip_address,
+              subtitle: [x.hostname, x.device_type, x.mac_address, 'Scope: ' + x.scope_id].filter(Boolean).join(' · '),
+              status: x.address_state, meta: {},
+            }));
+          } else if (key === 'scope') {
+            let op = '>=', numStr = val;
+            if (val[0] === '>') { op = '>'; numStr = val.slice(1); }
+            else if (val[0] === '<') { op = '<'; numStr = val.slice(1); }
+            const num = parseFloat(numStr);
+            const r = await db.query(
+              `SELECT scope_id, name, start_range::text, end_range::text, percent_used, server_hostname
+               FROM dhcp_scopes WHERE percent_used ${op} $1 ORDER BY percent_used DESC LIMIT 100`,
+              [isNaN(num) ? 0 : num]
+            );
+            rows = r.rows.map(x => ({
+              type: 'scope', title: x.scope_id,
+              subtitle: [x.name, x.server_hostname, x.percent_used + '% used'].filter(Boolean).join(' · '),
+              status: null, meta: { percent_used: x.percent_used },
+            }));
+          } else if (key === 'site') {
+            const srv = await db.query(
+              `SELECT hostname, ip_address::text, role FROM ddi_servers
+               WHERE hostname ILIKE $1 OR site_id::text = $2 LIMIT 50`,
+              [`%${val}%`, val]
+            );
+            for (const x of srv.rows) {
+              rows.push({
+                type: 'server', title: x.hostname,
+                subtitle: [x.ip_address, x.role].filter(Boolean).join(' · '),
+                status: null, meta: {},
+              });
+            }
+            const sub = await db.query(
+              `SELECT host(network) as network, prefix_length, name, site FROM ipam_subnets
+               WHERE site ILIKE $1 LIMIT 50`,
+              [`%${val}%`]
+            );
+            for (const x of sub.rows) {
+              rows.push({
+                type: 'subnet', title: x.network + '/' + x.prefix_length,
+                subtitle: [x.name, x.site].filter(Boolean).join(' · '),
+                status: null, meta: {},
+              });
+            }
+            rows = rows.slice(0, 100);
+          } else if (key === 'new') {
+            const cutoff = val.toLowerCase() === 'today'
+              ? `date_trunc('day', NOW())`
+              : `NOW() - INTERVAL '7 days'`;
+            const r = await db.query(
+              `SELECT ip_address::text, hostname, mac_address, device_type, address_state, first_seen
+               FROM dhcp_leases WHERE first_seen > ${cutoff} ORDER BY first_seen DESC LIMIT 100`
+            );
+            rows = r.rows.map(x => ({
+              type: 'lease', title: x.ip_address,
+              subtitle: [x.hostname, x.device_type, x.mac_address].filter(Boolean).join(' · '),
+              status: x.address_state, meta: { first_seen: x.first_seen },
+            }));
+          } else if (key === 'risk') {
+            const r = await db.query(
+              `SELECT ip_address::text, hostname, mac_address, device_type, risk_level, address_state
+               FROM dhcp_leases WHERE risk_level = $1 LIMIT 100`,
+              [val.toLowerCase()]
+            );
+            rows = r.rows.map(x => ({
+              type: 'lease', title: x.ip_address,
+              subtitle: [x.hostname, x.device_type, x.risk_level, x.mac_address].filter(Boolean).join(' · '),
+              status: x.address_state, meta: { risk_level: x.risk_level },
+            }));
+          } else if (key === 'anomaly') {
+            const r = await db.query(
+              `SELECT id, anomaly_type, severity, description, detected_at
+               FROM anomaly_events WHERE detected_at > date_trunc('day', NOW())
+               ORDER BY detected_at DESC LIMIT 100`
+            );
+            rows = r.rows.map(x => ({
+              type: 'anomaly', title: x.anomaly_type,
+              subtitle: [x.severity, x.description].filter(Boolean).join(' · '),
+              status: x.severity, meta: { id: x.id, detected_at: x.detected_at },
+            }));
+          } else if (key === 'status') {
+            const r = await db.query(
+              `SELECT a.ip_address::text, a.hostname, a.mac_address, a.status,
+                      s.name as subnet_name
+               FROM ipam_addresses a
+               LEFT JOIN ipam_subnets s ON s.id = a.subnet_id
+               WHERE a.status = $1 LIMIT 100`,
+              [val.toLowerCase()]
+            );
+            rows = r.rows.map(x => ({
+              type: 'ip', title: x.ip_address,
+              subtitle: [x.hostname, x.mac_address, x.subnet_name].filter(Boolean).join(' · '),
+              status: x.status, meta: {},
+            }));
+          }
+          return res.json({ data: rows, structured: true, query: q });
+        } catch (e) {
+          console.error('[API] structured search error:', e.message);
+          return res.json({ data: [], structured: true, query: q });
+        }
+      }
+    }
 
     const results = [];
 

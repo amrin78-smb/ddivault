@@ -11,6 +11,7 @@ const { Pool }  = require('pg');
 const fs        = require('fs');
 const path      = require('path');
 const os        = require('os');
+const deviceClassifier = require('../api/deviceClassifier'); // { classifyDevice(mac, hostname) }
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
@@ -335,6 +336,15 @@ async function scanSubnet(subnet) {
       // Alive if ping responded OR ARP found a MAC
       const alive = pingResult.alive || (!!macAddress && !lease);
 
+      // Device fingerprinting — classify when a MAC is known
+      let devType = null, devVendor = null, devRisk = 'unknown';
+      if (macAddress) {
+        try {
+          const c = deviceClassifier.classifyDevice(macAddress, hostname || '');
+          devType = c.type || null; devVendor = c.vendor || null; devRisk = c.risk_level || 'unknown';
+        } catch (_) {}
+      }
+
       if (lease) {
         status = 'dhcp';
         hostsUp++;
@@ -348,8 +358,8 @@ async function scanSubnet(subnet) {
 
       await db.query(
         `INSERT INTO ipam_addresses
-           (subnet_id, ip_address, status, hostname, mac_address, last_ping, ping_ms, last_seen, dhcp_lease_id, updated_at)
-         VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7,$8,NOW())
+           (subnet_id, ip_address, status, hostname, mac_address, last_ping, ping_ms, last_seen, dhcp_lease_id, device_type, device_vendor, risk_level, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7,$8,$9,$10,$11,NOW())
          ON CONFLICT (subnet_id, ip_address) DO UPDATE SET
            status        = CASE WHEN ipam_addresses.is_reserved THEN ipam_addresses.status ELSE EXCLUDED.status END,
            hostname      = COALESCE(EXCLUDED.hostname, ipam_addresses.hostname),
@@ -358,9 +368,13 @@ async function scanSubnet(subnet) {
            ping_ms       = EXCLUDED.ping_ms,
            last_seen     = CASE WHEN EXCLUDED.status != 'available' THEN NOW() ELSE ipam_addresses.last_seen END,
            dhcp_lease_id = EXCLUDED.dhcp_lease_id,
+           device_type   = EXCLUDED.device_type,
+           device_vendor = COALESCE(EXCLUDED.device_vendor, ipam_addresses.device_vendor),
+           risk_level    = EXCLUDED.risk_level,
            updated_at    = NOW()`,
         [subnetId, ip, status, hostname, macAddress, pingResult.responseTime,
-         alive || lease ? new Date().toISOString() : null, lease?.id || null]
+         alive || lease ? new Date().toISOString() : null, lease?.id || null,
+         devType, devVendor, devRisk]
       );
 
       // Alert on first discovery of unknown devices

@@ -30,6 +30,18 @@ const nextConfig = {
       { source: '/api/api-keys',              destination: 'http://127.0.0.1:3007/api/api-keys' },
       { source: '/api/infrastructure/:path*', destination: 'http://127.0.0.1:3007/api/infrastructure/:path*' },
       { source: '/api/v1/:path*',             destination: 'http://127.0.0.1:3007/api/v1/:path*' },
+      { source: '/api/smtp/:path*',            destination: 'http://127.0.0.1:3007/api/smtp/:path*' },
+      { source: '/api/smtp',                   destination: 'http://127.0.0.1:3007/api/smtp' },
+      { source: '/api/alert-recipients/:path*', destination: 'http://127.0.0.1:3007/api/alert-recipients/:path*' },
+      { source: '/api/alert-recipients',       destination: 'http://127.0.0.1:3007/api/alert-recipients' },
+      { source: '/api/alert-rule-config/:path*', destination: 'http://127.0.0.1:3007/api/alert-rule-config/:path*' },
+      { source: '/api/alert-rule-config',      destination: 'http://127.0.0.1:3007/api/alert-rule-config' },
+      { source: '/api/forecasts/:path*',       destination: 'http://127.0.0.1:3007/api/forecasts/:path*' },
+      { source: '/api/forecasts',              destination: 'http://127.0.0.1:3007/api/forecasts' },
+      { source: '/api/anomalies/:path*',       destination: 'http://127.0.0.1:3007/api/anomalies/:path*' },
+      { source: '/api/anomalies',              destination: 'http://127.0.0.1:3007/api/anomalies' },
+      { source: '/api/site-health/:path*',     destination: 'http://127.0.0.1:3007/api/site-health/:path*' },
+      { source: '/api/site-health',            destination: 'http://127.0.0.1:3007/api/site-health' },
     ];
   },
 };

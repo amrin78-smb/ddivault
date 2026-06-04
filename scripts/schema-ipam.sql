@@ -117,3 +117,9 @@ CREATE OR REPLACE TRIGGER trg_ipam_supernets_updated
 CREATE OR REPLACE TRIGGER trg_ipam_addresses_updated
   BEFORE UPDATE ON ipam_addresses
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ── Intelligence: device fingerprinting + sensitive flag on addresses ──
+ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS device_type TEXT;
+ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS device_vendor TEXT;
+ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS risk_level TEXT DEFAULT 'unknown';
+ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN DEFAULT FALSE;

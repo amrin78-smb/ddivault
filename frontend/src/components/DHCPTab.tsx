@@ -41,6 +41,18 @@ interface Lease {
   lease_start: string;
   lease_expiry: string;
   last_seen: string;
+  device_type?: string;
+  device_vendor?: string;
+  device_os?: string;
+  risk_level?: string;
+  is_mac_randomized?: boolean;
+}
+
+interface ScopeForecast {
+  scope_id: number;
+  scope_cidr?: string;
+  days_to_full?: number | null;
+  days_to_80pct?: number | null;
 }
 
 interface ServerOption {
@@ -135,6 +147,20 @@ function stateBadge(state: string): string {
 
 function fmtDate(d: string): string {
   return d ? new Date(d).toLocaleString() : '—';
+}
+
+// ── Device type → icon ────────────────────────────────────────
+const DEVICE_ICONS: Record<string, string> = {
+  mobile: '📱', workstation: '💻', network: '🔌', printer: '🖨️', voip: '📞', unknown: '❓',
+};
+const deviceIcon = (t?: string) => DEVICE_ICONS[t || 'unknown'] || '❓';
+
+// ── Forecast color coding (days to full) ──────────────────────
+function forecastColor(days?: number | null): string {
+  if (days == null) return 'var(--green)';
+  if (days < 14) return 'var(--red)';
+  if (days <= 30) return 'var(--yellow)';
+  return 'var(--green)';
 }
 
 // ── Shared inline styles (design-system aligned) ──────────────
@@ -737,6 +763,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
   const [scopes, setScopes]       = useState<Scope[]>([]);
   const [scopesLoading, setScopesLoading] = useState(true);
   const [view, setView]           = useState<View>('scopes');
+  const [forecasts, setForecasts] = useState<Map<number, ScopeForecast>>(new Map());
 
   // Scope filters
   const [search, setSearch]       = useState('');
@@ -791,6 +818,24 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
   }, [loadScopes]);
 
   useRefreshKey(loadScopes);
+
+  // ── Load capacity forecasts (Scopes view) ───────────────────
+  const loadForecasts = useCallback(async () => {
+    try {
+      const d = await api('/forecasts/scopes');
+      const map = new Map<number, ScopeForecast>();
+      (d.data || []).forEach((f: ScopeForecast) => {
+        if (f.scope_id != null) map.set(f.scope_id, f);
+      });
+      setForecasts(map);
+    } catch {
+      // non-fatal; column will simply show '—'
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === 'scopes') loadForecasts();
+  }, [view, loadForecasts]);
 
   // ── Load DHCP-capable servers (for Create Scope) ────────────
   const loadDhcpServers = useCallback(async () => {
@@ -1046,7 +1091,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
           {/* Dense scope table */}
           <div className="card" style={{ overflow: 'hidden' }}>
             {scopesLoading ? (
-              <TableSkeleton rows={8} cols={10} />
+              <TableSkeleton rows={8} cols={11} />
             ) : scopes.length === 0 ? (
               <EmptyState
                 icon="◇"
@@ -1068,6 +1113,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                       <th style={{ textAlign: 'right' }}>Used</th>
                       <th style={{ textAlign: 'right' }}>Free</th>
                       <th style={{ minWidth: 160 }}>% Used</th>
+                      <th>Forecast</th>
                       <th>State</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
@@ -1082,6 +1128,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                           key={sc.id}
                           scope={sc}
                           pct={pct}
+                          forecast={forecasts.get(sc.id)}
                           isExpanded={isExp}
                           lowFree={lowFree}
                           busy={busyScope === sc.scope_id}
@@ -1134,16 +1181,16 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>IP Address</th><th>Hostname</th><th>MAC Address</th>
+                  <th>IP Address</th><th>Hostname</th><th>Device</th><th>MAC Address</th>
                   <th>Scope</th><th>State</th><th>Expires</th><th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {allLeasesLoading && (
-                  <tr><td colSpan={7} style={{ padding: 0 }}><TableSkeleton rows={6} cols={7} /></td></tr>
+                  <tr><td colSpan={8} style={{ padding: 0 }}><TableSkeleton rows={6} cols={8} /></td></tr>
                 )}
                 {!allLeasesLoading && allLeases.length === 0 && (
-                  <tr><td colSpan={7}><EmptyState icon="◇" title="No leases found" message="Try a different search or state filter." /></td></tr>
+                  <tr><td colSpan={8}><EmptyState icon="◇" title="No leases found" message="Try a different search or state filter." /></td></tr>
                 )}
                 {!allLeasesLoading && allLeases.map(l => {
                   const scope = scopes.find(s => s.scope_id === l.scope_id);
@@ -1152,6 +1199,13 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                     <tr key={l.id}>
                       <td className="mono" style={{ fontWeight: 600 }}>{l.ip_address}</td>
                       <td>{l.hostname || '—'}</td>
+                      <td style={{ fontSize: 13 }}>
+                        <span title={l.device_type || 'unknown'}>{deviceIcon(l.device_type)}</span>{' '}
+                        {l.device_vendor || '—'}
+                        {l.device_os && (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.device_os}</div>
+                        )}
+                      </td>
                       <td className="mono">{l.mac_address || '—'}</td>
                       <td className="mono">{l.scope_id || '—'}</td>
                       <td><span className={`badge ${stateBadge(l.address_state)}`}>{l.address_state}</span></td>
@@ -1275,11 +1329,12 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
 // ScopeRow (module scope) — table row + inline accordion panel
 // ════════════════════════════════════════════════════════════
 function ScopeRow({
-  scope, pct, isExpanded, lowFree, busy, onToggle, onReserve, onEdit, onToggleState, onDelete,
+  scope, pct, forecast, isExpanded, lowFree, busy, onToggle, onReserve, onEdit, onToggleState, onDelete,
   leases, leasesLoading, leaseSearch, onLeaseSearch, onReserveLease,
 }: {
   scope: Scope;
   pct: number;
+  forecast?: ScopeForecast;
   isExpanded: boolean;
   lowFree: boolean;
   busy: boolean;
@@ -1319,6 +1374,11 @@ function ScopeRow({
           {(scope.free ?? 0).toLocaleString()}
         </td>
         <td><UtilBar pct={pct} /></td>
+        <td style={{ fontSize: 12, fontWeight: 600, color: forecastColor(forecast?.days_to_full), whiteSpace: 'nowrap' }}>
+          {forecast
+            ? (forecast.days_to_full == null ? 'Healthy' : `${forecast.days_to_full}d to full`)
+            : '—'}
+        </td>
         <td>
           {(scope.free ?? 0) <= 0 ? (
             <span className={`badge ${stateBadge('Full')}`}>Full</span>
@@ -1365,7 +1425,7 @@ function ScopeRow({
 
       {isExpanded && (
         <tr>
-          <td colSpan={10} style={{ padding: 0, background: 'var(--bg-primary)' }}>
+          <td colSpan={11} style={{ padding: 0, background: 'var(--bg-primary)' }}>
             <div style={{ padding: 16 }}>
               <ScopeDetail scope={scope} />
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
