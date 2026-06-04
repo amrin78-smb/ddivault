@@ -116,6 +116,27 @@ if ($frontendEnvContent) {
     Write-OK "Restored frontend .env.local"
 }
 
+# STEP 4.5 - Run schema migrations
+Write-Step "Running schema migrations..."
+$psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+if (Test-Path $psql) {
+    $dbPass = (Get-Content $rootEnvPath | Select-String "DDI_DB_PASS=").ToString().Split("=",2)[1].Trim()
+    $dbUser = (Get-Content $rootEnvPath | Select-String "DDI_DB_USER=").ToString().Split("=",2)[1].Trim()
+    $dbName = (Get-Content $rootEnvPath | Select-String "DDI_DB_NAME=").ToString().Split("=",2)[1].Trim()
+    $env:PGPASSWORD = $dbPass
+    $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
+    foreach ($schema in $schemas) {
+        $schemaPath = "$AppDir\scripts\$schema"
+        if (Test-Path $schemaPath) {
+            & $psql -U $dbUser -d $dbName -f $schemaPath >> "$LogDir\schema-migration.log" 2>&1
+            Write-OK "Applied $schema"
+        }
+    }
+    $env:PGPASSWORD = ""
+} else {
+    Write-Warn "psql not found - skipping schema migration. Run manually if needed."
+}
+
 # STEP 5 - Root npm install
 Write-Step "Installing root dependencies..."
 $rootNpmLog = "$LogDir\npm-install-root.log"
