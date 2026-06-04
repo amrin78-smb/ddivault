@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const ps        = require('./powershellRunner');
 const dhcp      = require('./dhcpReader');
 const ha        = require('./haMonitor');
+const ipamSync  = require('./ipamSync');
 const { decrypt } = require('./credStore');
 
 process.on('uncaughtException', (err) => {
@@ -242,6 +243,37 @@ async function collectScopeStats(server) {
   }
 
   await updateServerStatus(server.id, 'ok', null);
+
+  await syncScopesToIpam(server, auth, ip, scopeConfig);
+}
+
+// Auto-create IPAM subnets/supernets from discovered DHCP scopes.
+async function syncScopesToIpam(server, auth, ip, scopeConfig) {
+  const scopes = Object.entries(scopeConfig || {}).map(([scopeId, cfg]) => ({
+    scopeId,
+    subnetMask: scopeIdStr(cfg.SubnetMask),
+    name: cfg.Name || null,
+  }));
+  if (!scopes.length) return;
+  // Resolve gateway (DHCP option 3) on demand — only invoked for NEW subnets.
+  const getGateway = async (scopeId) => {
+    try {
+      const opts = ps.getDhcpScopeOptions(ip, auth, scopeId);
+      const arr = Array.isArray(opts) ? opts : (opts ? [opts] : []);
+      const o = arr.find(x => Number(x.OptionId) === 3);
+      if (!o) return null;
+      const v = Array.isArray(o.Value) ? o.Value[0] : o.Value;
+      return scopeIdStr(v) || null;
+    } catch (_) { return null; }
+  };
+  try {
+    const r = await ipamSync.syncScopesToIpam(db, scopes, { log, getGateway });
+    if (r.created || r.updated || r.supernetsCreated) {
+      log(`[IPAM Sync] ${ip} — ${r.created} created, ${r.updated} updated, ${r.supernetsCreated} supernet(s)`);
+    }
+  } catch (err) {
+    console.error(`[IPAM Sync] ${ip} error:`, err.message);
+  }
 }
 
 async function syncLeases(server) {

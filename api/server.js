@@ -1355,6 +1355,55 @@ app.post('/api/ipam/scan-all', requireWrite, async (req, res) => {
   }
 });
 
+// Manually trigger IPAM sync from ALL DHCP scopes across all active DHCP-capable servers
+app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
+  try {
+    const ipamSync = require('../collector/ipamSync');
+    const totals = { created: 0, updated: 0, supernetsCreated: 0 };
+    const servers = await db.query(
+      "SELECT id FROM ddi_servers WHERE is_active = TRUE AND role IN ('dhcp','both')"
+    );
+    for (const server of servers.rows) {
+      try {
+        const sd = await getServerWithAuth(server.id);
+        if (!sd) continue;
+        const rawScopes = psWrite.getDhcpScopes(sd.ip, sd.auth);
+        const scopes = (rawScopes || []).map(s => ({
+          scopeId: scopeIdStr(s.ScopeId),
+          subnetMask: scopeIdStr(s.SubnetMask),
+          name: s.Name || null,
+        }));
+        const getGateway = async (scopeId) => {
+          try {
+            const opts = psWrite.getDhcpScopeOptions(sd.ip, sd.auth, scopeId);
+            const arr = Array.isArray(opts) ? opts : (opts ? [opts] : []);
+            const o = arr.find(x => Number(x.OptionId) === 3);
+            if (!o) return null;
+            const v = Array.isArray(o.Value) ? o.Value[0] : o.Value;
+            return scopeIdStr(v) || null;
+          } catch (_) { return null; }
+        };
+        const r = await ipamSync.syncScopesToIpam(db, scopes, { log: (m) => console.log(m), getGateway });
+        totals.created += r.created;
+        totals.updated += r.updated;
+        totals.supernetsCreated += r.supernetsCreated;
+      } catch (serverErr) {
+        console.error(`[API] sync-from-dhcp server ${server.id} error:`, serverErr.message);
+      }
+    }
+    if (req.audit) req.audit({
+      action: 'sync',
+      entity_type: 'ipam',
+      entity_name: 'dhcp-sync',
+      change_summary: `IPAM sync from DHCP: ${totals.created} created, ${totals.updated} updated`,
+    });
+    res.json({ success: true, created: totals.created, updated: totals.updated, supernetsCreated: totals.supernetsCreated });
+  } catch (err) {
+    console.error('[API] sync-from-dhcp error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
   try {
     const id = parseInt(req.params.id);

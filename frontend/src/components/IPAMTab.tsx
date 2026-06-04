@@ -636,6 +636,7 @@ export default function IPAMTab() {
 
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [prevActive, setPrevActive] = useState<number | null>(null);
+  const [syncing, setSyncing]       = useState(false);
 
   // ── Load ──────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -707,6 +708,18 @@ export default function IPAMTab() {
     catch (e: any) { toast(e.message, 'error'); }
   };
 
+  const syncFromDhcp = async () => {
+    setSyncing(true);
+    try {
+      const d = await api('/ipam/sync-from-dhcp', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      }) as { created: number; updated: number; supernetsCreated: number };
+      toast(`IPAM sync complete — ${d.created} created, ${d.updated} updated, ${d.supernetsCreated} supernet(s)`, 'success');
+      loadAll();
+    } catch (e: any) { toast(e.message || 'Sync failed', 'error'); }
+    finally { setSyncing(false); }
+  };
+
   const findNextSubnet = async (sn: Supernet) => {
     const prefix = prefixSel[sn.id] || 24;
     const d = await api(`/ipam/supernets/${sn.id}/next-subnet?prefix=${prefix}`).catch(() => null);
@@ -744,6 +757,11 @@ export default function IPAMTab() {
           ))}
         </div>
         {canWrite && <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>}
+        {canWrite && (
+          <button className="btn" onClick={syncFromDhcp} disabled={syncing} style={{ opacity: syncing ? 0.7 : 1 }}>
+            {syncing ? <><Spinner /> Syncing…</> : 'Sync from DHCP'}
+          </button>
+        )}
         {canWrite && <button className="btn" onClick={() => setAddSupernet(true)}>+ Supernet</button>}
         {canWrite && <button className="btn" onClick={() => openAddSubnet(null)}>+ Subnet</button>}
         {canWrite && <button className="btn btn-primary" onClick={scanAll}>⟳ Scan All</button>}
