@@ -149,6 +149,8 @@ function scanLabel(status: string, last_scanned?: string) {
   return 'Not scanned';
 }
 
+const cleanNetwork = (network: string) => (network || '').replace(/\/\d+$/, '');
+
 const siteName = (siteId: number | null | undefined, sites: Site[], fallback?: string): string => {
   if (siteId != null) {
     const s = sites.find(x => x.id === siteId);
@@ -314,7 +316,7 @@ function AddSubnetModal({ sites, supernets, defaultSupernetId, defaultNetwork, o
         <Field label="Supernet (optional)" full>
           <select value={supernetId ?? ''} onChange={e => setSupernetId(e.target.value ? parseInt(e.target.value) : null)} style={INPUT}>
             <option value="">— Unassigned —</option>
-            {supernets.map(sn => <option key={sn.id} value={sn.id}>{sn.name || `${sn.network}/${sn.prefix_length}`} ({sn.network}/{sn.prefix_length})</option>)}
+            {supernets.map(sn => <option key={sn.id} value={sn.id}>{sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`} ({cleanNetwork(sn.network)}/{sn.prefix_length})</option>)}
           </select>
         </Field>
       </div>
@@ -379,7 +381,7 @@ function EditSupernetModal({ supernet, sites, onClose, onSaved }: {
   };
 
   return (
-    <ModalShell title={`Edit ${supernet.network}/${supernet.prefix_length}`} subtitle="Update supernet details and site assignment" onClose={onClose}>
+    <ModalShell title={`Edit ${cleanNetwork(supernet.network)}/${supernet.prefix_length}`} subtitle="Update supernet details and site assignment" onClose={onClose}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} /></Field>
         <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
@@ -422,7 +424,7 @@ function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
   };
 
   return (
-    <ModalShell title={`Edit ${subnet.network}/${subnet.prefix_length}`} subtitle="Update subnet details and site assignment" width={620} onClose={onClose}>
+    <ModalShell title={`Edit ${cleanNetwork(subnet.network)}/${subnet.prefix_length}`} subtitle="Update subnet details and site assignment" width={620} onClose={onClose}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} /></Field>
         <Field label="Gateway IP"><input value={form.gateway} onChange={e => set('gateway', e.target.value)} style={INPUT} placeholder="192.168.1.1" /></Field>
@@ -481,7 +483,7 @@ function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
     >
       <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
       <div style={{ minWidth: 170 }}>
-        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>{subnet.network}/{subnet.prefix_length}</div>
+        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>{cleanNetwork(subnet.network)}/{subnet.prefix_length}</div>
         {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{siteName(subnet.site_id, sites, subnet.site)}</div>
@@ -544,7 +546,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
 
   const startScan = async () => {
     setScanning(true);
-    toast(`Scanning ${subnet.network}/${subnet.prefix_length}...`, 'info');
+    toast(`Scanning ${cleanNetwork(subnet.network)}/${subnet.prefix_length}...`, 'info');
     try { await api(`/ipam/subnets/${subnet.id}/scan`, { method: 'POST' }); }
     catch (e: any) { toast(e.message, 'error'); setScanning(false); }
   };
@@ -590,7 +592,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
   }, [addresses, filter]);
 
   const supLabel = subnet.supernet_network
-    ? `${subnet.supernet_network}/${subnet.supernet_prefix}`
+    ? `${cleanNetwork(subnet.supernet_network)}/${subnet.supernet_prefix}`
     : 'Unassigned';
 
   return (
@@ -601,16 +603,16 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
           <Breadcrumb light items={[
             { label: 'IPAM', onClick: onClose },
             { label: supLabel },
-            { label: `${subnet.network}/${subnet.prefix_length}` },
+            { label: `${cleanNetwork(subnet.network)}/${subnet.prefix_length}` },
           ]} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <div style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>
-              {subnet.name || `${subnet.network}/${subnet.prefix_length}`}
+              {subnet.name || `${cleanNetwork(subnet.network)}/${subnet.prefix_length}`}
             </div>
             <div style={{ ...MONO, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
-              {subnet.network}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
+              {cleanNetwork(subnet.network)}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
               {siteName(subnet.site_id, sites, subnet.site) ? ` · ${siteName(subnet.site_id, sites, subnet.site)}` : ''}
             </div>
           </div>
@@ -810,7 +812,7 @@ export default function IPAMTab() {
   const scanSubnet = async (s: Subnet) => {
     try {
       await api(`/ipam/subnets/${s.id}/scan`, { method: 'POST' });
-      toast(`Scan started for ${s.network}/${s.prefix_length}`, 'success');
+      toast(`Scan started for ${cleanNetwork(s.network)}/${s.prefix_length}`, 'success');
     } catch (e: any) { toast(e.message, 'error'); }
   };
 
@@ -899,7 +901,7 @@ export default function IPAMTab() {
                 background: 'var(--bg-card)', border: '1px solid rgba(220,38,38,0.3)',
                 borderRadius: 'var(--radius-sm)', padding: '5px 10px',
               }}>
-                {c.network_a}/{c.prefix_a} ⇄ {c.network_b}/{c.prefix_b}
+                {cleanNetwork(c.network_a)}/{c.prefix_a} ⇄ {cleanNetwork(c.network_b)}/{c.prefix_b}
                 {(c.site_a || c.site_b) && (
                   <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6, fontFamily: 'inherit' }}>
                     ({c.site_a || '—'} / {c.site_b || '—'})
@@ -947,7 +949,7 @@ export default function IPAMTab() {
             return (
               <div key={s.id} style={{ marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                  <span style={{ ...MONO, fontSize: 12, fontWeight: 600 }}>{s.network}/{s.prefix_length}{s.name ? ` — ${s.name}` : ''}</span>
+                  <span style={{ ...MONO, fontSize: 12, fontWeight: 600 }}>{cleanNetwork(s.network)}/{s.prefix_length}{s.name ? ` — ${s.name}` : ''}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{scanned} / {total} hosts · {pct}%</span>
                 </div>
                 <div className="util-track"><div className="util-fill" style={{ width: `${pct}%`, background: 'var(--primary)' }} /></div>
@@ -969,7 +971,7 @@ export default function IPAMTab() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {scanStatus.subnets?.filter((s: any) => s.scan_status === 'done' && s.last_scanned).map((s: any) => (
               <div key={s.id} style={{ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 11 }}>
-                <div style={{ ...MONO, fontWeight: 600 }}>{s.network}/{s.prefix_length}</div>
+                <div style={{ ...MONO, fontWeight: 600 }}>{cleanNetwork(s.network)}/{s.prefix_length}</div>
                 <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                   {s.used_hosts}/{s.total_hosts || 0} used · {s.unknown_hosts > 0
                     ? <span style={{ color: 'var(--orange)' }}>⚠ {s.unknown_hosts} unknown</span>
@@ -1075,8 +1077,8 @@ function TreeView({
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--navy)', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
-                  {sn.name || `${sn.network}/${sn.prefix_length}`}
-                  <span style={{ ...MONO, fontSize: 12, color: 'var(--text-muted)', marginLeft: 10, fontWeight: 400 }}>{sn.network}/{sn.prefix_length}</span>
+                  {sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`}
+                  <span style={{ ...MONO, fontSize: 12, color: 'var(--text-muted)', marginLeft: 10, fontWeight: 400 }}>{cleanNetwork(sn.network)}/{sn.prefix_length}</span>
                 </div>
                 {snSite && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>📍 {snSite}</div>}
               </div>
@@ -1201,9 +1203,9 @@ function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
               const total = sub.total_hosts || totalHosts(sub.prefix_length);
               return (
                 <tr key={sub.id} className="clickable" onClick={() => onView(sub)}>
-                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{sub.network}/{sub.prefix_length}</td>
+                  <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{cleanNetwork(sub.network)}/{sub.prefix_length}</td>
                   <td style={TD}>{sub.name || '—'}</td>
-                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${sub.supernet_network}/${sub.supernet_prefix}` : '—')}</td>
+                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${cleanNetwork(sub.supernet_network)}/${sub.supernet_prefix}` : '—')}</td>
                   <td style={{ ...TD, ...MONO, fontSize: 11 }}>{sub.gateway || '—'}</td>
                   <td style={TD}>{sub.vlan_id ? <span className="badge badge-blue">{sub.vlan_id}</span> : '—'}</td>
                   <td style={TD}>{siteName(sub.site_id, sites, sub.site) || '—'}</td>

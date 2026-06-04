@@ -1168,7 +1168,7 @@ app.get('/api/ipam/subnets', attachSiteFilter, async (req, res) => {
     const rows = await db.query(
       `SELECT s.*,
          sn.name as supernet_name,
-         sn.network::text as supernet_network,
+         host(sn.network) as supernet_network,
          sn.prefix_length as supernet_prefix,
          (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id) as ip_count,
          (SELECT COUNT(*) FROM ipam_addresses a WHERE a.subnet_id = s.id AND a.status = 'dhcp') as dhcp_count,
@@ -1364,7 +1364,7 @@ app.post('/api/ipam/subnets/:id/scan', requireWrite, async (req, res) => {
       return res.status(409).json({ error: 'Scan already in progress for this subnet' });
     }
     const subnetRes = await db.query(
-      'SELECT id, network::text, prefix_length, name FROM ipam_subnets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length, name FROM ipam_subnets WHERE id=$1', [id]
     );
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const subnet = subnetRes.rows[0];
@@ -1489,7 +1489,7 @@ app.get('/api/ipam/scan-status', async (req, res) => {
     await expireStuckScans();
     const scanning = [...scanningSubnets];
     const jobs = scanning.length > 0 ? await db.query(
-      `SELECT j.*, s.network::text, s.prefix_length, s.name, s.total_hosts
+      `SELECT j.*, host(s.network) as network, s.prefix_length, s.name, s.total_hosts
        FROM ipam_scan_jobs j
        JOIN ipam_subnets s ON s.id = j.subnet_id
        WHERE j.subnet_id = ANY($1) AND j.status = 'running'
@@ -1498,7 +1498,7 @@ app.get('/api/ipam/scan-status', async (req, res) => {
     ) : { rows: [] };
     // Also get all subnet scan states
     const allSubnets = await db.query(
-      `SELECT id, network::text, prefix_length, name, scan_status, last_scanned,
+      `SELECT id, host(network) as network, prefix_length, name, scan_status, last_scanned,
               total_hosts, used_hosts, free_hosts, unknown_hosts
        FROM ipam_subnets WHERE is_managed=TRUE ORDER BY network`
     );
@@ -1937,7 +1937,7 @@ app.get('/api/search', async (req, res) => {
     const ipam = await db.query(
       `SELECT
          a.ip_address::text, a.hostname, a.mac_address, a.status,
-         s.network::text as subnet, s.prefix_length, s.name as subnet_name,
+         host(s.network) as subnet, s.prefix_length, s.name as subnet_name,
          sn.name as supernet_name
        FROM ipam_addresses a
        JOIN ipam_subnets s ON s.id = a.subnet_id
@@ -1961,7 +1961,7 @@ app.get('/api/search', async (req, res) => {
 
     // Search subnets (network, name, description, site)
     const subnets = await db.query(
-      `SELECT network::text, prefix_length, name, description, site, gateway::text
+      `SELECT host(network) as network, prefix_length, name, description, site, gateway::text
        FROM ipam_subnets
        WHERE
          network::text ILIKE $1 OR
@@ -1983,7 +1983,7 @@ app.get('/api/search', async (req, res) => {
 
     // Search supernets
     const supernets = await db.query(
-      `SELECT network::text, prefix_length, name, site
+      `SELECT host(network) as network, prefix_length, name, site
        FROM ipam_supernets
        WHERE network::text ILIKE $1 OR name ILIKE $1 OR site ILIKE $1
        LIMIT 5`,
@@ -2070,7 +2070,7 @@ app.get('/api/ipam/subnets/:id/next-ip', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const subnetRes = await db.query(
-      'SELECT id, network::text, prefix_length FROM ipam_subnets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length FROM ipam_subnets WHERE id=$1', [id]
     );
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const { network, prefix_length } = subnetRes.rows[0];
@@ -2112,14 +2112,14 @@ app.get('/api/ipam/supernets/:id/next-subnet', async (req, res) => {
     const prefix = parseInt(req.query.prefix || '24');
 
     const snRes = await db.query(
-      'SELECT id, network::text, prefix_length, site FROM ipam_supernets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length, site FROM ipam_supernets WHERE id=$1', [id]
     );
     if (!snRes.rows.length) return res.status(404).json({ error: 'Supernet not found' });
     const supernet = snRes.rows[0];
 
     // Get all existing subnets within this supernet
     const existingRes = await db.query(
-      `SELECT network::text, prefix_length FROM ipam_subnets
+      `SELECT host(network) as network, prefix_length FROM ipam_subnets
        WHERE network << ($1 || '/' || $2)::inet
        ORDER BY network`,
       [supernet.network, supernet.prefix_length]
@@ -2127,7 +2127,7 @@ app.get('/api/ipam/supernets/:id/next-subnet', async (req, res) => {
 
     // Get all OTHER supernets assigned to different sites (must not overlap)
     const otherSupernetsRes = await db.query(
-      `SELECT network::text, prefix_length, site FROM ipam_supernets
+      `SELECT host(network) as network, prefix_length, site FROM ipam_supernets
        WHERE id != $1 AND site IS NOT NULL AND site != $2`,
       [id, supernet.site || '']
     );
@@ -2187,8 +2187,8 @@ app.get('/api/ipam/conflicts', async (req, res) => {
   try {
     const conflicts = await db.query(
       `SELECT
-         a.id as id_a, a.network::text as network_a, a.prefix_length as prefix_a, a.name as name_a, a.site as site_a,
-         b.id as id_b, b.network::text as network_b, b.prefix_length as prefix_b, b.name as name_b, b.site as site_b
+         a.id as id_a, host(a.network) as network_a, a.prefix_length as prefix_a, a.name as name_a, a.site as site_a,
+         b.id as id_b, host(b.network) as network_b, b.prefix_length as prefix_b, b.name as name_b, b.site as site_b
        FROM ipam_subnets a
        JOIN ipam_subnets b ON a.id < b.id
        WHERE a.network::inet && b.network::inet`
