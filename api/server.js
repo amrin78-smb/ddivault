@@ -606,15 +606,18 @@ app.put('/api/alert-rules/:id', requireWrite, async (req, res) => {
 });
 
 // ── Servers (enhanced with auth) ──────────────────────────────
-app.get('/api/servers', async (req, res) => {
+app.get('/api/servers', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT id, hostname, ip_address::text as ip_address, role, description,
               is_active, last_polled, poll_status, poll_error,
               auth_mode, ps_username, winrm_port, winrm_https,
               winrm_test_ok, winrm_tested_at, notes, site_id,
               created_at, updated_at
-       FROM ddi_servers ORDER BY created_at DESC`
+       FROM ddi_servers ${siteFilter} ORDER BY created_at DESC`,
+      params
     );
     // Enrich with site names from NetVault if any site_ids present
     const siteIds = [...new Set(rows.rows.map(r => r.site_id).filter(Boolean))];
@@ -2003,8 +2006,10 @@ app.delete('/api/api-keys/:id', requireSuperAdmin, async (req, res) => {
 // ════════════════════════════════════════════════════════════
 // INFRASTRUCTURE HEALTH (HA, failover, SOA sync)
 // ════════════════════════════════════════════════════════════
-app.get('/api/infrastructure/health', async (req, res) => {
+app.get('/api/infrastructure/health', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `AND s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const servers = await db.query(
       `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.is_active, s.poll_status,
               s.last_polled, s.health_score, s.health_checked_at, s.query_ms, s.winrm_test_ok, s.site_id,
@@ -2012,7 +2017,8 @@ app.get('/api/infrastructure/health', async (req, res) => {
               (SELECT COUNT(*) FROM dhcp_leases l WHERE l.server_id = s.id) AS lease_count,
               (SELECT COUNT(*) FROM dns_zones z WHERE z.server_id = s.id) AS zone_count,
               (SELECT COALESCE(SUM(z.record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count
-         FROM ddi_servers s WHERE s.is_active = TRUE ORDER BY s.hostname`);
+         FROM ddi_servers s WHERE s.is_active = TRUE ${siteFilter} ORDER BY s.hostname`,
+      params);
     // overall status
     const scores = servers.rows.map(s => s.health_score).filter(v => v != null);
     const worst = scores.length ? Math.min(...scores) : null;

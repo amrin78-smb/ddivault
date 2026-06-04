@@ -733,14 +733,14 @@ export default function DDIVaultApp() {
   const [collectorOnline, setCollectorOnline] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
-  const { canManageSystem, isViewer } = useRBAC();
+  const { canManageSystem, isViewer, isSiteAdmin } = useRBAC();
 
-  // Settings is super_admin only; Audit Log is hidden from viewers.
+  // Settings is super_admin only; Audit Log is hidden from viewers and site_admins.
   const visibleItems = useMemo(() => SIDEBAR_ITEMS.filter(item => {
     if (item.id === 'settings') return canManageSystem;
-    if (item.id === 'audit')    return !isViewer;
+    if (item.id === 'audit')    return !isViewer && !isSiteAdmin;
     return true;
-  }), [canManageSystem, isViewer]);
+  }), [canManageSystem, isViewer, isSiteAdmin]);
 
   // If the active tab is no longer permitted, fall back to the dashboard.
   useEffect(() => {
@@ -856,7 +856,7 @@ export default function DDIVaultApp() {
             {tab === 'servers'   && <ServersTab />}
             {tab === 'infra'     && <InfraHealthTab />}
             {tab === 'reports'   && <ReportsTab />}
-            {tab === 'audit'     && !isViewer && <AuditTab />}
+            {tab === 'audit'     && !isViewer && !isSiteAdmin && <AuditTab />}
             {tab === 'settings'  && canManageSystem && <SettingsTab />}
           </ErrorBoundary>
         </main>
