@@ -124,17 +124,8 @@ function runLocalPS(script) {
 function addToTrustedHosts(ip) {
   const cleanIp = (ip || '').replace(/\/\d+$/, '').trim();
   if (!cleanIp) return;
-  const script = `
-$current = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts -ErrorAction SilentlyContinue).Value
-$ips = if ($current) { $current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } } else { @() }
-if ($ips -notcontains '${cleanIp}') {
-    $newList = ($ips + '${cleanIp}') -join ','
-    Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newList -Force
-    Write-Output 'added'
-} else {
-    Write-Output 'exists'
-}
-`;
+  // Single line — runLocalPS passes this via -Command, and cmd.exe truncates -Command strings at newlines.
+  const script = `$current = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts -ErrorAction SilentlyContinue).Value; $ips = if ($current) { $current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } } else { @() }; if ($ips -notcontains '${cleanIp}') { $newList = ($ips + '${cleanIp}') -join ','; Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newList -Force; Write-Output 'added' } else { Write-Output 'exists' }`;
   try {
     const result = runLocalPS(script);
     console.log(`[TrustedHosts] ${cleanIp}: ${result || 'failed'}`);
@@ -230,29 +221,16 @@ function getDnsZones(serverIp, auth) {
 }
 
 function getDnsRecords(serverIp, zoneName, auth) {
-  const script = `
-Get-DnsServerResourceRecord -ZoneName '${zoneName}' | ForEach-Object {
-  $r = $_; $data = ''
-  try {
-    if ($r.RecordData.IPv4Address)     { $data = $r.RecordData.IPv4Address.IPAddressToString }
-    elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString }
-    elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias }
-    elseif ($r.RecordData.MailExchange)  { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference }
-    elseif ($r.RecordData.NameServer)    { $data = $r.RecordData.NameServer }
-    elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText }
-    else { $data = '' }
-  } catch {}
-  [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data }
-} | ConvertTo-Json -Depth 5 -Compress`;
+  // Single line — cmd.exe truncates -Command strings at newlines.
+  const script = `Get-DnsServerResourceRecord -ZoneName '${zoneName}' | ForEach-Object { $r = $_; $data = ''; try { if ($r.RecordData.IPv4Address) { $data = $r.RecordData.IPv4Address.IPAddressToString } elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString } elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias } elseif ($r.RecordData.MailExchange) { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference } elseif ($r.RecordData.NameServer) { $data = $r.RecordData.NameServer } elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText } else { $data = '' } } catch {}; [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data } } | ConvertTo-Json -Depth 5 -Compress`;
   const r = runPS(serverIp, script, auth);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }
 
 function getDnsServerStats(serverIp, auth) {
-  const script = `
-$s = Get-DnsServerStatistics -ErrorAction SilentlyContinue
-if ($s) { [PSCustomObject]@{ TotalQueries=$s.Query2Statistics.TotalReceived; TotalResponses=$s.Query2Statistics.TotalResponseSent; TotalFailures=$s.Query2Statistics.TotalFailure } | ConvertTo-Json -Compress }`;
+  // Single line — cmd.exe truncates -Command strings at newlines.
+  const script = `$s = Get-DnsServerStatistics -ErrorAction SilentlyContinue; if ($s) { [PSCustomObject]@{ TotalQueries=$s.Query2Statistics.TotalReceived; TotalResponses=$s.Query2Statistics.TotalResponseSent; TotalFailures=$s.Query2Statistics.TotalFailure } | ConvertTo-Json -Compress }`;
   return runPS(serverIp, script, auth);
 }
 
@@ -335,9 +313,8 @@ function getDhcpFailoverScopeState(serverIp, relationshipName, auth) {
 
 /** SOA serial for a zone (replication-lag detection). */
 function getDnsZoneSoa(serverIp, zoneName, auth) {
-  const script = `
-$rec = Get-DnsServerResourceRecord -ZoneName '${String(zoneName).replace(/'/g, "''")}' -RRType SOA -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($rec) { [PSCustomObject]@{ ZoneName='${String(zoneName).replace(/'/g, "''")}'; Serial=[int64]$rec.RecordData.SerialNumber } | ConvertTo-Json -Compress }`;
+  // Single line — cmd.exe truncates -Command strings at newlines.
+  const script = `$rec = Get-DnsServerResourceRecord -ZoneName '${String(zoneName).replace(/'/g, "''")}' -RRType SOA -ErrorAction SilentlyContinue | Select-Object -First 1; if ($rec) { [PSCustomObject]@{ ZoneName='${String(zoneName).replace(/'/g, "''")}'; Serial=[int64]$rec.RecordData.SerialNumber } | ConvertTo-Json -Compress }`;
   return runPS(serverIp, script, auth);
 }
 
@@ -347,11 +324,8 @@ function testDnsQuery(serverIp, queryName, auth) {
   // so it must be CIDR-stripped here — runPS only cleans its -ComputerName target.
   const target = cleanIp(serverIp);
   const q = String(queryName || target).replace(/'/g, "''");
-  const script = `
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-try { Resolve-DnsName -Name '${q}' -Server '${target}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }
-$sw.Stop()
-[PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
+  // Single line — cmd.exe truncates -Command strings at newlines.
+  const script = `$sw = [System.Diagnostics.Stopwatch]::StartNew(); try { Resolve-DnsName -Name '${q}' -Server '${target}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }; $sw.Stop(); [PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
   return runPS(serverIp, script, auth);
 }
 
