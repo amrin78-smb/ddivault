@@ -183,8 +183,13 @@ GRANT SELECT ON sites, countries TO ddivault_user;
 | `device_baselines` | Per-scope lease baselines (hour × day-of-week) |
 | `anomaly_events` | Behavioral/security anomalies detected |
 | `site_health_scores` | Per-site health score history (DHCP/IPAM/DNS/Security) |
+| `audit_log` | Full change/audit trail (user, action, entity, old/new value, result) |
+| `api_keys` | Public REST API keys (SHA-256 hash, prefix, permissions JSONB, allowed IPs) |
+| `dhcp_failover_pairs` | DHCP failover/HA relationships between servers |
+| `dhcp_scope_sync_status` | Per-scope sync state for a failover pair |
+| `server_health_history` | Per-server health/query-latency snapshots |
 
-New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`.
+New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`, `dns_zones.{soa_serial,soa_checked_at,replication_lag}`, `ddi_servers.{health_score,health_checked_at,query_ms}`.
 
 ## Intelligence & Alerting (Features 1-6) — all on-premises, no external calls
 - **Email alerting** — `api/emailer.js` (nodemailer, HTML templates, HMAC ack tokens), `api/alertDispatcher.js` (cooldown, site/severity recipient filtering, hourly digest). SMTP/rule config is super-admin only.
@@ -194,6 +199,15 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - **Site health scoring** — `collector/healthScorer.js` (DHCP 40% / IPAM 20% / DNS 20% / Security 20%), every 15m.
 - **Smart search** — `GET /api/search` parses `type:`, `vendor:`, `subnet:`, `scope:>N`, `site:`, `new:today|7days`, `risk:`, `anomaly:today`, `status:` structured queries.
 - **Frontend** — Intelligence tab (anomaly console), Settings sections (SMTP/Recipients/Rules), Dashboard widgets (Capacity Forecast, Site Health, Security Overview, Device Donut), DHCP device+forecast columns, IPAM device icons + sensitive toggle.
+
+## Platform & Integration modules
+- **Audit trail** — `api/middleware/audit.js` (`auditContext` attaches per-request user/IP context, `writeAudit` records changes); writes to `audit_log`. Exposed via `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, and `/api/audit/export` (super-admin, CSV).
+- **RBAC** — `api/middleware/rbac.js` resolves role (`super_admin`/`admin`/`site_admin`/`viewer`) and site scope from NetVault `user_sites`; `attachSiteFilter`, `requireSuperAdmin` guards.
+- **Public REST API (v1)** — `api/v1.js` mounted at `/api/v1`, authenticated by API keys via `api/middleware/apiAuth.js` (SHA-256 hash lookup in `api_keys`, `read`/`write` permission gates, rate-limit headers, allowed-IP check, `request_count`/`last_used_at` tracking). Key management: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin).
+- **Reports** — `api/reports.js` mounted at `/api/reports`; generates PDF (via `pdfkit`) and CSV reports for IPAM/DHCP/DNS/audit. `GET /api/reports` lists types; `GET /api/reports/:type`.
+- **HA / failover monitoring** — `collector/haMonitor.js` polls DHCP failover pairs (`dhcp_failover_pairs`, `dhcp_scope_sync_status`) and DNS replication (SOA serial vs `dns_zones.soa_serial`), records `server_health_history`, fires alerts. Exposed via `GET /api/infrastructure/failover`.
+- **IPAM↔DHCP sync** — `collector/ipamSync.js` reconciles discovered DHCP scopes into IPAM supernets/subnets.
+- **Dependencies** — beyond `nodemailer` (email): `pdfkit` (+ `@types/pdfkit`) for report generation.
 
 ### Smoke-test seed (exercise the UI without real data)
 - `psql -U ddivault_user -d ddivault -f scripts/seed-smoke-test.sql` — seeds clearly-labelled DEMO data (30d scope history + forecast, baselines, fingerprinted leases, a SENSITIVE IPAM subnet, varied anomalies, a site health score, an inactive demo recipient). Re-runnable; sends no email.
@@ -207,6 +221,11 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - Forecasts: `GET /api/forecasts/scopes`, `/api/forecasts/scopes/:id`, `/api/forecasts/summary`
 - Anomalies: `GET /api/anomalies`, `/api/anomalies/summary`, `POST /api/anomalies/:id/ack`
 - Site health: `GET /api/site-health`, `/api/site-health/:siteId`
+- Audit: `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, `/api/audit/export` (super-admin CSV)
+- API keys: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin)
+- Reports: `GET /api/reports`, `GET /api/reports/:type` (PDF/CSV)
+- Infrastructure: `GET /api/infrastructure/failover`
+- Public API v1: `/api/v1/*` (API-key authenticated — subnets, supernets, dns, scopes, leases, dhcp/reservations, search, audit, health, version)
 
 ## API Endpoints
 
@@ -434,7 +453,7 @@ Every new Express API route must be added to `frontend/next.config.js` rewrites 
 { source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
 ```
 
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
 
 ---
 
@@ -457,7 +476,7 @@ Every new Express API route must be added to `frontend/next.config.js` rewrites 
 { source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
 ```
 
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
 
 ---
 
@@ -475,7 +494,7 @@ cat > /tmp/fix.js << 'ENDOFFILE'
 ### Always add new routes to next.config.js
 Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
 
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search.
+Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
 
 ---
 
