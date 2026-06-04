@@ -11,6 +11,7 @@ DELETE FROM dhcp_scope_history WHERE scope_id IN (SELECT id FROM dhcp_scopes WHE
 DELETE FROM device_baselines   WHERE scope_id IN (SELECT id FROM dhcp_scopes WHERE server_id IN (SELECT id FROM ddi_servers WHERE hostname='DEMO-SMOKE-TEST'));
 DELETE FROM dhcp_leases        WHERE server_id IN (SELECT id FROM ddi_servers WHERE hostname='DEMO-SMOKE-TEST');
 DELETE FROM dhcp_scopes        WHERE server_id IN (SELECT id FROM ddi_servers WHERE hostname='DEMO-SMOKE-TEST');
+DELETE FROM alert_events WHERE server_id IN (SELECT id FROM ddi_servers WHERE hostname = 'DEMO-SMOKE-TEST');
 DELETE FROM ddi_servers        WHERE hostname='DEMO-SMOKE-TEST';
 DELETE FROM ipam_addresses     WHERE subnet_id IN (SELECT id FROM ipam_subnets WHERE site_id=9999);
 DELETE FROM ipam_subnets       WHERE site_id=9999;
