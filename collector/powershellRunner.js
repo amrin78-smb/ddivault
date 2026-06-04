@@ -211,6 +211,66 @@ function removeDhcpReservation(serverIp, scopeId, ipAddress, auth) {
   return !!(r && r.includes('ok'));
 }
 
+function createDhcpScope(serverIp, auth, scope) {
+  // scope = { name, startRange, endRange, subnetMask, description, leaseDuration, state }
+  const ip = cleanIp(serverIp);
+  const state = scope.state || 'Active';
+  const desc = (scope.description || '').replace(/'/g, "''");
+  const name = (scope.name || '').replace(/'/g, "''");
+  const duration = scope.leaseDuration || '8.00:00:00'; // 8 days default
+  const script = `Add-DhcpServerv4Scope -Name '${name}' -StartRange '${scope.startRange}' -EndRange '${scope.endRange}' -SubnetMask '${scope.subnetMask}' -Description '${desc}' -LeaseDuration '${duration}' -State '${state}' -PassThru | Select-Object ScopeId,Name,StartRange,EndRange,SubnetMask,State | ConvertTo-Json -Compress`;
+  return runPS(ip, script, auth);
+}
+
+function editDhcpScope(serverIp, auth, scopeId, changes) {
+  // changes = { name, description, leaseDuration, state }
+  const ip = cleanIp(serverIp);
+  const parts = [];
+  if (changes.name) parts.push(`-Name '${changes.name.replace(/'/g, "''")}'`);
+  if (changes.description !== undefined) parts.push(`-Description '${(changes.description||'').replace(/'/g, "''")}'`);
+  if (changes.leaseDuration) parts.push(`-LeaseDuration '${changes.leaseDuration}'`);
+  if (changes.state) parts.push(`-State '${changes.state}'`);
+  const script = `Set-DhcpServerv4Scope -ScopeId '${scopeId}' ${parts.join(' ')}; Write-Output 'ok'`;
+  return runPS(ip, script, auth, true);
+}
+
+function setScopeState(serverIp, auth, scopeId, state) {
+  const ip = cleanIp(serverIp);
+  const script = `Set-DhcpServerv4Scope -ScopeId '${scopeId}' -State '${state}'; Write-Output 'ok'`;
+  return runPS(ip, script, auth, true);
+}
+
+function deleteDhcpScope(serverIp, auth, scopeId) {
+  const ip = cleanIp(serverIp);
+  const script = `Remove-DhcpServerv4Scope -ScopeId '${scopeId}' -Force; Write-Output 'ok'`;
+  return runPS(ip, script, auth, true);
+}
+
+function getDhcpScopeOptions(serverIp, auth, scopeId) {
+  const ip = cleanIp(serverIp);
+  const script = `Get-DhcpServerv4OptionValue -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | Select-Object OptionId,Name,Value | ConvertTo-Json -Compress`;
+  return runPS(ip, script, auth);
+}
+
+function setDhcpScopeOption(serverIp, auth, scopeId, optionId, values) {
+  const ip = cleanIp(serverIp);
+  const vals = values.map(v => `'${v}'`).join(',');
+  const script = `Set-DhcpServerv4OptionValue -ScopeId '${scopeId}' -OptionId ${optionId} -Value ${vals}; Write-Output 'ok'`;
+  return runPS(ip, script, auth, true);
+}
+
+function getDhcpExclusions(serverIp, auth, scopeId) {
+  const ip = cleanIp(serverIp);
+  const script = `Get-DhcpServerv4ExclusionRange -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | Select-Object StartRange,EndRange | ConvertTo-Json -Compress`;
+  return runPS(ip, script, auth);
+}
+
+function addDhcpExclusion(serverIp, auth, scopeId, startRange, endRange) {
+  const ip = cleanIp(serverIp);
+  const script = `Add-DhcpServerv4ExclusionRange -ScopeId '${scopeId}' -StartRange '${startRange}' -EndRange '${endRange}'; Write-Output 'ok'`;
+  return runPS(ip, script, auth, true);
+}
+
 // ════════════════════════════════════════════════════════════
 // DNS — READ
 // ════════════════════════════════════════════════════════════
@@ -348,6 +408,14 @@ module.exports = {
   // DHCP write
   addDhcpReservation,
   removeDhcpReservation,
+  createDhcpScope,
+  editDhcpScope,
+  setScopeState,
+  deleteDhcpScope,
+  getDhcpScopeOptions,
+  setDhcpScopeOption,
+  getDhcpExclusions,
+  addDhcpExclusion,
   // DNS read
   getDnsZones,
   getDnsRecords,

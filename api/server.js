@@ -213,6 +213,274 @@ app.get('/api/scopes/:scopeId/leases', async (req, res) => {
   }
 });
 
+// ── DHCP Scope Management (write operations) ──────────────────
+// Helpers
+const okCheck = r => typeof r === 'string' && r.includes('ok');
+const scopeIdStr = v => v == null ? '' : (typeof v === 'object' ? String(v.IPAddressToString || v.Address || '') : String(v));
+
+async function getScopeRow(scopeId, serverId) {
+  const q = serverId
+    ? await db.query('SELECT * FROM dhcp_scopes WHERE scope_id=$1 AND server_id=$2 LIMIT 1', [scopeId, parseInt(serverId)])
+    : await db.query('SELECT * FROM dhcp_scopes WHERE scope_id=$1 LIMIT 1', [scopeId]);
+  return q.rows[0] || null;
+}
+
+// 1. Create a DHCP scope
+app.post('/api/scopes', requireWrite, async (req, res) => {
+  try {
+    const { server_id, name, startRange, endRange, subnetMask, description, leaseDuration, state, dnsServers, gateway, domainName } = req.body;
+    if (!server_id || !name || !startRange || !endRange || !subnetMask) {
+      return res.status(400).json({ error: 'server_id, name, startRange, endRange, subnetMask required' });
+    }
+
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const created = psWrite.createDhcpScope(ip, auth, { name, startRange, endRange, subnetMask, description, leaseDuration, state });
+    if (!created) {
+      return res.status(500).json({ error: 'Scope creation failed — check WinRM/DHCP role' });
+    }
+
+    let scopeId = scopeIdStr(created.ScopeId);
+    if (!scopeId) scopeId = scopeIdStr(created);
+    if (!scopeId) scopeId = String(startRange);
+
+    // Apply scope options (best-effort — failures don't fail the create)
+    if (dnsServers) {
+      try {
+        const dnsArray = String(dnsServers).split(',').map(s => s.trim()).filter(Boolean);
+        if (dnsArray.length) psWrite.setDhcpScopeOption(ip, auth, scopeId, 6, dnsArray);
+      } catch (e) { console.error('[API] scope option DNS error:', e.message); }
+    }
+    if (gateway) {
+      try { psWrite.setDhcpScopeOption(ip, auth, scopeId, 3, [gateway]); }
+      catch (e) { console.error('[API] scope option gateway error:', e.message); }
+    }
+    if (domainName) {
+      try { psWrite.setDhcpScopeOption(ip, auth, scopeId, 15, [domainName]); }
+      catch (e) { console.error('[API] scope option domain error:', e.message); }
+    }
+
+    const stateStr = state === 'InActive' ? 'InActive' : 'Active';
+    await db.query(
+      `INSERT INTO dhcp_scopes (server_id, scope_id, name, start_range, end_range, subnet_mask, state, lease_duration, total_ips, in_use, free, reserved, pending, percent_used, description, last_updated)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,0,0,0,0,$9,NOW())
+       ON CONFLICT (server_id, scope_id) DO UPDATE SET name=EXCLUDED.name, start_range=EXCLUDED.start_range, end_range=EXCLUDED.end_range, subnet_mask=EXCLUDED.subnet_mask, state=EXCLUDED.state, lease_duration=EXCLUDED.lease_duration, description=EXCLUDED.description, last_updated=NOW()`,
+      [parseInt(server_id), scopeId, name, startRange, endRange, subnetMask, stateStr, leaseDuration || null, description || null]
+    );
+
+    if (req.audit) req.audit({ action: 'create', entity_type: 'dhcp_scope', entity_name: name, server_id: parseInt(server_id), change_summary: `Created DHCP scope ${name} (${scopeId})` });
+
+    res.json({ success: true, data: { scope_id: scopeId, server_id: parseInt(server_id), name, start_range: startRange, end_range: endRange, subnet_mask: subnetMask, state: stateStr } });
+  } catch (err) {
+    console.error('[API] create scope error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 2. Edit a DHCP scope
+app.put('/api/scopes/:scopeId', requireWrite, async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const { server_id, name, description, leaseDuration, state } = req.body;
+
+    const scopeRow = await getScopeRow(scopeId, server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const result = psWrite.editDhcpScope(ip, auth, scopeId, { name, description, leaseDuration, state });
+    if (!okCheck(result)) {
+      return res.status(500).json({ error: 'Scope update failed — check WinRM/DHCP role' });
+    }
+
+    const sets = [];
+    const vals = [];
+    if (name !== undefined)          { vals.push(name);          sets.push(`name=$${vals.length}`); }
+    if (description !== undefined)    { vals.push(description);   sets.push(`description=$${vals.length}`); }
+    if (leaseDuration !== undefined) { vals.push(leaseDuration); sets.push(`lease_duration=$${vals.length}`); }
+    if (state !== undefined)         { vals.push(state);         sets.push(`state=$${vals.length}`); }
+    if (sets.length) {
+      sets.push('last_updated=NOW()');
+      vals.push(scopeRow.id);
+      await db.query(`UPDATE dhcp_scopes SET ${sets.join(', ')} WHERE id=$${vals.length}`, vals);
+    }
+
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'dhcp_scope', entity_name: name || scopeRow.name, server_id: scopeRow.server_id, change_summary: `Edited DHCP scope ${scopeId}` });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] edit scope error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 3. Set scope state (Active / InActive)
+app.patch('/api/scopes/:scopeId/state', requireWrite, async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const { state, server_id } = req.body;
+    if (state !== 'Active' && state !== 'InActive') {
+      return res.status(400).json({ error: "state must be 'Active' or 'InActive'" });
+    }
+
+    const scopeRow = await getScopeRow(scopeId, server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const result = psWrite.setScopeState(ip, auth, scopeId, state);
+    if (!okCheck(result)) {
+      return res.status(500).json({ error: 'Scope state change failed — check WinRM/DHCP role' });
+    }
+
+    await db.query('UPDATE dhcp_scopes SET state=$1, last_updated=NOW() WHERE id=$2', [state, scopeRow.id]);
+
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'dhcp_scope', entity_name: scopeRow.name, server_id: scopeRow.server_id, change_summary: `Set DHCP scope ${scopeId} state to ${state}` });
+
+    res.json({ success: true, state });
+  } catch (err) {
+    console.error('[API] scope state error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 4. Delete a DHCP scope
+app.delete('/api/scopes/:scopeId', requireWrite, async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const server_id = req.body.server_id || req.query.server_id;
+
+    const scopeRow = await getScopeRow(scopeId, server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const result = psWrite.deleteDhcpScope(ip, auth, scopeId);
+    if (!okCheck(result)) {
+      return res.status(500).json({ error: 'Scope deletion failed — check WinRM/DHCP role' });
+    }
+
+    await db.query('DELETE FROM dhcp_leases WHERE server_id=$1 AND scope_id=$2', [scopeRow.server_id, scopeId]);
+    await db.query('DELETE FROM dhcp_scopes WHERE id=$1', [scopeRow.id]);
+
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'dhcp_scope', entity_name: scopeRow.name, server_id: scopeRow.server_id, change_summary: `Deleted DHCP scope ${scopeId}` });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] delete scope error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 5. Get scope options (read)
+app.get('/api/scopes/:scopeId/options', async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const scopeRow = await getScopeRow(scopeId, req.query.server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const opts = psWrite.getDhcpScopeOptions(ip, auth, scopeId);
+    res.json({ data: Array.isArray(opts) ? opts : (opts ? [opts] : []) });
+  } catch (err) {
+    console.error('[API] scope options get error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 6. Set a scope option
+app.post('/api/scopes/:scopeId/options', requireWrite, async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const { optionId, values, server_id } = req.body;
+    if (optionId === undefined || optionId === null || isNaN(parseInt(optionId))) {
+      return res.status(400).json({ error: 'optionId (number) required' });
+    }
+    if (!Array.isArray(values) || values.length === 0) {
+      return res.status(400).json({ error: 'values must be a non-empty array' });
+    }
+
+    const scopeRow = await getScopeRow(scopeId, server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const result = psWrite.setDhcpScopeOption(ip, auth, scopeId, parseInt(optionId), values);
+    if (!okCheck(result)) {
+      return res.status(500).json({ error: 'Setting scope option failed — check WinRM/DHCP role' });
+    }
+
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'dhcp_scope', entity_name: scopeRow.name, server_id: scopeRow.server_id, change_summary: `Set option ${optionId} on DHCP scope ${scopeId}` });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] set scope option error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 7. Get scope exclusions (read)
+app.get('/api/scopes/:scopeId/exclusions', async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const scopeRow = await getScopeRow(scopeId, req.query.server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const ex = psWrite.getDhcpExclusions(ip, auth, scopeId);
+    res.json({ data: Array.isArray(ex) ? ex : (ex ? [ex] : []) });
+  } catch (err) {
+    console.error('[API] scope exclusions get error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 8. Add a scope exclusion
+app.post('/api/scopes/:scopeId/exclusions', requireWrite, async (req, res) => {
+  try {
+    const { scopeId } = req.params;
+    const { startRange, endRange, server_id } = req.body;
+    if (!startRange || !endRange) {
+      return res.status(400).json({ error: 'startRange and endRange required' });
+    }
+
+    const scopeRow = await getScopeRow(scopeId, server_id);
+    if (!scopeRow) return res.status(404).json({ error: 'Scope not found' });
+
+    const serverData = await getServerWithAuth(scopeRow.server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    const { ip, auth } = serverData;
+
+    const result = psWrite.addDhcpExclusion(ip, auth, scopeId, startRange, endRange);
+    if (!okCheck(result)) {
+      return res.status(500).json({ error: 'Adding exclusion failed — check WinRM/DHCP role' });
+    }
+
+    if (req.audit) req.audit({ action: 'create', entity_type: 'dhcp_scope', entity_name: scopeRow.name, server_id: scopeRow.server_id, change_summary: `Added exclusion ${startRange}-${endRange} on DHCP scope ${scopeId}` });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] add exclusion error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── Leases ────────────────────────────────────────────────────
 app.get('/api/leases', async (req, res) => {
   try {
