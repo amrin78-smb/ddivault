@@ -45,6 +45,10 @@ const lastLogEventTime = {};
 function log(msg)  { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`); }
 
+// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PowerShell remoting functions reject — strip it before any PS use.
+const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
+
 function isValidIp(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
@@ -128,7 +132,7 @@ async function updateServerStatus(serverId, status, errorMsg) {
 
 async function collectScopeStats(server) {
   if (server.role === 'dns') return;
-  const ip   = server.ip_address;
+  const ip   = cleanIp(server.ip_address);
   const auth = serverAuth(server);
   log(`[Scopes] Polling ${ip} (id=${server.id}, mode=${auth.auth_mode})...`);
 
@@ -218,7 +222,7 @@ async function collectScopeStats(server) {
 
 async function syncLeases(server) {
   if (server.role === 'dns') return;
-  const ip   = server.ip_address;
+  const ip   = cleanIp(server.ip_address);
   const auth = serverAuth(server);
   log(`[Leases] Syncing from ${ip}...`);
 
@@ -261,7 +265,7 @@ async function syncLeases(server) {
 async function tailDhcpLog(server) {
   if (server.role === 'dns') return;
   const serverId = server.id;
-  const ip       = server.ip_address;
+  const ip       = cleanIp(server.ip_address);
 
   const uncBase   = (process.env.DHCP_LOG_UNC   || '').trim();
   const localBase = (process.env.DHCP_LOG_LOCAL  || '').trim();
@@ -323,7 +327,7 @@ async function tailDhcpLog(server) {
 
 async function syncDns(server) {
   if (server.role === 'dhcp') return;
-  const ip   = server.ip_address;
+  const ip   = cleanIp(server.ip_address);
   const auth = serverAuth(server);
   log(`[DNS] Syncing zones from ${ip}...`);
 

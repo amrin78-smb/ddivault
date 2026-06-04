@@ -14,6 +14,10 @@
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`); }
 
+// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PowerShell remoting functions reject — strip it before any PS use.
+const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
+
 /** Insert an alert only if an equivalent one hasn't fired in the last hour. */
 async function fireAlertDeduped(db, { serverId, scopeId, message, severity }) {
   const recent = await db.query(
@@ -29,7 +33,7 @@ async function fireAlertDeduped(db, { serverId, scopeId, message, severity }) {
 // ── DHCP Failover ─────────────────────────────────────────────
 async function pollFailover(db, ps, server, auth) {
   if (server.role === 'dns') return;
-  const ip = server.ip_address;
+  const ip = cleanIp(server.ip_address);
   let pairs;
   try { pairs = ps.getDhcpFailover(ip, auth); }
   catch (err) { warn(`[Failover] ${ip}: ${err.message}`); return; }
@@ -76,7 +80,7 @@ async function pollFailover(db, ps, server, auth) {
 // ── DNS SOA / replication lag ─────────────────────────────────
 async function pollDnsSoa(db, ps, server, auth) {
   if (server.role === 'dhcp') return;
-  const ip = server.ip_address;
+  const ip = cleanIp(server.ip_address);
   const zones = await db.query(
     `SELECT id, zone_name FROM dns_zones WHERE server_id=$1 AND is_reverse=FALSE`, [server.id]).catch(() => ({ rows: [] }));
   let checked = 0;
@@ -110,7 +114,7 @@ async function pollDnsSoa(db, ps, server, auth) {
 
 // ── Per-server health score ───────────────────────────────────
 async function pollHealth(db, ps, server, auth) {
-  const ip = server.ip_address;
+  const ip = cleanIp(server.ip_address);
   let score = 100;
   const isDns = server.role !== 'dhcp';
 

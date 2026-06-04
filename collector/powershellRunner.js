@@ -33,7 +33,10 @@ const DEFAULT_PASSWORD  = process.env.PS_PASSWORD  || '';
  * @returns {string|object|null}
  */
 function runPS(serverIp, script, auth, returnRaw) {
-  if (!serverIp) {
+  // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which
+  // Invoke-Command -ComputerName rejects. Strip it before any remote use.
+  const cleanIp = (serverIp || '').replace(/\/\d+$/, '').trim();
+  if (!cleanIp) {
     console.warn('[PS] No server IP provided');
     return null;
   }
@@ -55,7 +58,7 @@ function runPS(serverIp, script, auth, returnRaw) {
 
   } else if (mode === 'credential') {
     if (!user || !pass) {
-      console.error(`[PS] credential mode requires ps_username and ps_password for ${serverIp}`);
+      console.error(`[PS] credential mode requires ps_username and ps_password for ${cleanIp}`);
       return null;
     }
     const safePass = pass.replace(/'/g, "''");
@@ -66,7 +69,7 @@ function runPS(serverIp, script, auth, returnRaw) {
       `$secPass = ConvertTo-SecureString '${safePass}' -AsPlainText -Force; ` +
       `$cred = New-Object System.Management.Automation.PSCredential('${safeUser}', $secPass); ` +
       `try { ` +
-        `Invoke-Command -ComputerName '${serverIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
+        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
       `} catch { Write-Error $_.Exception.Message; exit 1 }" `;
 
   } else {
@@ -75,7 +78,7 @@ function runPS(serverIp, script, auth, returnRaw) {
     const httpsOpt = useHttps ? ' -UseSSL' : '';
     psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +
       `try { ` +
-        `Invoke-Command -ComputerName '${serverIp}'${portOpt}${httpsOpt} -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
+        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
       `} catch { Write-Error $_.Exception.Message; exit 1 }"`;
   }
 
@@ -86,7 +89,7 @@ function runPS(serverIp, script, auth, returnRaw) {
     return JSON.parse(raw);
   } catch (err) {
     const msg = (err.stderr || err.stdout || err.message || '').trim().slice(0, 400);
-    console.error(`[PS] Command failed on ${serverIp} (mode=${mode}):`, msg);
+    console.error(`[PS] Command failed on ${cleanIp} (mode=${mode}):`, msg);
     return null;
   }
 }
@@ -107,16 +110,44 @@ function runLocalPS(script) {
 }
 
 /**
+ * Add an IP to WinRM TrustedHosts if not already present.
+ * Runs locally — never remote. Safe to call multiple times.
+ */
+function addToTrustedHosts(ip) {
+  const cleanIp = (ip || '').replace(/\/\d+$/, '').trim();
+  if (!cleanIp) return;
+  const script = `
+$current = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts -ErrorAction SilentlyContinue).Value
+$ips = if ($current) { $current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } } else { @() }
+if ($ips -notcontains '${cleanIp}') {
+    $newList = ($ips + '${cleanIp}') -join ','
+    Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newList -Force
+    Write-Output 'added'
+} else {
+    Write-Output 'exists'
+}
+`;
+  try {
+    const result = runLocalPS(script);
+    console.log(`[TrustedHosts] ${cleanIp}: ${result || 'failed'}`);
+    return result;
+  } catch (err) {
+    console.error(`[TrustedHosts] Failed to add ${cleanIp}:`, err.message);
+  }
+}
+
+/**
  * Test WinRM connectivity to a server.
  * @param {string} serverIp
  * @param {object} auth
  * @returns {{ ok: boolean, error: string|null, latencyMs: number|null }}
  */
 function testWinRM(serverIp, auth) {
-  if (!serverIp) return { ok: false, error: 'No server IP', latencyMs: null };
+  const cleanIp = (serverIp || '').replace(/\/\d+$/, '').trim();
+  if (!cleanIp) return { ok: false, error: 'No server IP', latencyMs: null };
   const start = Date.now();
   try {
-    const result = runPS(serverIp, `Write-Output 'winrm-ok'`, auth, true);
+    const result = runPS(cleanIp, `Write-Output 'winrm-ok'`, auth, true);
     const latencyMs = Date.now() - start;
     if (result && result.includes('winrm-ok')) {
       return { ok: true, error: null, latencyMs };
@@ -313,6 +344,7 @@ module.exports = {
   runPS,
   runLocalPS,
   testWinRM,
+  addToTrustedHosts,
   // HA / health
   getDhcpFailover,
   getDhcpFailoverScopeState,

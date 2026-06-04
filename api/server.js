@@ -666,6 +666,12 @@ app.post('/api/servers', requireWrite, async (req, res) => {
       ]
     );
     if (req.audit) req.audit({ action: 'create', entity_type: 'server', entity_id: result.rows[0].id, entity_name: hostname || ip_address, server_id: result.rows[0].id, new_value: { hostname, ip_address, role, auth_mode } });
+
+    // Fire and forget — add the new server IP to WinRM TrustedHosts so stored-credential
+    // auth can connect. Don't block the response.
+    const { addToTrustedHosts } = require('../collector/powershellRunner');
+    setImmediate(() => addToTrustedHosts(ip_address));
+
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('[API] server create error:', err.message);
@@ -738,6 +744,9 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
+
+    // Add to TrustedHosts before testing — ensures the test can succeed for stored creds.
+    psWrite.addToTrustedHosts(ip);
 
     console.log(`[API] Testing WinRM connection to ${ip} (mode=${auth.auth_mode})...`);
     const result = psWrite.testWinRM(ip, auth);
@@ -2105,6 +2114,21 @@ app.use((err, req, res, _next) => {
   console.error('[API Error]', err.message, err.stack);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+// ── Sync all active server IPs to WinRM TrustedHosts on startup ───
+async function syncTrustedHosts() {
+  try {
+    const { addToTrustedHosts } = require('../collector/powershellRunner');
+    const result = await db.query('SELECT ip_address::text FROM ddi_servers WHERE is_active = TRUE');
+    for (const row of result.rows) {
+      if (row.ip_address) addToTrustedHosts(row.ip_address);
+    }
+    console.log(`[TrustedHosts] Synced ${result.rows.length} server IPs on startup`);
+  } catch (err) {
+    console.error('[TrustedHosts] Startup sync failed:', err.message);
+  }
+}
+syncTrustedHosts();
 
 // ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {
