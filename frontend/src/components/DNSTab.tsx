@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import {
   PageHeader, EmptyState, TableSkeleton, Skeleton,
   useRefreshKey, useEscape,
@@ -311,7 +312,9 @@ function ServerPill({ server, active, onClick }: {
 function ZoneRow({ zone, selected, onSelect, onDelete }: {
   zone: DnsZone; selected: boolean; onSelect: () => void; onDelete: () => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   return (
     <div
       onClick={onSelect}
@@ -371,7 +374,9 @@ export default function DNSTab() {
   const [loadingRecords, setLoadingRecords] = useState(false);
 
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   // global search is active when the toolbar search box has text
   const globalSearch = recordSearch.trim().length > 0;

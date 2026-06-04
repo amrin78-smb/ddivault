@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import IPAMImport from '@/components/IPAMImport';
 import {
   PageHeader, EmptyState, Skeleton, TableSkeleton, Breadcrumb,
@@ -518,7 +519,9 @@ function ReserveModal({ ip, onClose, onConfirm }: {
 function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
   subnet: Subnet; sites: Site[]; onView: () => void; onScan: () => void; onDelete: () => void; onEdit: () => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
   const used    = subnet.used_hosts || 0;
   const unknown = subnet.unknown_hosts || 0;
@@ -571,7 +574,9 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
   const [scanning, setScanning]   = useState(false);
   const [reserveIp, setReserveIp] = useState<string | null>(null);
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   useEscape(onClose);
 
   const load = useCallback(async () => {
@@ -784,7 +789,9 @@ type SortKey = 'network' | 'name' | 'used' | 'unknown' | 'util';
 
 export default function IPAMTab() {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const [supernets, setSupernets] = useState<Supernet[]>([]);
   const [subnets, setSubnets]     = useState<Subnet[]>([]);
@@ -1090,7 +1097,9 @@ function TreeView({
   prefixSel: Record<number, number>; setPrefixSel: (f: (p: Record<number, number>) => Record<number, number>) => void;
   nextSubnetResult: Record<number, string>; onFindNextSubnet: (sn: Supernet) => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   const CARD: React.CSSProperties = {
     background: 'var(--bg-card)', border: '1px solid var(--border)',
     borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden',
@@ -1195,7 +1204,9 @@ function ipToNum(ip: string): number {
 function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
   subnets: Subnet[]; sites: Site[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void; onEdit: (s: Subnet) => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   const [sortKey, setSortKey] = useState<SortKey>('network');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -1295,7 +1306,9 @@ function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
 function VlanView({ vlans, subnets, onAdd, onDelete }: {
   vlans: Vlan[]; subnets: Subnet[]; onAdd: () => void; onDelete: (id: number) => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
       <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>

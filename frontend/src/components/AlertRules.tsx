@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey } from '@/components/ui';
 
 // ════════════════════════════════════════════════════════════
@@ -65,7 +66,9 @@ function ruleDesc(t: string): string { return RULE_INFO[t]?.desc || ''; }
 // ════════════════════════════════════════════════════════════
 export default function AlertRules() {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [loading, setLoading] = useState(true);

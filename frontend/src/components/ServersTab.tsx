@@ -6,6 +6,7 @@ import {
   PageHeader, EmptyState, CardSkeleton, Spinner, useRefreshKey, useEscape,
 } from '@/components/ui';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -316,7 +317,9 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
   onEdit: (s: Server) => void;
   onDelete: (id: number) => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   const aColor = authColor(s.auth_mode);
   const ok = s.winrm_test_ok;
 
@@ -444,7 +447,9 @@ export default function ServersTab() {
   const [testing, setTesting] = useState<Record<number, boolean>>({});
   const [testResults, setTestResults] = useState<Record<number, TestResult>>({});
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const load = useCallback(async () => {
     const [d, s] = await Promise.allSettled([api('/servers'), api('/sites')]);

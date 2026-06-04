@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Skeleton, useRefreshKey } from '@/components/ui';
 
 // ════════════════════════════════════════════════════════════
@@ -98,7 +99,9 @@ function SeverityBadge({ severity }: { severity: string }) {
 // ════════════════════════════════════════════════════════════
 export default function IntelligenceTab() {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const [summary, setSummary] = useState<Summary | null>(null);
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);

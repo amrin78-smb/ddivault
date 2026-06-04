@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import {
   PageHeader, EmptyState, TableSkeleton, UtilBar, Spinner,
   pctColor, useRefreshKey, useEscape,
@@ -757,7 +758,9 @@ function ScopeDetail({ scope }: { scope: Scope }) {
 // ════════════════════════════════════════════════════════════
 export default function DHCPTab({ focusScope }: { focusScope?: string | null }) {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   // Scopes state
   const [scopes, setScopes]       = useState<Scope[]>([]);
@@ -1349,7 +1352,9 @@ function ScopeRow({
   onLeaseSearch: (v: string) => void;
   onReserveLease: (l: Lease) => void;
 }) {
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
   const stateActive = scope.state === 'Active';
   return (
     <>

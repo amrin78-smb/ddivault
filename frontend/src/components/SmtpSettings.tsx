@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, Spinner, useRefreshKey } from '@/components/ui';
 
 // ════════════════════════════════════════════════════════════
@@ -62,7 +63,9 @@ const EMPTY: SmtpConfig = {
 // ════════════════════════════════════════════════════════════
 export default function SmtpSettings() {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const [form, setForm] = useState<SmtpConfig>(EMPTY);
   const [passwordSet, setPasswordSet] = useState(false);

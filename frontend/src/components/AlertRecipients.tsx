@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
+import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey, useEscape } from '@/components/ui';
 
 // ════════════════════════════════════════════════════════════
@@ -160,7 +161,9 @@ function RecipientModal({ sites, onClose, onDone }: {
 // ════════════════════════════════════════════════════════════
 export default function AlertRecipients() {
   const { toast } = useToast();
-  const { canWrite } = useRBAC();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
 
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
