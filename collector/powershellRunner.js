@@ -183,10 +183,11 @@ function getDhcpLeases(serverIp, auth) {
   return Array.isArray(r) ? r : [r];
 }
 
+// scopeId optional — when null/omitted, returns reservations across ALL scopes.
 function getDhcpReservations(serverIp, scopeId, auth) {
   const script = scopeId
-    ? `Get-DhcpServerv4Reservation -ScopeId '${scopeId}' | Select-Object ScopeId,IPAddress,ClientId,Name,Description | ConvertTo-Json -Depth 5 -Compress`
-    : `Get-DhcpServerv4Scope | ForEach-Object { Get-DhcpServerv4Reservation -ScopeId $_.ScopeId -ErrorAction SilentlyContinue } | Select-Object ScopeId,IPAddress,ClientId,Name,Description | ConvertTo-Json -Depth 5 -Compress`;
+    ? `Get-DhcpServerv4Reservation -ScopeId '${scopeId}' | Select-Object ScopeId,IPAddress,ClientId,Name,Description,Type | ConvertTo-Json -Depth 5 -Compress`
+    : `$scopes = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId; $all = foreach ($s in $scopes) { Get-DhcpServerv4Reservation -ScopeId $s -ErrorAction SilentlyContinue | Select-Object ScopeId,IPAddress,ClientId,Name,Description,Type }; $all | ConvertTo-Json -Depth 5 -Compress`;
   const r = runPS(serverIp, script, auth);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];

@@ -286,6 +286,43 @@ async function syncLeases(server) {
   log(`[Leases] ${ip} — synced ${upserted} leases`);
 }
 
+// Reservations are fetched separately from leases (Get-DhcpServerv4Reservation),
+// then stored in dhcp_leases with address_state='Reservation' so the Reservations
+// tab (which queries /api/leases?state=Reservation) can display them.
+async function syncReservations(server) {
+  if (server.role === 'dns') return;
+  const ip   = cleanIp(server.ip_address);
+  const auth = serverAuth(server);
+  try {
+    const reservations = ps.getDhcpReservations(ip, null, auth);
+    if (!reservations || !reservations.length) return;
+    let upserted = 0;
+    for (const r of reservations) {
+      const scopeId = scopeIdStr(r.ScopeId);
+      const ipAddr  = scopeIdStr(r.IPAddress);
+      const mac     = String(r.ClientId || '').trim().toLowerCase().replace(/-/g, ':');
+      const name    = String(r.Name || '').trim() || null;
+      if (!scopeId || !ipAddr) continue;
+      await db.query(
+        `INSERT INTO dhcp_leases
+           (server_id, scope_id, ip_address, hostname, mac_address, address_state, last_seen)
+         VALUES ($1,$2,$3::inet,$4,$5,'Reservation',NOW())
+         ON CONFLICT (server_id, ip_address) DO UPDATE SET
+           scope_id      = EXCLUDED.scope_id,
+           hostname      = COALESCE(EXCLUDED.hostname, dhcp_leases.hostname),
+           mac_address   = COALESCE(EXCLUDED.mac_address, dhcp_leases.mac_address),
+           address_state = 'Reservation',
+           last_seen     = NOW()`,
+        [server.id, scopeId, ipAddr, name, mac]
+      );
+      upserted++;
+    }
+    log(`[Reservations] ${ip} — synced ${upserted} reservation(s)`);
+  } catch (err) {
+    console.error(`[Reservations] Error on ${ip}:`, err.message);
+  }
+}
+
 async function tailDhcpLog(server) {
   if (server.role === 'dns') return;
   const serverId = server.id;
@@ -430,14 +467,16 @@ async function main() {
   await pollAll(tailDhcpLog,       'Log');
   await pollAll(collectScopeStats, 'Scopes');
   await pollAll(syncLeases,        'Leases');
+  await pollAll(syncReservations,  'Reservations');
   await pollAll(syncDns,           'DNS');
   await pollAll(pollFailover,      'Failover');
   await pollAll(pollHealth,        'Health');
 
-  setInterval(() => pollAll(tailDhcpLog,       'Log'),      INTERVAL_LOG_TAIL);
-  setInterval(() => pollAll(collectScopeStats, 'Scopes'),   INTERVAL_SCOPE_STATS);
-  setInterval(() => pollAll(syncLeases,        'Leases'),   INTERVAL_LEASE_SYNC);
-  setInterval(() => pollAll(syncDns,           'DNS'),      INTERVAL_DNS_SYNC);
+  setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
+  setInterval(() => pollAll(collectScopeStats, 'Scopes'),       INTERVAL_SCOPE_STATS);
+  setInterval(() => pollAll(syncLeases,        'Leases'),       INTERVAL_LEASE_SYNC);
+  setInterval(() => pollAll(syncReservations,  'Reservations'), INTERVAL_LEASE_SYNC);
+  setInterval(() => pollAll(syncDns,           'DNS'),          INTERVAL_DNS_SYNC);
   setInterval(() => pollAll(pollFailover,      'Failover'), INTERVAL_FAILOVER);
   setInterval(() => pollAll(pollDnsSoa,        'DNS-SOA'),  INTERVAL_SOA_SYNC);
   setInterval(() => pollAll(pollHealth,        'Health'),   INTERVAL_HEALTH);
