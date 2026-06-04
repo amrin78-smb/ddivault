@@ -81,26 +81,39 @@ async function syncScopesToIpam(db, scopes, opts = {}) {
           [existing.rows[0].id, sc.name || null]
         );
         updated++;
-        continue;
+      } else {
+        // New subnet — resolve gateway (DHCP option 3) lazily, only for new rows.
+        let gateway = null;
+        if (getGateway) {
+          try { const g = await getGateway(network); if (isIpv4(g)) gateway = g; } catch (_) {}
+        }
+
+        await db.query(
+          `INSERT INTO ipam_subnets
+             (network, prefix_length, name, gateway, supernet_id, description, is_managed)
+           VALUES ($1, $2, $3, $4, $5, 'Auto-synced from DHCP scope', true)
+           ON CONFLICT (network, prefix_length) DO UPDATE SET
+             name = COALESCE(EXCLUDED.name, ipam_subnets.name),
+             is_managed = true`,
+          [network, prefix, sc.name || `${network}/${prefix}`, gateway, supernetId]
+        );
+        created++;
+        log(`[IPAM Sync] Created subnet ${network}/${prefix} → supernet ${sup.network}/${sup.prefix}`);
       }
 
-      // New subnet — resolve gateway (DHCP option 3) lazily, only for new rows.
-      let gateway = null;
-      if (getGateway) {
-        try { const g = await getGateway(network); if (isIpv4(g)) gateway = g; } catch (_) {}
-      }
-
-      await db.query(
-        `INSERT INTO ipam_subnets
-           (network, prefix_length, name, gateway, supernet_id, description, is_managed)
-         VALUES ($1, $2, $3, $4, $5, 'Auto-synced from DHCP scope', true)
-         ON CONFLICT (network, prefix_length) DO UPDATE SET
-           name = COALESCE(EXCLUDED.name, ipam_subnets.name),
-           is_managed = true`,
-        [network, prefix, sc.name || `${network}/${prefix}`, gateway, supernetId]
+      // Sync utilization from the matching DHCP scope (scope_id == network address).
+      const scope = await db.query(
+        `SELECT in_use, free, total_ips, percent_used FROM dhcp_scopes WHERE scope_id = $1 LIMIT 1`,
+        [network]
       );
-      created++;
-      log(`[IPAM Sync] Created subnet ${network}/${prefix} → supernet ${sup.network}/${sup.prefix}`);
+      if (scope.rows.length) {
+        const s = scope.rows[0];
+        await db.query(
+          `UPDATE ipam_subnets SET used_hosts = $1, free_hosts = $2, total_hosts = $3, updated_at = NOW()
+           WHERE network = $4::inet AND prefix_length = $5`,
+          [s.in_use, s.free, s.total_ips, network, prefix]
+        );
+      }
     } catch (err) {
       log(`[IPAM Sync] Error on scope ${sc && sc.scopeId}: ${err.message}`);
     }

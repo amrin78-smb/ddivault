@@ -234,6 +234,17 @@ async function collectScopeStats(server) {
       );
     }
 
+    // Sync utilization to the matching IPAM subnet if it exists (best-effort, silent).
+    const _mask = scopeIdStr(cfg.SubnetMask);
+    const prefixLength = _mask ? ipamSync.maskToPrefixLength(_mask) : 0;
+    if (prefixLength >= 1 && prefixLength <= 32) {
+      await db.query(
+        `UPDATE ipam_subnets SET used_hosts = $1, free_hosts = $2, total_hosts = $3, updated_at = NOW()
+         WHERE network = $4::inet AND prefix_length = $5`,
+        [inUse, free, total, scopeId, prefixLength]
+      ).catch(() => {}); // silent — subnet may not exist yet
+    }
+
     if (pct >= 100) {
       alertsToFire.push({ scopeId, pct, severity:'critical', msg:`[${ip}] Scope ${scopeId} is 100% FULL (${inUse}/${total} IPs)` });
     } else if (pct >= SCOPE_CRITICAL_PCT) {

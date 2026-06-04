@@ -19,6 +19,7 @@ interface Supernet {
   name: string;
   description: string;
   site: string;
+  site_id?: number | null;
   subnet_count: number;
   total_hosts: number;
   used_hosts: number;
@@ -34,6 +35,7 @@ interface Subnet {
   gateway: string;
   vlan_id: number;
   site: string;
+  site_id?: number | null;
   owner: string;
   supernet_id: number;
   supernet_name: string;
@@ -165,6 +167,19 @@ function SiteSelect({ value, onChange, sites }: { value: string; onChange: (v: s
       <option value="">— No site —</option>
       {sites.map(s => (
         <option key={s.id} value={s.name}>
+          {s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function SiteIdSelect({ value, onChange, sites }: { value: string; onChange: (v: string) => void; sites: Site[] }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} style={INPUT}>
+      <option value="">— No site —</option>
+      {sites.map(s => (
+        <option key={s.id} value={String(s.id)}>
           {s.name}{s.code ? ` (${s.code})` : ''}{s.city ? ` · ${s.city}` : ''}
         </option>
       ))}
@@ -327,6 +342,88 @@ function AddVlanModal({ sites, onClose, onSaved }: { sites: Site[]; onClose: () 
   );
 }
 
+function EditSupernetModal({ supernet, sites, onClose, onSaved }: {
+  supernet: Supernet; sites: Site[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    name: supernet.name || '',
+    description: supernet.description || '',
+    site_id: supernet.site_id != null ? String(supernet.site_id) : '',
+  });
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(`/ipam/supernets/${supernet.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name, description: form.description, site_id: form.site_id || null }),
+      });
+      toast('Supernet updated', 'success');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message || 'Update failed', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell title={`Edit ${supernet.network}/${supernet.prefix_length}`} subtitle="Update supernet details and site assignment" onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} /></Field>
+        <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
+        <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
+      </div>
+      <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Save Changes" busy={busy} />
+    </ModalShell>
+  );
+}
+
+function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
+  subnet: Subnet; sites: Site[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    name: subnet.name || '',
+    description: subnet.description || '',
+    gateway: subnet.gateway || '',
+    vlan_id: subnet.vlan_id ? String(subnet.vlan_id) : '',
+    site_id: subnet.site_id != null ? String(subnet.site_id) : '',
+  });
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(`/ipam/subnets/${subnet.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name, description: form.description,
+          site_id: form.site_id || null, gateway: form.gateway || null,
+          vlan_id: form.vlan_id || null,
+        }),
+      });
+      toast('Subnet updated', 'success');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message || 'Update failed', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <ModalShell title={`Edit ${subnet.network}/${subnet.prefix_length}`} subtitle="Update subnet details and site assignment" width={620} onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Name"><input value={form.name} onChange={e => set('name', e.target.value)} style={INPUT} /></Field>
+        <Field label="Gateway IP"><input value={form.gateway} onChange={e => set('gateway', e.target.value)} style={INPUT} placeholder="192.168.1.1" /></Field>
+        <Field label="VLAN ID"><input value={form.vlan_id} onChange={e => set('vlan_id', e.target.value)} style={INPUT} /></Field>
+        <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
+        <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
+      </div>
+      <ModalFooter onCancel={onClose} onConfirm={save} confirmLabel="Save Changes" busy={busy} />
+    </ModalShell>
+  );
+}
+
 function ReserveModal({ ip, onClose, onConfirm }: {
   ip: string; onClose: () => void; onConfirm: (description: string, owner: string) => Promise<void>;
 }) {
@@ -353,8 +450,8 @@ function ReserveModal({ ip, onClose, onConfirm }: {
 // ════════════════════════════════════════════════════════════
 // Tree subnet row (module scope)
 // ════════════════════════════════════════════════════════════
-function SubnetRow({ subnet, onView, onScan, onDelete }: {
-  subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void;
+function SubnetRow({ subnet, onView, onScan, onDelete, onEdit }: {
+  subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void; onEdit: () => void;
 }) {
   const { canWrite } = useRBAC();
   const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
@@ -387,6 +484,7 @@ function SubnetRow({ subnet, onView, onScan, onDelete }: {
       {canWrite && (
         <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
           <button onClick={onScan} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+          <button onClick={onEdit} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
           <button onClick={onDelete} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
         </div>
       )}
@@ -630,6 +728,8 @@ export default function IPAMTab() {
   const [showAddVlan, setAddVlan]         = useState(false);
   const [addSubnetFor, setAddSubnetFor]   = useState<number | null>(null);  // supernet id (null = unassigned/any)
   const [showAddSubnet, setShowAddSubnet] = useState(false);
+  const [editSupernet, setEditSupernet]   = useState<Supernet | null>(null);
+  const [editSubnet, setEditSubnet]       = useState<Subnet | null>(null);
 
   const [nextSubnetResult, setNextSubnetResult] = useState<Record<number, string>>({});
   const [prefixSel, setPrefixSel] = useState<Record<number, number>>({});
@@ -882,11 +982,12 @@ export default function IPAMTab() {
           expanded={expanded} onToggle={toggleExpanded}
           onViewSubnet={setSelectedSubnet} onScanSubnet={scanSubnet} onDeleteSubnet={deleteSubnet}
           onAddSubnet={openAddSubnet} onDeleteSupernet={deleteSupernet}
+          onEditSupernet={setEditSupernet} onEditSubnet={setEditSubnet}
           prefixSel={prefixSel} setPrefixSel={setPrefixSel}
           nextSubnetResult={nextSubnetResult} onFindNextSubnet={findNextSubnet}
         />
       ) : view === 'flat' ? (
-        <FlatView subnets={subnets} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} />
+        <FlatView subnets={subnets} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} onEdit={setEditSubnet} />
       ) : (
         <VlanView vlans={vlans} subnets={subnets} onAdd={() => setAddVlan(true)} onDelete={deleteVlan} />
       )}
@@ -901,6 +1002,8 @@ export default function IPAMTab() {
         />
       )}
       {showAddVlan && <AddVlanModal sites={sites} onClose={() => setAddVlan(false)} onSaved={loadAll} />}
+      {editSupernet && <EditSupernetModal supernet={editSupernet} sites={sites} onClose={() => setEditSupernet(null)} onSaved={loadAll} />}
+      {editSubnet && <EditSubnetModal subnet={editSubnet} sites={sites} onClose={() => setEditSubnet(null)} onSaved={loadAll} />}
     </div>
   );
 }
@@ -911,12 +1014,14 @@ export default function IPAMTab() {
 function TreeView({
   supernets, subnets, orphanSubnets, expanded, onToggle,
   onViewSubnet, onScanSubnet, onDeleteSubnet, onAddSubnet, onDeleteSupernet,
+  onEditSupernet, onEditSubnet,
   prefixSel, setPrefixSel, nextSubnetResult, onFindNextSubnet,
 }: {
   supernets: Supernet[]; subnets: Subnet[]; orphanSubnets: Subnet[];
   expanded: Set<number>; onToggle: (id: number) => void;
   onViewSubnet: (s: Subnet) => void; onScanSubnet: (s: Subnet) => void; onDeleteSubnet: (id: number) => void;
   onAddSubnet: (supernetId: number | null) => void; onDeleteSupernet: (id: number) => void;
+  onEditSupernet: (sn: Supernet) => void; onEditSubnet: (s: Subnet) => void;
   prefixSel: Record<number, number>; setPrefixSel: (f: (p: Record<number, number>) => Record<number, number>) => void;
   nextSubnetResult: Record<number, string>; onFindNextSubnet: (sn: Supernet) => void;
 }) {
@@ -978,13 +1083,14 @@ function TreeView({
                 {nextSubnetResult[sn.id] && (
                   <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
                 )}
+                {canWrite && <button onClick={() => onEditSupernet(sn)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>}
                 {canWrite && <button onClick={() => onDeleteSupernet(sn.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
               </div>
             </div>
 
             {/* Children */}
             {isOpen && children.map(sub => (
-              <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} />
+              <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
             ))}
             {isOpen && children.length === 0 && (
               <div style={{ padding: '16px 48px', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -1003,7 +1109,7 @@ function TreeView({
             Unassigned Subnets <span style={{ fontWeight: 400 }}>({orphanSubnets.length})</span>
           </div>
           {orphanSubnets.map(sub => (
-            <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} />
+            <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
           ))}
         </div>
       )}
@@ -1020,8 +1126,8 @@ function ipToNum(ip: string): number {
   return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
 }
 
-function FlatView({ subnets, onView, onScan, onDelete }: {
-  subnets: Subnet[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void;
+function FlatView({ subnets, onView, onScan, onDelete, onEdit }: {
+  subnets: Subnet[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void; onEdit: (s: Subnet) => void;
 }) {
   const { canWrite } = useRBAC();
   const [sortKey, setSortKey] = useState<SortKey>('network');
@@ -1100,6 +1206,7 @@ function FlatView({ subnets, onView, onScan, onDelete }: {
                   <td style={TD} onClick={e => e.stopPropagation()}>
                     {canWrite && <>
                       <button onClick={() => onScan(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+                      <button onClick={() => onEdit(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, marginLeft: 8 }}>Edit</button>
                       <button onClick={() => onDelete(sub.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
                     </>}
                   </td>

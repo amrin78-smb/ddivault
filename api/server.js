@@ -1114,6 +1114,29 @@ app.post('/api/ipam/supernets', requireWrite, async (req, res) => {
   }
 });
 
+app.put('/api/ipam/supernets/:id', requireWrite, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { name, description, site_id } = req.body;
+    const result = await db.query(
+      `UPDATE ipam_supernets SET
+         name = COALESCE($2, name),
+         description = COALESCE($3, description),
+         site_id = $4,
+         updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, name ?? null, description ?? null, site_id != null && site_id !== '' ? parseInt(site_id) : null]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'supernet', entity_id: id, entity_name: result.rows[0].name || String(id), new_value: { name, site_id } });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('[API] supernet update error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.delete('/api/ipam/supernets/:id', requireWrite, async (req, res) => {
   try {
     await db.query('DELETE FROM ipam_supernets WHERE id=$1', [parseInt(req.params.id)]);
@@ -1194,15 +1217,16 @@ app.post('/api/ipam/subnets', requireWrite, async (req, res) => {
 app.put('/api/ipam/subnets/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes } = req.body;
+    const { name, description, gateway, vlan_id, site, owner, supernet_id, location, notes, site_id } = req.body;
     const result = await db.query(
       `UPDATE ipam_subnets SET
          name=$2, description=$3, gateway=$4, vlan_id=$5, site=$6, owner=$7,
-         supernet_id=$8, location=$9, notes=$10, updated_at=NOW()
+         supernet_id=$8, location=$9, notes=$10, site_id=$11, updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [id, name||null, description||null, gateway||null,
        vlan_id?parseInt(vlan_id):null, site||null, owner||null,
-       supernet_id?parseInt(supernet_id):null, location||null, notes||null]
+       supernet_id?parseInt(supernet_id):null, location||null, notes||null,
+       site_id != null && site_id !== '' ? parseInt(site_id) : null]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json({ data: result.rows[0] });
