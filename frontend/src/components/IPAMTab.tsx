@@ -587,7 +587,7 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
       {/* Header */}
       <div style={{ background: 'var(--navy)', padding: '12px 24px', flexShrink: 0 }}>
         <div style={{ marginBottom: 8 }}>
-          <Breadcrumb items={[
+          <Breadcrumb light items={[
             { label: 'IPAM', onClick: onClose },
             { label: supLabel },
             { label: `${subnet.network}/${subnet.prefix_length}` },
@@ -598,7 +598,7 @@ function SubnetDetail({ subnet, onClose }: { subnet: Subnet; onClose: () => void
             <div style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>
               {subnet.name || `${subnet.network}/${subnet.prefix_length}`}
             </div>
-            <div style={{ ...MONO, color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
+            <div style={{ ...MONO, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
               {subnet.network}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
               {subnet.site ? ` · ${subnet.site}` : ''}
             </div>

@@ -109,17 +109,22 @@ export function PageHeader({ title, subtitle, children }: {
 
 // ── Breadcrumb ────────────────────────────────────────────────
 export interface Crumb { label: string; onClick?: () => void }
-export function Breadcrumb({ items }: { items: Crumb[] }) {
+export function Breadcrumb({ items, light = false }: { items: Crumb[]; light?: boolean }) {
+  // `light` renders for dark backgrounds (e.g. the navy subnet-detail header), where
+  // the default class colors (tuned for light backgrounds) would be unreadable.
+  const linkStyle    = light ? { color: 'rgba(255,255,255,0.6)' } : undefined;
+  const sepStyle     = light ? { color: 'rgba(255,255,255,0.4)' } : undefined;
+  const currentStyle = light ? { color: 'rgba(255,255,255,0.9)' } : undefined;
   return (
     <nav className="breadcrumb">
       {items.map((c, i) => {
         const last = i === items.length - 1;
         return (
           <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {i > 0 && <span className="crumb-sep">/</span>}
+            {i > 0 && <span className="crumb-sep" style={sepStyle}>/</span>}
             {last || !c.onClick
-              ? <span className="crumb-current">{c.label}</span>
-              : <button onClick={c.onClick}>{c.label}</button>}
+              ? <span className="crumb-current" style={currentStyle}>{c.label}</span>
+              : <button onClick={c.onClick} style={linkStyle}>{c.label}</button>}
           </span>
         );
       })}

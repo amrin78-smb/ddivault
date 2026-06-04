@@ -1332,6 +1332,26 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/release', requireWrite, async (req
 const { scanAllSubnets } = require('../collector/ipamScanner');
 const scanningSubnets = new Set(); // prevent concurrent scans of same subnet
 
+// Auto-expire scans stuck in 'running'/'scanning' for >30 min (covers process
+// crashes/restarts where the in-memory scanningSubnets set was lost). Runs on
+// startup and on every scan-status poll so the UI never shows a permanent "Scanning".
+async function expireStuckScans() {
+  try {
+    await db.query(`
+      UPDATE ipam_scan_jobs SET status='error', error_msg='Scan timed out'
+      WHERE status='running' AND started_at < NOW() - INTERVAL '30 minutes'`);
+    await db.query(`
+      UPDATE ipam_subnets SET scan_status='error'
+      WHERE scan_status='scanning'
+        AND id NOT IN (
+          SELECT subnet_id FROM ipam_scan_jobs
+          WHERE status='running' AND started_at > NOW() - INTERVAL '30 minutes'
+        )`);
+  } catch (err) {
+    console.error('[ScanExpiry] error:', err.message);
+  }
+}
+
 app.post('/api/ipam/subnets/:id/scan', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -1430,6 +1450,7 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
 
 app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
   try {
+    await expireStuckScans();
     const id = parseInt(req.params.id);
     const subnet = await db.query(
       'SELECT scan_status, last_scanned, total_hosts, used_hosts, free_hosts, unknown_hosts FROM ipam_subnets WHERE id=$1',
@@ -1460,6 +1481,7 @@ app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
 // Global scan status — all subnets currently scanning
 app.get('/api/ipam/scan-status', async (req, res) => {
   try {
+    await expireStuckScans();
     const scanning = [...scanningSubnets];
     const jobs = scanning.length > 0 ? await db.query(
       `SELECT j.*, s.network::text, s.prefix_length, s.name, s.total_hosts
@@ -2470,6 +2492,7 @@ async function syncTrustedHosts() {
   }
 }
 syncTrustedHosts();
+expireStuckScans(); // clear any scans left 'running'/'scanning' from a previous run
 
 // ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {
