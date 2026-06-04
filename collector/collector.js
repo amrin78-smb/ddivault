@@ -58,6 +58,16 @@ function scopeIdStr(v) {
   return String(v).trim();
 }
 
+// PowerShell serializes a .NET DateTime as "/Date(1781141126961)/" which
+// PostgreSQL rejects for TIMESTAMPTZ columns. Convert to ISO-8601 (or null).
+function parsePsDate(val) {
+  if (!val) return null;
+  const m = String(val).match(/\/Date\((\d+)\)\//);
+  if (m) return new Date(parseInt(m[1])).toISOString();
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function isValidIp(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
@@ -189,8 +199,9 @@ async function collectScopeStats(server) {
          pending=EXCLUDED.pending, percent_used=EXCLUDED.percent_used,
          description=EXCLUDED.description, last_updated=NOW()
        RETURNING id`,
-      [server.id, scopeId, cfg.Name||null, cfg.StartRange||null, cfg.EndRange||null,
-       cfg.SubnetMask||null, cfg.State||'Active',
+      [server.id, scopeId, cfg.Name||null,
+       scopeIdStr(cfg.StartRange)||null, scopeIdStr(cfg.EndRange)||null,
+       scopeIdStr(cfg.SubnetMask)||null, cfg.State||'Active',
        cfg.LeaseDuration ? String(cfg.LeaseDuration) : null,
        total, inUse, free, reserved, pending, pct, cfg.Description||null]
     );
@@ -257,7 +268,7 @@ async function syncLeases(server) {
     const host    = lease.HostName     || null;
     const scopeId = scopeIdStr(lease.ScopeId) || null;   // IPAddress object → string
     const state   = lease.AddressState || 'Active';
-    const expiry  = lease.LeaseExpiryTime || null;
+    const expiry  = parsePsDate(lease.LeaseExpiryTime); // PS /Date(ms)/ → ISO-8601
     if (!ip_addr) continue;
 
     await db.query(
