@@ -46,7 +46,7 @@ const CARD: React.CSSProperties = {
   background: 'var(--bg-card)', border: '1px solid var(--border)',
   borderRadius: 'var(--radius)', overflow: 'hidden',
 };
-const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)' };
+const TD: React.CSSProperties = { padding: '8px 12px', fontSize: 12.5, color: 'var(--text-primary)' };
 
 function severityBadge(severity: string | null): string {
   const s = (severity || '').toLowerCase();
@@ -111,7 +111,7 @@ export default function SecurityOverview() {
 
   return (
     <div style={CARD}>
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Security Overview</div>
       </div>
 
@@ -122,16 +122,16 @@ export default function SecurityOverview() {
       ) : !hasData ? (
         <EmptyState icon="🛡" title="No security anomalies detected" message="Your environment is clean." />
       ) : (
-        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Counts */}
-          <div style={{ display: 'flex', gap: 12 }}>
-            <div style={{ flex: 1, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--red)' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--red)' }}>{summary?.today ?? 0}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Anomalies today</div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ flex: 1, padding: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--red)' }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--red)' }}>{summary?.today ?? 0}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>Anomalies today</div>
             </div>
-            <div style={{ flex: 1, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--orange)' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--orange)' }}>{summary?.week ?? 0}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>This week</div>
+            <div style={{ flex: 1, padding: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--orange)' }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--orange)' }}>{summary?.week ?? 0}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>This week</div>
             </div>
           </div>
 
@@ -170,7 +170,7 @@ export default function SecurityOverview() {
                     </tr>
                   </thead>
                   <tbody>
-                    {recent.map((a, i) => (
+                    {recent.slice(0, 5).map((a, i) => (
                       <tr key={a.id ?? i}>
                         <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{fmtDate(a.detected_at)}</td>
                         <td style={TD}>{a.anomaly_type || a.type || '—'}</td>

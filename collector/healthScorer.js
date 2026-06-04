@@ -10,10 +10,35 @@
  * and is applied identically to every site. The unknown-device portion is
  * per-site (derived from IPAM).
  *
- * NOTE on site_name: there is no sites table in this DB (sites live cross-DB in
- * NetVault). We set site_name = 'Site ' || site_id as a placeholder; the
- * API/frontend resolves the real human-readable name.
+ * NOTE on site_name: sites live cross-DB in NetVault. We resolve the real name
+ * from the NetVault `sites` table (best-effort) and fall back to 'Site <id>'.
  */
+
+const { Pool } = require('pg');
+
+// Cross-DB read of NetVault site names (same connection pattern as api/middleware/rbac.js).
+const netvaultDb = new Pool({
+  host:     process.env.NETVAULT_DB_HOST || 'localhost',
+  port:     parseInt(process.env.NETVAULT_DB_PORT || '5432'),
+  database: process.env.NETVAULT_DB_NAME || 'netvault',
+  user:     process.env.NETVAULT_DB_USER || 'netvault',
+  password: process.env.NETVAULT_DB_PASS || '',
+  max: 2,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+netvaultDb.on('error', () => {}); // never crash the collector on a netvault pool hiccup
+
+// Returns { [site_id]: name }; empty map on any failure (falls back to 'Site <id>').
+async function loadSiteNames() {
+  try {
+    const r = await netvaultDb.query('SELECT id, name FROM sites');
+    return Object.fromEntries(r.rows.map((s) => [s.id, s.name]));
+  } catch (err) {
+    log('Could not load NetVault site names: ' + err.message);
+    return {};
+  }
+}
 
 function log(m) {
   console.log('[' + new Date().toISOString() + '] [Health] ' + m);
@@ -253,11 +278,12 @@ async function scoreSites(db) {
   const siteIds = siteRes.rows.map((r) => r.site_id);
   log('Found ' + siteIds.length + ' site(s) to score');
 
+  const siteNames = await loadSiteNames();
   const scored = [];
 
   for (const siteId of siteIds) {
     try {
-      const siteName = 'Site ' + siteId;
+      const siteName = siteNames[siteId] || ('Site ' + siteId);
 
       const dhcp = await scoreDhcp(db, siteId);
       const ipam = await scoreIpam(db, siteId);

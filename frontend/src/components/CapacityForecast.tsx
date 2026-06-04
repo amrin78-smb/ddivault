@@ -36,7 +36,7 @@ async function api(path: string, opts?: RequestInit) {
 // ════════════════════════════════════════════════════════════
 // Styles / helpers
 // ════════════════════════════════════════════════════════════
-const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)' };
+const TD: React.CSSProperties = { padding: '8px 12px', fontSize: 12.5, color: 'var(--text-primary)' };
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace" };
 
 const CARD: React.CSSProperties = {
@@ -94,11 +94,13 @@ export default function CapacityForecast() {
   useEffect(() => { load(); }, [load]);
 
   const visible = rows.filter(r => (num(r.growth_rate_per_day) ?? 0) > 0.1);
+  const shown = visible.slice(0, 5);
+  const extra = visible.length - shown.length;
 
   return (
     <div style={CARD}>
       <div style={{
-        padding: '14px 18px', borderBottom: '1px solid var(--border)',
+        padding: '16px 20px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Capacity Forecast</div>
@@ -131,7 +133,7 @@ export default function CapacityForecast() {
               </tr>
             </thead>
             <tbody>
-              {visible.map(r => {
+              {shown.map(r => {
                 const daysFull = num(r.days_to_full);
                 const days80 = num(r.days_to_80pct);
                 const growth = num(r.growth_rate_per_day);
@@ -154,6 +156,11 @@ export default function CapacityForecast() {
               })}
             </tbody>
           </table>
+          {extra > 0 && (
+            <div style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-muted)' }}>
+              +{extra} more
+            </div>
+          )}
         </div>
       )}
     </div>

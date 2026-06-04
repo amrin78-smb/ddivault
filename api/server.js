@@ -1178,7 +1178,19 @@ app.get('/api/site-health', async (req, res) => {
       `SELECT DISTINCT ON (site_id) * FROM site_health_scores
        ORDER BY site_id, calculated_at DESC`
     );
-    res.json({ data: rows.rows });
+    // Resolve real site names from NetVault (best-effort; falls back to stored name / Site <id>)
+    let names = {};
+    try {
+      const s = await netvaultDb.query('SELECT id, name FROM sites');
+      names = Object.fromEntries(s.rows.map(r => [r.id, r.name]));
+    } catch (e) {
+      console.error('[API] site-health name resolve failed:', e.message);
+    }
+    const data = rows.rows.map(r => ({
+      ...r,
+      site_name: names[r.site_id] || r.site_name || `Site ${r.site_id}`,
+    }));
+    res.json({ data });
   } catch (err) {
     console.error('[API] site-health error:', err.message);
     res.status(500).json({ error: 'Internal server error' });

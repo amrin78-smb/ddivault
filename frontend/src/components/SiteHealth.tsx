@@ -84,7 +84,7 @@ function SiteTile({ site, expanded, onToggle }: {
       onClick={onToggle}
       style={{
         background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)', padding: 14, cursor: 'pointer',
+        borderRadius: 'var(--radius-sm)', padding: 10, cursor: 'pointer',
         transition: 'border-color 0.12s',
       }}
       onMouseEnter={e => (e.currentTarget.style.borderColor = color)}
@@ -94,7 +94,7 @@ function SiteTile({ site, expanded, onToggle }: {
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {site.site_name || `Site ${site.site_id}`}
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1, flexShrink: 0 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1, flexShrink: 0 }}>
           {overall != null ? Math.round(overall) : '—'}
         </div>
       </div>
@@ -153,13 +153,13 @@ export default function SiteHealth() {
   return (
     <div style={CARD}>
       <div style={{
-        padding: '14px 18px', borderBottom: '1px solid var(--border)',
+        padding: '16px 20px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Site Health</div>
         {!loading && !error && rows.length > 0 && (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            <span style={{ color: 'var(--green)', fontWeight: 600 }}>{counts.green} sites healthy</span>
+            <span style={{ color: 'var(--green)', fontWeight: 600 }}>{counts.green} healthy</span>
             {' · '}
             <span style={{ color: 'var(--orange)', fontWeight: 600 }}>{counts.amber} warning</span>
             {' · '}
@@ -168,17 +168,17 @@ export default function SiteHealth() {
         )}
       </div>
 
-      <div style={{ padding: 18 }}>
+      <div style={{ padding: '16px 20px' }}>
         {loading ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-            <CardSkeleton count={4} height={88} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+            <CardSkeleton count={4} height={64} />
           </div>
         ) : error ? (
           <EmptyState icon="⚠" title="Unable to load site health" message={error} />
         ) : rows.length === 0 ? (
           <EmptyState icon="🏢" title="No site health data yet" message="Scores compute every 15 minutes." />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
             {rows.map(site => {
               const id = String(site.site_id);
               return (

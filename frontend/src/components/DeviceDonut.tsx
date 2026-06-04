@@ -61,11 +61,6 @@ function classify(raw: string | null | undefined): Category {
   return 'Unknown';
 }
 
-// Build an SVG donut arc path (stroke-dasharray approach on a circle).
-const RADIUS = 60;
-const STROKE = 22;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-
 // ════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════
@@ -107,23 +102,19 @@ export default function DeviceDonut() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Compute cumulative offsets for donut segments
-  let offset = 0;
-  const segments = slices.map(s => {
-    const len = (s.pct / 100) * CIRCUMFERENCE;
-    const seg = { ...s, dash: len, gap: CIRCUMFERENCE - len, dashOffset: -offset };
-    offset += len;
-    return seg;
-  });
+  const maxPct = slices.reduce((m, s) => Math.max(m, s.pct), 0);
 
   return (
     <div style={CARD}>
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Device Type Distribution</div>
+        {!loading && !error && total > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total.toLocaleString()} devices</div>
+        )}
       </div>
 
       {loading ? (
-        <div style={{ padding: 18 }}>
+        <div style={{ padding: '16px 20px' }}>
           <CardSkeleton count={1} height={160} />
         </div>
       ) : error ? (
@@ -131,47 +122,20 @@ export default function DeviceDonut() {
       ) : total === 0 ? (
         <EmptyState icon="📡" title="No leases found" message="No DHCP leases available to categorize." />
       ) : (
-        <div style={{ padding: 18, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-          {/* Donut SVG */}
-          <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
-            <svg width={160} height={160} viewBox="0 0 160 160" role="img" aria-label="Device type distribution donut chart">
-              <g transform="rotate(-90 80 80)">
-                <circle cx={80} cy={80} r={RADIUS} fill="none" stroke="var(--border)" strokeWidth={STROKE} />
-                {segments.map(seg => (
-                  <circle
-                    key={seg.category}
-                    cx={80}
-                    cy={80}
-                    r={RADIUS}
-                    fill="none"
-                    stroke={seg.color}
-                    strokeWidth={STROKE}
-                    strokeDasharray={`${seg.dash} ${seg.gap}`}
-                    strokeDashoffset={seg.dashOffset}
-                  />
-                ))}
-              </g>
-            </svg>
-            <div style={{
-              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
-            }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)' }}>{total.toLocaleString()}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>devices</div>
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {slices.map(s => (
-              <div key={s.category} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: s.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: 'var(--text-primary)', flex: 1 }}>{s.category}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.count.toLocaleString()}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 48, textAlign: 'right' }}>{s.pct.toFixed(1)}%</span>
+        <div style={{ padding: '16px 20px', maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {slices.map(s => (
+            <div key={s.category} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
+              <div style={{ flex: 1, height: 12, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${maxPct > 0 ? (s.pct / maxPct) * 100 : 0}%`,
+                  height: '100%', background: s.color, borderRadius: 4,
+                }} />
               </div>
-            ))}
-          </div>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', width: 46, textAlign: 'right', flexShrink: 0 }}>{s.pct.toFixed(1)}%</span>
+            </div>
+          ))}
         </div>
       )}
     </div>
