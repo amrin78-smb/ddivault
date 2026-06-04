@@ -352,6 +352,17 @@ ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS health_score   INTEGER;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMPTZ;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS query_ms       INTEGER;
 
+-- ── IPAM scan job per-batch progress tracking ───────────────
+-- (table is created in schema-ipam.sql which runs after this file on fresh
+--  installs; guard so this ALTER is safe to run in any order)
+DO $$
+BEGIN
+  IF to_regclass('public.ipam_scan_jobs') IS NOT NULL THEN
+    ALTER TABLE ipam_scan_jobs ADD COLUMN IF NOT EXISTS progress_pct INT DEFAULT 0;
+    ALTER TABLE ipam_scan_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+  END IF;
+END $$;
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt

@@ -6,7 +6,7 @@
  * Runs scan in background — does NOT block the API process.
  */
 
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, exec } = require('child_process');
 const { Pool }  = require('pg');
 const fs        = require('fs');
 const path      = require('path');
@@ -75,20 +75,39 @@ function runPsScript(scriptContent, timeoutMs) {
 }
 
 /**
+ * Async variant of runPsScript — lets multiple batches run concurrently.
+ * execSync blocks the event loop, so we use exec() to allow Promise.all
+ * to actually parallelize ping batches. Returns stdout string or null.
+ */
+function runPsScriptAsync(scriptContent, timeoutMs, tag) {
+  return new Promise((resolve) => {
+    const tmpFile = path.join(os.tmpdir(), `ddivault_scan_${process.pid}_${tag}.ps1`);
+    try { fs.writeFileSync(tmpFile, scriptContent, 'utf8'); } catch (_) { return resolve(null); }
+    exec(`powershell.exe -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "${tmpFile}"`,
+      { encoding: 'utf8', timeout: timeoutMs || 60000, maxBuffer: 1024 * 1024 * 8 },
+      (err, stdout) => {
+        try { fs.unlinkSync(tmpFile); } catch (_) {}
+        resolve(err && !stdout ? null : (stdout || '').trim());
+      });
+  });
+}
+
+/**
  * Ping sweep using PS background jobs (PS5 compatible).
- * Writes script to temp file to avoid command-line length limits.
+ * Runs multiple batches concurrently via runPsScriptAsync and reports
+ * progress per chunk via the optional onProgress(scanned, alive) callback.
  * Returns Map of ip -> { alive, responseTime }
  */
-function pingSweep(ips) {
-  if (!ips.length) return new Map();
+async function pingSweep(ips, onProgress) {
   const results = new Map();
+  if (!ips.length) return results;
+  const BATCH = 50;
+  const CONCURRENT_BATCHES = 3;
+  const batches = [];
+  for (let i = 0; i < ips.length; i += BATCH) batches.push(ips.slice(i, i + BATCH));
 
-  // Process in batches of 50
-  const BATCH = 30;
-  for (let i = 0; i < ips.length; i += BATCH) {
-    const batch   = ips.slice(i, i + BATCH);
+  const runBatch = async (batch, idx) => {
     const ipArray = batch.map(ip => `'${ip}'`).join(',');
-
     const script = `
 $ips = @(${ipArray})
 $jobs = @()
@@ -100,20 +119,18 @@ foreach ($ip in $ips) {
             $p = Test-Connection -ComputerName $target -Count 1 -ErrorAction SilentlyContinue
             $ms = if ($p -and $p.ResponseTime) { $p.ResponseTime } else { 0 }
             Write-Output "$target,true,$ms"
-        } else {
-            Write-Output "$target,false,"
-        }
+        } else { Write-Output "$target,false," }
     } -ArgumentList $ip
 }
-$jobs | Wait-Job -Timeout 25 | Out-Null
+$jobs | Wait-Job -Timeout 15 | Out-Null
 foreach ($job in $jobs) {
     $out = Receive-Job $job -ErrorAction SilentlyContinue
     if ($out) { Write-Output $out }
     Remove-Job $job -Force -ErrorAction SilentlyContinue
 }
 `;
-
-    const raw = runPsScript(script, 60000);
+    const raw = await runPsScriptAsync(script, 40000, `b${idx}`);
+    const out = [];
     if (raw) {
       for (const line of raw.split('\n')) {
         const parts = line.trim().split(',');
@@ -121,16 +138,29 @@ foreach ($job in $jobs) {
           const ip    = parts[0].trim();
           const alive = parts[1].trim() === 'true';
           const ms    = parts[2] ? parseInt(parts[2].trim()) : null;
-          if (ip) results.set(ip, { alive, responseTime: alive ? (ms || 0) : null });
+          if (ip) out.push([ip, { alive, responseTime: alive ? (ms || 0) : null }]);
         }
       }
     } else {
-      // Fallback: mark all as unknown if ping sweep fails
       warn(`Ping sweep failed for batch starting at ${batch[0]} — marking as unknown`);
-      for (const ip of batch) results.set(ip, { alive: false, responseTime: null });
+      for (const ip of batch) out.push([ip, { alive: false, responseTime: null }]);
     }
-  }
+    return out;
+  };
 
+  let scanned = 0, alive = 0;
+  for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
+    const chunk = batches.slice(i, i + CONCURRENT_BATCHES);
+    const chunkOut = await Promise.all(chunk.map((b, k) => runBatch(b, i + k)));
+    for (let c = 0; c < chunk.length; c++) {
+      scanned += chunk[c].length;
+      for (const [ip, val] of chunkOut[c]) {
+        results.set(ip, val);
+        if (val.alive) alive++;
+      }
+    }
+    if (onProgress) { try { await onProgress(scanned, alive); } catch (_) {} }
+  }
   return results;
 }
 
@@ -187,6 +217,23 @@ Write-Output ''
     }
     return null;
   } catch (_) { return null; }
+}
+
+/**
+ * Build the ARP cache once for the whole subnet (instead of per-IP).
+ * Reads `arp -a` a single time and parses all IP -> MAC entries.
+ * Returns Map of ip -> MAC (colon-separated, uppercase).
+ */
+function buildArpCache() {
+  const cache = new Map();
+  try {
+    const out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 });
+    for (const line of out.split('\n')) {
+      const m = line.match(/(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})/i);
+      if (m) cache.set(m[1], m[2].replace(/-/g, ':').toUpperCase());
+    }
+  } catch (_) {}
+  return cache;
 }
 
 /**
@@ -249,7 +296,19 @@ async function scanSubnet(subnet) {
     if (!ips.length) throw new Error(`Cannot scan ${label} — invalid prefix or too large`);
 
     log(`${label} — pinging ${ips.length} hosts (this may take 1-2 minutes)...`);
-    const pingResults = pingSweep(ips);
+
+    // Build the ARP cache once for the whole subnet (was per-IP, very slow)
+    const arpCache = buildArpCache();
+
+    const total = ips.length;
+    const pingResults = await pingSweep(ips, async (scanned, up) => {
+      const pct = total ? Math.round((scanned / total) * 100) : 0;
+      await db.query(
+        `UPDATE ipam_scan_jobs SET hosts_scanned=$1, hosts_up=$2, progress_pct=$3, updated_at=NOW()
+         WHERE id=$4 AND status='running'`,
+        [scanned, up, pct, jobId]
+      ).catch(() => {});
+    });
     hostsScanned = ips.length;
 
     const reservedRes = await db.query(
@@ -269,8 +328,9 @@ async function scanSubnet(subnet) {
       let hostname   = lease?.hostname    || null;
       let macAddress = lease?.mac_address || null;
 
-      // ARP first - detects devices blocking ICMP (Windows firewall etc)
-      if (!macAddress && !lease) macAddress = getMacFromArp(ip);
+      // ARP first - detects devices blocking ICMP (Windows firewall etc).
+      // Uses the cache built once above instead of a slow per-IP arp call.
+      if (!macAddress && !lease) macAddress = arpCache.get(ip) || null;
 
       // Alive if ping responded OR ARP found a MAC
       const alive = pingResult.alive || (!!macAddress && !lease);
@@ -318,13 +378,19 @@ async function scanSubnet(subnet) {
       }
 
       processed++;
-      // Log progress every 50 IPs
-      if (processed % 50 === 0) {
+      // Log + persist progress every 25 IPs
+      if (processed % 25 === 0) {
         log(`${label} — processed ${processed}/${ips.length} IPs, ${hostsUp} alive`);
         // Update live counts in DB for progress display
         await db.query(
           `UPDATE ipam_subnets SET used_hosts=$2, free_hosts=$3, unknown_hosts=$4 WHERE id=$1`,
           [subnetId, hostsUp, processed - hostsUp, hostsUnknown]
+        ).catch(() => {});
+        await db.query(
+          `UPDATE ipam_scan_jobs SET hosts_scanned=$1, hosts_up=$2, hosts_unknown=$3,
+             progress_pct=$4, updated_at=NOW() WHERE id=$5 AND status='running'`,
+          [processed, hostsUp, hostsUnknown,
+           Math.round((processed / ips.length) * 100), jobId]
         ).catch(() => {});
       }
     }
@@ -340,7 +406,8 @@ async function scanSubnet(subnet) {
 
     await db.query(
       `UPDATE ipam_scan_jobs SET status='done', completed_at=NOW(),
-         hosts_scanned=$2, hosts_up=$3, hosts_unknown=$4 WHERE id=$1`,
+         hosts_scanned=$2, hosts_up=$3, hosts_unknown=$4,
+         progress_pct=100, updated_at=NOW() WHERE id=$1`,
       [jobId, hostsScanned, hostsUp, hostsUnknown]
     );
 

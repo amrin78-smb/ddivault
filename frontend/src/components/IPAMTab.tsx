@@ -151,6 +151,37 @@ function scanLabel(status: string, last_scanned?: string) {
 
 const cleanNetwork = (network: string) => (network || '').replace(/\/\d+$/, '');
 
+function scanEta(progressPct: number, elapsedSeconds: number): string {
+  if (!progressPct || progressPct <= 0 || progressPct >= 100) return '';
+  const total = elapsedSeconds / (progressPct / 100);
+  const remaining = Math.max(0, Math.round(total - elapsedSeconds));
+  return `~${remaining}s remaining`;
+}
+
+function ScanProgressBar({ job }: { job: any }) {
+  const total = job.total_hosts || 0;
+  const scanned = job.hosts_scanned || 0;
+  const pct = job.progress_pct != null ? Number(job.progress_pct) : (total ? Math.round((scanned / total) * 100) : 0);
+  const eta = scanEta(pct, job.elapsed_seconds || 0);
+  return (
+    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-light)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+        <span style={{ fontWeight: 600 }}>🔍 Scanning {cleanNetwork(job.network)}/{job.prefix_length}{job.name ? ` — ${job.name}` : ''}</span>
+        <span style={{ color: 'var(--text-muted)' }}>{pct}%</span>
+      </div>
+      <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{
+          width: `${pct}%`, height: '100%', background: 'var(--primary)',
+          transition: 'width 0.4s ease', animation: 'pulse 1.5s ease-in-out infinite',
+        }} />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, ...MONO }}>
+        {scanned}/{total} hosts · {job.hosts_up || 0} alive · {job.elapsed_seconds || 0}s elapsed{eta ? ` · ${eta}` : ''}
+      </div>
+    </div>
+  );
+}
+
 const siteName = (siteId: number | null | undefined, sites: Site[], fallback?: string): string => {
   if (siteId != null) {
     const s = sites.find(x => x.id === siteId);
@@ -773,13 +804,20 @@ export default function IPAMTab() {
 
   // ── Global scan poll ──────────────────────────────────────
   useEffect(() => {
+    let t: ReturnType<typeof setTimeout>;
+    let cancelled = false;
     const check = async () => {
       const d = await api('/ipam/scan-status').catch(() => null);
-      if (d) setScanStatus(d);
+      if (cancelled) return;
+      let active = false;
+      if (d) {
+        setScanStatus(d);
+        active = (d.active_scans ?? 0) > 0 || (d.jobs?.length ?? 0) > 0;
+      }
+      t = setTimeout(check, active ? 2000 : 6000);
     };
     check();
-    const t = setInterval(check, 3000);
-    return () => clearInterval(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, []);
 
   // Reload when scans finish
@@ -931,41 +969,25 @@ export default function IPAMTab() {
       </div>
 
       {/* ── Active scan progress ── */}
-      {scanStatus && scanStatus.active_scans > 0 && (
+      {scanStatus?.jobs?.length > 0 && (
         <div style={{
           background: 'var(--primary-light)', border: '1px solid var(--border)',
-          borderLeft: '4px solid var(--primary)', borderRadius: 'var(--radius)', padding: 16,
+          borderLeft: '4px solid var(--primary)', borderRadius: 'var(--radius)', overflow: 'hidden',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 14px 10px' }}>
             <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--primary)', animation: 'pulse 1s infinite' }} />
             <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--primary)' }}>
-              Scanning {scanStatus.active_scans} subnet{scanStatus.active_scans > 1 ? 's' : ''}…
+              Scanning {scanStatus.jobs.length} subnet{scanStatus.jobs.length > 1 ? 's' : ''}…
             </div>
           </div>
-          {scanStatus.subnets?.filter((s: any) => s.scan_status === 'scanning').map((s: any) => {
-            const total = s.total_hosts || 1;
-            const scanned = (s.used_hosts || 0) + (s.free_hosts || 0) + (s.unknown_hosts || 0);
-            const pct = Math.min(100, Math.round((scanned / total) * 100));
-            return (
-              <div key={s.id} style={{ marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                  <span style={{ ...MONO, fontSize: 12, fontWeight: 600 }}>{cleanNetwork(s.network)}/{s.prefix_length}{s.name ? ` — ${s.name}` : ''}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{scanned} / {total} hosts · {pct}%</span>
-                </div>
-                <div className="util-track"><div className="util-fill" style={{ width: `${pct}%`, background: 'var(--primary)' }} /></div>
-                <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11 }}>
-                  <span style={{ color: 'var(--blue)' }}>● {s.used_hosts || 0} DHCP</span>
-                  <span style={{ color: 'var(--green)' }}>● {s.free_hosts || 0} free</span>
-                  <span style={{ color: 'var(--orange)' }}>● {s.unknown_hosts || 0} unknown</span>
-                </div>
-              </div>
-            );
-          })}
+          {scanStatus.jobs.map((job: any) => (
+            <ScanProgressBar key={job.subnet_id} job={job} />
+          ))}
         </div>
       )}
 
       {/* ── Recently completed scan results ── */}
-      {scanStatus && scanStatus.active_scans === 0 && scanStatus.subnets?.some((s: any) => s.scan_status === 'done' && s.last_scanned) && (
+      {scanStatus && !(scanStatus.jobs?.length > 0) && scanStatus.subnets?.some((s: any) => s.scan_status === 'done' && s.last_scanned) && (
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 16px' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>Last Scan Results</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

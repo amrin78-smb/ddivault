@@ -87,6 +87,10 @@ CREATE TABLE IF NOT EXISTS ipam_scan_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_scan_jobs_subnet ON ipam_scan_jobs(subnet_id);
 
+-- Per-batch scan progress tracking
+ALTER TABLE ipam_scan_jobs ADD COLUMN IF NOT EXISTS progress_pct INT DEFAULT 0;
+ALTER TABLE ipam_scan_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- ── IP audit trail ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ipam_audit (
   id           BIGSERIAL PRIMARY KEY,

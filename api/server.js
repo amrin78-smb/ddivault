@@ -1487,25 +1487,28 @@ app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
 app.get('/api/ipam/scan-status', async (req, res) => {
   try {
     await expireStuckScans();
-    const scanning = [...scanningSubnets];
-    const jobs = scanning.length > 0 ? await db.query(
-      `SELECT j.*, host(s.network) as network, s.prefix_length, s.name, s.total_hosts
-       FROM ipam_scan_jobs j
-       JOIN ipam_subnets s ON s.id = j.subnet_id
-       WHERE j.subnet_id = ANY($1) AND j.status = 'running'
-       ORDER BY j.started_at DESC`,
-      [scanning]
-    ) : { rows: [] };
-    // Also get all subnet scan states
+    const jobsQ = await db.query(`
+      SELECT
+        j.subnet_id, j.status, j.hosts_scanned, j.hosts_up, j.hosts_unknown,
+        j.started_at, j.error_msg, s.total_hosts,
+        host(s.network) as network, s.prefix_length, s.name,
+        ROUND((j.hosts_scanned::numeric / NULLIF(s.total_hosts, 0)) * 100) as progress_pct,
+        EXTRACT(EPOCH FROM (NOW() - j.started_at))::int as elapsed_seconds
+      FROM ipam_scan_jobs j
+      JOIN ipam_subnets s ON s.id = j.subnet_id
+      WHERE j.status = 'running' AND j.started_at > NOW() - INTERVAL '30 minutes'
+      ORDER BY j.started_at DESC`);
     const allSubnets = await db.query(
       `SELECT id, host(network) as network, prefix_length, name, scan_status, last_scanned,
               total_hosts, used_hosts, free_hosts, unknown_hosts
        FROM ipam_subnets WHERE is_managed=TRUE ORDER BY network`
     );
+    const ids = jobsQ.rows.map(r => r.subnet_id);
     res.json({
-      active_scans: scanning.length,
-      scanning_ids: scanning,
-      jobs: jobs.rows,
+      scanning: ids,            // new: subnet ids with a live running job
+      scanning_ids: ids,        // backward-compat
+      active_scans: ids.length, // backward-compat
+      jobs: jobsQ.rows,         // enriched: progress_pct, elapsed_seconds, network, name, totals
       subnets: allSubnets.rows,
     });
   } catch (err) {
