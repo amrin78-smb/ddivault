@@ -195,6 +195,10 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - **Smart search** — `GET /api/search` parses `type:`, `vendor:`, `subnet:`, `scope:>N`, `site:`, `new:today|7days`, `risk:`, `anomaly:today`, `status:` structured queries.
 - **Frontend** — Intelligence tab (anomaly console), Settings sections (SMTP/Recipients/Rules), Dashboard widgets (Capacity Forecast, Site Health, Security Overview, Device Donut), DHCP device+forecast columns, IPAM device icons + sensitive toggle.
 
+### Smoke-test seed (exercise the UI without real data)
+- `psql -U ddivault_user -d ddivault -f scripts/seed-smoke-test.sql` — seeds clearly-labelled DEMO data (30d scope history + forecast, baselines, fingerprinted leases, a SENSITIVE IPAM subnet, varied anomalies, a site health score, an inactive demo recipient). Re-runnable; sends no email.
+- `psql ... -f scripts/clean-smoke-test.sql` — removes all demo data (markers: hostname `DEMO-SMOKE-TEST`, `site_id=9999`, `details->>'demo'='true'`).
+
 ### New API endpoints
 - SMTP: `GET/POST /api/smtp`, `POST /api/smtp/test`
 - Recipients: `GET/POST /api/alert-recipients`, `PUT/DELETE /api/alert-recipients/:id`
