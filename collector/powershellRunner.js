@@ -69,20 +69,24 @@ function runPS(serverIp, script, auth, returnRaw) {
     const safeUser = user.replace(/'/g, "''");
     const portOpt  = port !== 5985 ? ` -Port ${port}` : '';
     const httpsOpt = useHttps ? ' -UseSSL' : '';
+    // NOTE: the inner script already pipes to ConvertTo-Json — do NOT add a second
+    // ConvertTo-Json here or the output gets double-encoded (a JSON string of a JSON
+    // string), which JSON.parse turns back into a string, not an array/object.
     psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +
       `$secPass = ConvertTo-SecureString '${safePass}' -AsPlainText -Force; ` +
       `$cred = New-Object System.Management.Automation.PSCredential('${safeUser}', $secPass); ` +
       `try { ` +
-        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
+        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${safeScript} } ` +
       `} catch { Write-Error $_.Exception.Message; exit 1 }" `;
 
   } else {
     // kerberos — use current Windows identity (NocVault service account)
     const portOpt  = port !== 5985 ? ` -Port ${port}` : '';
     const httpsOpt = useHttps ? ' -UseSSL' : '';
+    // NOTE: inner script already emits JSON — no second ConvertTo-Json (see above).
     psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +
       `try { ` +
-        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -ScriptBlock { ${safeScript} } | ConvertTo-Json -Depth 10 -Compress ` +
+        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -ScriptBlock { ${safeScript} } ` +
       `} catch { Write-Error $_.Exception.Message; exit 1 }"`;
   }
 
@@ -179,16 +183,11 @@ function getDhcpScopes(serverIp, auth) {
 }
 
 function getDhcpLeases(serverIp, auth) {
-  // -AllScope not supported in PS5 — loop over each scope instead
-  const script = `
-$scopes = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId
-$all = foreach ($s in $scopes) {
-    Get-DhcpServerv4Lease -ScopeId $s -ErrorAction SilentlyContinue |
-        Select-Object ScopeId,IPAddress,HostName,ClientId,AddressState,LeaseExpiryTime
-}
-$all | ConvertTo-Json -Depth 5 -Compress
-`;
-  const r = runPS(cleanIp(serverIp), script, auth);
+  // -AllScope is not supported on PS5, so loop over each scope. Keep this on a
+  // SINGLE line — runPS passes the script via -Command, and cmd.exe truncates
+  // -Command strings at newlines (which previously caused "Missing closing '}'").
+  const script = `$all = foreach ($s in (Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId)) { Get-DhcpServerv4Lease -ScopeId $s -ErrorAction SilentlyContinue | Select-Object ScopeId,IPAddress,HostName,ClientId,AddressState,LeaseExpiryTime }; $all | ConvertTo-Json -Depth 5 -Compress`;
+  const r = runPS(serverIp, script, auth);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }
@@ -344,10 +343,13 @@ if ($rec) { [PSCustomObject]@{ ZoneName='${String(zoneName).replace(/'/g, "''")}
 
 /** Measure DNS query response time (ms) for a name against this server. */
 function testDnsQuery(serverIp, queryName, auth) {
-  const q = String(queryName || serverIp).replace(/'/g, "''");
+  // serverIp is embedded INSIDE the PS script (-Server) and as a query fallback,
+  // so it must be CIDR-stripped here — runPS only cleans its -ComputerName target.
+  const target = cleanIp(serverIp);
+  const q = String(queryName || target).replace(/'/g, "''");
   const script = `
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
-try { Resolve-DnsName -Name '${q}' -Server '${serverIp}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }
+try { Resolve-DnsName -Name '${q}' -Server '${target}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }
 $sw.Stop()
 [PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
   return runPS(serverIp, script, auth);
