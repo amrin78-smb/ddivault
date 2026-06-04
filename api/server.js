@@ -1152,6 +1152,7 @@ app.delete('/api/ipam/supernets/:id', requireWrite, async (req, res) => {
 // ── IPAM — Subnets (enhanced) ────────────────────────────────
 app.get('/api/ipam/subnets', attachSiteFilter, async (req, res) => {
   try {
+    await expireStuckScans();
     const supernet_id = req.query.supernet_id;
     const params = [];
     const conds = [];
@@ -1344,11 +1345,12 @@ async function expireStuckScans() {
       UPDATE ipam_scan_jobs SET status='error', error_msg='Scan timed out'
       WHERE status='running' AND started_at < NOW() - INTERVAL '30 minutes'`);
     await db.query(`
-      UPDATE ipam_subnets SET scan_status='error'
-      WHERE scan_status='scanning'
-        AND id NOT IN (
-          SELECT subnet_id FROM ipam_scan_jobs
-          WHERE status='running' AND started_at > NOW() - INTERVAL '30 minutes'
+      UPDATE ipam_subnets s SET scan_status='error'
+      WHERE s.scan_status='scanning'
+        AND NOT EXISTS (
+          SELECT 1 FROM ipam_scan_jobs j
+          WHERE j.subnet_id = s.id AND j.status='running'
+            AND j.started_at > NOW() - INTERVAL '30 minutes'
         )`);
   } catch (err) {
     console.error('[ScanExpiry] error:', err.message);
@@ -2495,7 +2497,21 @@ async function syncTrustedHosts() {
   }
 }
 syncTrustedHosts();
-expireStuckScans(); // clear any scans left 'running'/'scanning' from a previous run
+// One-time startup recovery: clear scans left stuck from a previous run/crash.
+async function clearStuckScansOnStartup() {
+  try {
+    await db.query(`
+      UPDATE ipam_subnets SET scan_status='error'
+      WHERE scan_status='scanning' AND last_scanned < NOW() - INTERVAL '1 hour'`);
+    await db.query(`
+      UPDATE ipam_scan_jobs SET status='error', error_msg='Scan timed out - auto-cleared on restart'
+      WHERE status='running' AND started_at < NOW() - INTERVAL '30 minutes'`);
+  } catch (err) {
+    console.error('[ScanExpiry] startup clear failed:', err.message);
+  }
+  await expireStuckScans();
+}
+clearStuckScansOnStartup();
 
 // ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {

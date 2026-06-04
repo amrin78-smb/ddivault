@@ -149,6 +149,14 @@ function scanLabel(status: string, last_scanned?: string) {
   return 'Not scanned';
 }
 
+const siteName = (siteId: number | null | undefined, sites: Site[], fallback?: string): string => {
+  if (siteId != null) {
+    const s = sites.find(x => x.id === siteId);
+    if (s) return s.name;
+  }
+  return fallback || '';
+};
+
 // ════════════════════════════════════════════════════════════
 // Field / Modal helpers (module scope)
 // ════════════════════════════════════════════════════════════
@@ -453,8 +461,8 @@ function ReserveModal({ ip, onClose, onConfirm }: {
 // ════════════════════════════════════════════════════════════
 // Tree subnet row (module scope)
 // ════════════════════════════════════════════════════════════
-function SubnetRow({ subnet, onView, onScan, onDelete, onEdit }: {
-  subnet: Subnet; onView: () => void; onScan: () => void; onDelete: () => void; onEdit: () => void;
+function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
+  subnet: Subnet; sites: Site[]; onView: () => void; onScan: () => void; onDelete: () => void; onEdit: () => void;
 }) {
   const { canWrite } = useRBAC();
   const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
@@ -476,7 +484,7 @@ function SubnetRow({ subnet, onView, onScan, onDelete, onEdit }: {
         <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>{subnet.network}/{subnet.prefix_length}</div>
         {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{subnet.site || ''}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{siteName(subnet.site_id, sites, subnet.site)}</div>
       {subnet.vlan_id ? <span className="badge badge-blue">VLAN {subnet.vlan_id}</span> : null}
       <div style={{ flex: 1, minWidth: 120 }}><UtilBar pct={utilPct(used, total)} /></div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 92, textAlign: 'right', ...MONO }}>{used}/{total}</div>
@@ -981,7 +989,7 @@ export default function IPAMTab() {
         </div>
       ) : view === 'tree' ? (
         <TreeView
-          supernets={supernets} subnets={subnets} orphanSubnets={orphanSubnets}
+          supernets={supernets} subnets={subnets} orphanSubnets={orphanSubnets} sites={sites}
           expanded={expanded} onToggle={toggleExpanded}
           onViewSubnet={setSelectedSubnet} onScanSubnet={scanSubnet} onDeleteSubnet={deleteSubnet}
           onAddSubnet={openAddSubnet} onDeleteSupernet={deleteSupernet}
@@ -990,7 +998,7 @@ export default function IPAMTab() {
           nextSubnetResult={nextSubnetResult} onFindNextSubnet={findNextSubnet}
         />
       ) : view === 'flat' ? (
-        <FlatView subnets={subnets} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} onEdit={setEditSubnet} />
+        <FlatView subnets={subnets} sites={sites} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} onEdit={setEditSubnet} />
       ) : (
         <VlanView vlans={vlans} subnets={subnets} onAdd={() => setAddVlan(true)} onDelete={deleteVlan} />
       )}
@@ -1015,12 +1023,12 @@ export default function IPAMTab() {
 // TREE VIEW (module scope)
 // ════════════════════════════════════════════════════════════
 function TreeView({
-  supernets, subnets, orphanSubnets, expanded, onToggle,
+  supernets, subnets, orphanSubnets, sites, expanded, onToggle,
   onViewSubnet, onScanSubnet, onDeleteSubnet, onAddSubnet, onDeleteSupernet,
   onEditSupernet, onEditSubnet,
   prefixSel, setPrefixSel, nextSubnetResult, onFindNextSubnet,
 }: {
-  supernets: Supernet[]; subnets: Subnet[]; orphanSubnets: Subnet[];
+  supernets: Supernet[]; subnets: Subnet[]; orphanSubnets: Subnet[]; sites: Site[];
   expanded: Set<number>; onToggle: (id: number) => void;
   onViewSubnet: (s: Subnet) => void; onScanSubnet: (s: Subnet) => void; onDeleteSubnet: (id: number) => void;
   onAddSubnet: (supernetId: number | null) => void; onDeleteSupernet: (id: number) => void;
@@ -1054,6 +1062,7 @@ function TreeView({
         const totalUsed = children.reduce((a, s) => a + (s.used_hosts || 0), 0);
         const totalAll  = children.reduce((a, s) => a + (s.total_hosts || 0), 0);
         const prefix    = prefixSel[sn.id] || 24;
+        const snSite    = siteName(sn.site_id, sites, sn.site);
 
         return (
           <div key={sn.id} style={CARD}>
@@ -1069,7 +1078,7 @@ function TreeView({
                   {sn.name || `${sn.network}/${sn.prefix_length}`}
                   <span style={{ ...MONO, fontSize: 12, color: 'var(--text-muted)', marginLeft: 10, fontWeight: 400 }}>{sn.network}/{sn.prefix_length}</span>
                 </div>
-                {sn.site && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sn.site}</div>}
+                {snSite && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>📍 {snSite}</div>}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 80 }}>{children.length} subnets</div>
               {totalAll > 0 && <div style={{ width: 200 }}><UtilBar pct={utilPct(totalUsed, totalAll)} /></div>}
@@ -1093,7 +1102,7 @@ function TreeView({
 
             {/* Children */}
             {isOpen && children.map(sub => (
-              <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
+              <SubnetRow key={sub.id} subnet={sub} sites={sites} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
             ))}
             {isOpen && children.length === 0 && (
               <div style={{ padding: '16px 48px', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -1112,7 +1121,7 @@ function TreeView({
             Unassigned Subnets <span style={{ fontWeight: 400 }}>({orphanSubnets.length})</span>
           </div>
           {orphanSubnets.map(sub => (
-            <SubnetRow key={sub.id} subnet={sub} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
+            <SubnetRow key={sub.id} subnet={sub} sites={sites} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
           ))}
         </div>
       )}
@@ -1129,8 +1138,8 @@ function ipToNum(ip: string): number {
   return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
 }
 
-function FlatView({ subnets, onView, onScan, onDelete, onEdit }: {
-  subnets: Subnet[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void; onEdit: (s: Subnet) => void;
+function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
+  subnets: Subnet[]; sites: Site[]; onView: (s: Subnet) => void; onScan: (s: Subnet) => void; onDelete: (id: number) => void; onEdit: (s: Subnet) => void;
 }) {
   const { canWrite } = useRBAC();
   const [sortKey, setSortKey] = useState<SortKey>('network');
@@ -1197,7 +1206,7 @@ function FlatView({ subnets, onView, onScan, onDelete, onEdit }: {
                   <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${sub.supernet_network}/${sub.supernet_prefix}` : '—')}</td>
                   <td style={{ ...TD, ...MONO, fontSize: 11 }}>{sub.gateway || '—'}</td>
                   <td style={TD}>{sub.vlan_id ? <span className="badge badge-blue">{sub.vlan_id}</span> : '—'}</td>
-                  <td style={TD}>{sub.site || '—'}</td>
+                  <td style={TD}>{siteName(sub.site_id, sites, sub.site) || '—'}</td>
                   <td style={{ ...TD, ...MONO }}>{sub.used_hosts || 0} / {total}</td>
                   <td style={{ ...TD, minWidth: 150 }}><UtilBar pct={utilPct(sub.used_hosts || 0, total)} /></td>
                   <td style={TD}>{sub.unknown_hosts > 0
