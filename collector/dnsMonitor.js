@@ -143,17 +143,23 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
     try { r = ps.testDnsForwarder(ip, auth, fwd); }
     catch (e) { log(`[Forwarders] ${ip}->${fwd}: ${e.message}`); continue; }
     if (!r) continue;
-    // PowerShell booleans can serialize as JSON true, the string "True", or 1
-    // depending on the ConvertTo-Json path — parse all forms explicitly so a
-    // reachable forwarder (e.g. 1.1.1.1 at 328ms) is never recorded as down.
-    const isReachable = r.Reachable === true || r.Reachable === 'True' || r.Reachable === 1;
-    log(`Forwarder ${fwd}: reachable=${isReachable}, raw=${JSON.stringify(r.Reachable)}, ms=${toInt(r.ResponseMs)}`);
+    // If result is an array, it means the DNS query succeeded (Resolve-DnsName
+    // returned raw records) but the PS script didn't wrap it in our expected
+    // object format. Treat that as reachable. Otherwise parse the explicit
+    // Reachable flag: PowerShell booleans can serialize as JSON true, the string
+    // "True", or 1 depending on the ConvertTo-Json path — handle all forms so a
+    // reachable forwarder (e.g. 1.1.1.1 at 328ms) is never recorded as down,
+    // and a raw record array is never passed to a boolean DB column.
+    const isArray = Array.isArray(r);
+    const isReachable = isArray ? true : (r.Reachable === true || r.Reachable === 'True' || r.Reachable === 1);
+    const responseMs = isArray ? null : toInt(r.ResponseMs);
+    log(`Forwarder ${fwd}: reachable=${isReachable}, raw=${isArray ? 'array' : JSON.stringify(r.Reachable)}, ms=${responseMs}`);
     await db.query(
       `INSERT INTO dns_forwarder_health (server_id, forwarder_ip, is_reachable, response_time_ms, last_checked)
        VALUES ($1,$2,$3,$4,NOW())
        ON CONFLICT (server_id, forwarder_ip) DO UPDATE SET
          is_reachable=EXCLUDED.is_reachable, response_time_ms=EXCLUDED.response_time_ms, last_checked=NOW()`,
-      [server.id, fwd, isReachable, toInt(r.ResponseMs)]
+      [server.id, fwd, isReachable, responseMs]
     ).catch(e => log(`[Forwarders] ${ip}->${fwd} upsert failed: ${e.message}`));
   }
 }

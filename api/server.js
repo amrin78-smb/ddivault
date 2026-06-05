@@ -1357,7 +1357,9 @@ app.post('/api/servers', requireWrite, async (req, res) => {
        RETURNING id, hostname, ip_address::text, role, description,
                  auth_mode, ps_username, winrm_port, winrm_https, notes, site_id, is_active, created_at`,
       [
-        hostname || null, ip_address || null, role || 'both', description || null,
+        // hostname is NOT NULL in the schema — fall back to ip_address when a
+        // server is added by IP only (validation above guarantees one is present).
+        hostname || ip_address || null, ip_address || null, role || 'both', description || null,
         auth_mode || 'kerberos', ps_username || null, encryptedPass,
         parseInt(winrm_port || '5985'), winrm_https === true,
         notes || null, site_id ? parseInt(site_id) : null,
@@ -1407,11 +1409,11 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
                  auth_mode, ps_username, winrm_port, winrm_https,
                  winrm_test_ok, winrm_tested_at, notes, is_active, site_id`,
       encryptedPass !== undefined
-        ? [id, hostname||null, ip_address||null, role||'both', description||null,
+        ? [id, hostname||ip_address||null, ip_address||null, role||'both', description||null,
            is_active !== false, auth_mode||'kerberos', ps_username||null,
            encryptedPass, parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
            site_id ? parseInt(site_id) : null]
-        : [id, hostname||null, ip_address||null, role||'both', description||null,
+        : [id, hostname||ip_address||null, ip_address||null, role||'both', description||null,
            is_active !== false, auth_mode||'kerberos', ps_username||null,
            parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
            site_id ? parseInt(site_id) : null]
