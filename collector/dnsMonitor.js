@@ -149,6 +149,7 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
   // Normalize the live PS result to a candidate array.
   let candidates = raw == null ? [] : (Array.isArray(raw) ? raw : [raw]);
   log(`[Forwarders] ${ip}: PS returned ${candidates.length} forwarders`);
+  log(`[Forwarders] ${ip}: candidates raw = ${JSON.stringify(candidates)}`);
 
   // Fallback — if the live call returned nothing, use the forwarders already
   // stored on ddi_servers (populated earlier by detectDnsRoles). Distinguishes
@@ -164,6 +165,7 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
   const list = candidates
     .map(v => (typeof v === 'string' ? v.trim() : v))
     .filter(isIpStr);
+  log(`[Forwarders] ${ip}: list after filter = ${JSON.stringify(list)}`);
 
   for (const fwd of list) {
     let r;
