@@ -90,6 +90,28 @@ All changes must follow this workflow:
 git add -A && git commit -m "feat/fix: description" && git push
 ```
 
+### ⚙️ Default — use multiple sub-agents to work faster and produce better output
+By default, where it helps and is possible, fan out work across multiple sub-agents
+rather than doing everything sequentially in one thread.
+
+When to fan out (default to it):
+- The work touches several independent files/components (e.g. multiple frontend tabs,
+  separate API modules) → one sub-agent per file/area, run in parallel.
+- A task splits into independent research + implementation + verification streams.
+- Broad searches/audits across the codebase → use Explore/general-purpose sub-agents.
+
+When NOT to fan out (do it directly):
+- A single small edit in one file, or tightly-coupled sequential steps where parallelism
+  adds orchestration overhead without real concurrency.
+
+Rules when fanning out:
+- Give each sub-agent a precise, self-contained spec (files, exact changes, constraints).
+- Sub-agents must NOT run `npm run build`, commit, or push — run ONE build at the end and
+  do a single commit/push after all sub-agents return (avoids `.next` lock + race conflicts).
+- Assign non-overlapping files to avoid edit conflicts; coordinate shared integration points
+  (e.g. props passed between files) explicitly in each prompt.
+- After sub-agents finish: run `npm run build`, fix any TypeScript errors, then commit/push.
+
 ## Environment Variables
 
 ### Root `.env.local` (used by API + Collector)
