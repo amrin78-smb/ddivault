@@ -184,12 +184,14 @@ async function pollScavenging(db, ps, ip, auth, zones) {
  * `servers` is an array of active server rows; `serverAuth(server)` → auth object.
  */
 async function runDnsMonitor(db, ps, servers, serverAuth) {
-  let serverCount = 0;
-  for (const server of servers) {
-    if (server.role === 'dhcp') continue;
+  // Poll a single DNS server end-to-end. Returns true if the server was actually
+  // polled (false if skipped — DHCP-only role or unresolvable auth). Each check
+  // is independently guarded so a failure in one never aborts the others.
+  async function pollServer(server) {
+    if (server.role === 'dhcp') return false;
     const ip = cleanIp(server.ip_address);
     let auth;
-    try { auth = serverAuth(server); } catch { continue; }
+    try { auth = serverAuth(server); } catch { return false; }
 
     // Confirm credentials are resolved correctly for this server (mirrors the
     // pattern collector.js uses for DHCP polling). For credential mode this
@@ -213,8 +215,17 @@ async function runDnsMonitor(db, ps, servers, serverAuth) {
     try { await checkForwarderHealth(db, ps, server, ip, auth); } catch (e) { log(`[Forwarders] ${ip} failed: ${e.message}`); }
     try { await pollScavenging(db, ps, ip, auth, zones); } catch (e) { log(`[Scavenging] ${ip} failed: ${e.message}`); }
 
-    serverCount++;
+    return true;
   }
+
+  // Poll all DNS servers in parallel so a slow server (e.g. BKKDC01 at 7–8 min)
+  // no longer blocks the others — total time is max(per-server) not the sum.
+  const results = await Promise.allSettled(
+    servers.map(server => pollServer(server).catch(err =>
+      log(`Error polling ${server.hostname}: ${err.message}`)
+    ))
+  );
+  const serverCount = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
 
   // Best-effort anomaly evaluation over the freshly collected data.
   try { await require('./anomalyDetector').detectDnsAnomalies(db); }

@@ -48,7 +48,7 @@ const INTERVAL_HEALTH      = 5   * 60 * 1000;   // per-server health score
 const INTERVAL_FORECAST    = 6   * 60 * 60 * 1000; // 6 hours
 const INTERVAL_ANOMALY     = 30  * 60 * 1000;      // 30 minutes
 const INTERVAL_SITEHEALTH  = 15  * 60 * 1000;      // 15 minutes
-const INTERVAL_DNS_MONITOR = 15  * 60 * 1000;      // 15 minutes — DNS infra monitoring
+const INTERVAL_DNS_MONITOR = 20  * 60 * 1000;      // 20 minutes — DNS infra monitoring (servers polled in parallel)
 const INTERVAL_DIGEST      = 60  * 60 * 1000;      // hourly digest + nightly-baseline tick
 
 const lastLogEventTime = {};
@@ -530,8 +530,9 @@ async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serve
 async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
 async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
 async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
-// Re-entrancy guard — the DNS monitor runs every 15m and can take minutes on
-// servers with many zones. If a previous run is still in flight, skip this tick
+// Re-entrancy guard — the DNS monitor runs every 20m and can take minutes on
+// servers with many zones (servers are polled in parallel, so the run takes
+// max(per-server) not the sum). If a previous run is still in flight, skip this tick
 // so DNS monitoring never runs concurrently with itself and exhausts the DB pool
 // while DHCP polling (every 5m) is also active.
 let _dnsMonitorRunning = false;
