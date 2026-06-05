@@ -239,14 +239,37 @@ function TypeBadge({ type, small }: { type: string; small?: boolean }) {
 }
 
 // ════════════════════════════════════════════════════════════
-// Add Record Modal (module scope)
+// Record Modal — add or edit a DNS record (module scope)
+// DNS has no native update operation, so an edit is implemented as
+// delete-the-old-record then create-the-new-one (see save()).
 // ════════════════════════════════════════════════════════════
-function AddRecordModal({ zone, servers, onClose, onDone }: {
-  zone: DnsZone; servers: DnsServer[]; onClose: () => void; onDone: () => void;
+function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
+  zone: DnsZone; servers: DnsServer[]; editRecord?: DnsRecord | null; onClose: () => void; onDone: () => void;
 }) {
-  const [form, setForm] = useState({
-    record_type: 'A', hostname: '', record_data: '', ttl: '3600', preference: '10',
-  });
+  const isEdit = !!editRecord;
+
+  // When editing an MX record, its record_data may be stored as "10 mail.domain.com" —
+  // split the leading preference out so it lands in its own field.
+  const initialForm = () => {
+    if (editRecord) {
+      let data = editRecord.record_data || '';
+      let preference = '10';
+      if ((editRecord.record_type || '').toUpperCase() === 'MX') {
+        const m = data.match(/^\s*(\d+)\s+(.+)$/);
+        if (m) { preference = m[1]; data = m[2]; }
+      }
+      return {
+        record_type: editRecord.record_type || 'A',
+        hostname: editRecord.hostname || '',
+        record_data: data,
+        ttl: String(editRecord.ttl || 3600),
+        preference,
+      };
+    }
+    return { record_type: 'A', hostname: '', record_data: '', ttl: '3600', preference: '10' };
+  };
+
+  const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   useEscape(onClose);
@@ -255,11 +278,21 @@ function AddRecordModal({ zone, servers, onClose, onDone }: {
     if (!form.hostname || !form.record_data) { toast('Hostname and record data required', 'error'); return; }
     setLoading(true);
     try {
+      // DNS has no update — when editing, delete the original record first, then recreate it.
+      if (isEdit && editRecord) {
+        await api('/dns/records', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            server_id: zone.server_id, zone_name: zone.zone_name,
+            hostname: editRecord.hostname, record_type: editRecord.record_type, record_data: editRecord.record_data,
+          }),
+        });
+      }
       await api('/dns/records', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_id: zone.server_id, zone_name: zone.zone_name, ...form }),
       });
-      toast(`${form.record_type} record added: ${form.hostname}`, 'success');
+      toast(`${form.record_type} record ${isEdit ? 'updated' : 'added'}: ${form.hostname}`, 'success');
       onDone();
     } catch (e: any) { toast(e.message, 'error'); }
     finally { setLoading(false); }
@@ -271,12 +304,25 @@ function AddRecordModal({ zone, servers, onClose, onDone }: {
     NS: 'ns1.domain.com.',
   };
 
+  // Always include the record's current type in the dropdown, even if it's a type
+  // (SRV, AAAA, …) not normally offered for new records.
+  const typeOptions = ADD_RECORD_TYPES.includes(form.record_type)
+    ? ADD_RECORD_TYPES
+    : [form.record_type, ...ADD_RECORD_TYPES];
+
+  // Standard TTL choices; include the record's own TTL if it's non-standard.
+  const STD_TTLS = ['300', '3600', '86400', '604800'];
+  const ttlOptions = STD_TTLS.includes(form.ttl) ? STD_TTLS : [form.ttl, ...STD_TTLS];
+  const ttlLabel = (v: string) => ({
+    '300': '300 — 5 minutes', '3600': '3600 — 1 hour', '86400': '86400 — 1 day', '604800': '604800 — 1 week',
+  } as Record<string, string>)[v] || `${v} — custom`;
+
   return (
     <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', padding: 24, width: 480, maxWidth: '94vw' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>Add DNS Record</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{isEdit ? 'Edit DNS Record' : 'Add DNS Record'}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
               Zone: <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{zone.zone_name}</span>
               {' · '}Server: {servers.find(s => s.id === zone.server_id)?.hostname || zone.server_id}
@@ -287,12 +333,13 @@ function AddRecordModal({ zone, servers, onClose, onDone }: {
 
         <div style={PS_WARNING}>
           ⚡ Runs PowerShell on the DNS server via WinRM. Requires DNS Server role and admin rights.
+          {isEdit && ' Editing recreates the record (delete + add) — DNS has no in-place update.'}
         </div>
 
         <div style={{ marginBottom: 10 }}>
           <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Record Type</label>
           <select value={form.record_type} onChange={e => setForm(p => ({ ...p, record_type: e.target.value }))} style={INPUT}>
-            {ADD_RECORD_TYPES.map(t => <option key={t} value={t}>{t} — {TYPE_LABELS[t]}</option>)}
+            {typeOptions.map(t => <option key={t} value={t}>{t}{TYPE_LABELS[t] ? ` — ${TYPE_LABELS[t]}` : ''}</option>)}
           </select>
         </div>
 
@@ -322,17 +369,14 @@ function AddRecordModal({ zone, servers, onClose, onDone }: {
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>TTL (seconds)</label>
           <select value={form.ttl} onChange={e => setForm(p => ({ ...p, ttl: e.target.value }))} style={INPUT}>
-            <option value="300">300 — 5 minutes</option>
-            <option value="3600">3600 — 1 hour</option>
-            <option value="86400">86400 — 1 day</option>
-            <option value="604800">604800 — 1 week</option>
+            {ttlOptions.map(v => <option key={v} value={v}>{ttlLabel(v)}</option>)}
           </select>
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} className="btn">Cancel</button>
           <button onClick={save} disabled={loading} className="btn btn-primary" style={{ opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Adding…' : '✓ Add Record on DNS Server'}
+            {loading ? (isEdit ? 'Saving…' : 'Adding…') : (isEdit ? '✓ Save Changes on DNS Server' : '✓ Add Record on DNS Server')}
           </button>
         </div>
       </div>
@@ -892,6 +936,10 @@ function ZonesRecordsPanel() {
   const [recordTotal, setRecordTotal] = useState(0);
   const [showAddZone, setShowAddZone] = useState(false);
   const [showAddRecord, setShowAddRecord] = useState(false);
+  const [editRecord, setEditRecord]   = useState<DnsRecord | null>(null);
+  const [selectedRecords, setSelectedRecords] = useState<Record<number, boolean>>({});
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [exporting, setExporting]     = useState(false);
   const [loadingZones, setLoadingZones]   = useState(true);
   const [loadingRecords, setLoadingRecords] = useState(false);
 
@@ -932,6 +980,7 @@ function ZonesRecordsPanel() {
     const d = await api(`/dns/records?${params}`).catch(() => null);
     if (d) { setRecords(d.data || []); setRecordTotal(d.total || 0); }
     else { setRecords([]); setRecordTotal(0); }
+    setSelectedRecords({});
     setLoadingRecords(false);
   }, [recordSearch, typeFilter, selectedZone]);
 
@@ -959,6 +1008,94 @@ function ZonesRecordsPanel() {
       loadBreakdown();
       loadZones();
     } catch (e: any) { toast(e.message, 'error'); }
+  };
+
+  // resolve the owning zone for a record (records may span zones during a global search)
+  const zoneForRecord = useCallback((record: DnsRecord): DnsZone | null => {
+    return zones.find(z => z.id === record.zone_id) || (selectedZone && selectedZone.id === record.zone_id ? selectedZone : null) || selectedZone;
+  }, [zones, selectedZone]);
+
+  const selectedRecordRows = useMemo(() => records.filter(r => selectedRecords[r.id]), [records, selectedRecords]);
+
+  const toggleSelectAll = () => {
+    if (records.length > 0 && selectedRecordRows.length === records.length) {
+      setSelectedRecords({});
+    } else {
+      const m: Record<number, boolean> = {};
+      records.forEach(r => { m[r.id] = true; });
+      setSelectedRecords(m);
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (selectedRecordRows.length === 0) { toast('No records selected', 'error'); return; }
+    if (!confirm(`Delete ${selectedRecordRows.length} selected record(s) from the DNS server(s)?`)) return;
+    setBulkDeleting(true);
+    let ok = 0, fail = 0;
+    for (const r of selectedRecordRows) {
+      const zone = zoneForRecord(r);
+      if (!zone) { fail++; continue; }
+      try {
+        await api('/dns/records', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            server_id: zone.server_id, zone_name: zone.zone_name,
+            hostname: r.hostname, record_type: r.record_type, record_data: r.record_data,
+          }),
+        });
+        ok++;
+      } catch { fail++; }
+    }
+    setBulkDeleting(false);
+    setSelectedRecords({});
+    toast(`Deleted ${ok} record(s)${fail ? `, ${fail} failed` : ''}`, fail ? 'info' : 'success');
+    loadRecords(recordPage);
+    loadBreakdown();
+    loadZones();
+  };
+
+  // Export the selected zone as a standard DNS zone file (BIND-style).
+  const exportZone = async (zone: DnsZone) => {
+    setExporting(true);
+    try {
+      // Pull every record for the zone (paginate at the API's max page size).
+      const all: DnsRecord[] = [];
+      const LIMIT = 500;
+      for (let page = 1; ; page++) {
+        const params = new URLSearchParams({ page: String(page), limit: String(LIMIT), zone_id: String(zone.id) });
+        const d = await api(`/dns/records?${params}`);
+        const batch = (d.data as DnsRecord[]) || [];
+        all.push(...batch);
+        if (batch.length === 0 || all.length >= (d.total || 0)) break;
+      }
+
+      const lines: string[] = [
+        `; Zone file for ${zone.zone_name}`,
+        `; Exported from DDIVault — ${all.length} record${all.length === 1 ? '' : 's'}`,
+        `$ORIGIN ${zone.zone_name}.`,
+        `$TTL 3600`,
+        '',
+      ];
+      for (const r of all) {
+        const name = (r.hostname || '@').padEnd(28);
+        const ttl  = String(r.ttl || 3600).padStart(7);
+        const type = (r.record_type || '').padEnd(6);
+        lines.push(`${name} ${ttl} IN ${type} ${r.record_data || ''}`.trimEnd());
+      }
+      const text = lines.join('\n') + '\n';
+
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${zone.zone_name}.zone`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast(`Exported ${all.length} record(s) from ${zone.zone_name}`, 'success');
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setExporting(false); }
   };
 
   const deleteZone = async (zone: DnsZone) => {
@@ -1129,6 +1266,17 @@ function ZonesRecordsPanel() {
                 <option value="">All types</option>
                 {RECORD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              {canWrite && selectedRecordRows.length > 0 && (
+                <button onClick={bulkDelete} disabled={bulkDeleting} className="btn"
+                  style={{ color: 'var(--red)', borderColor: 'var(--red)', whiteSpace: 'nowrap', opacity: bulkDeleting ? 0.6 : 1 }}>
+                  {bulkDeleting ? <Spinner size={12} /> : `Delete selected (${selectedRecordRows.length})`}
+                </button>
+              )}
+              <button onClick={() => selectedZone && exportZone(selectedZone)} disabled={!selectedZone || exporting} className="btn"
+                title={selectedZone ? `Export ${selectedZone.zone_name} as a zone file` : 'Select a zone to export'}
+                style={{ opacity: selectedZone && !exporting ? 1 : 0.5, whiteSpace: 'nowrap' }}>
+                {exporting ? <Spinner size={12} /> : '↓ Export zone'}
+              </button>
               {canWrite && (
                 <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
                   style={{ opacity: selectedZone ? 1 : 0.5, whiteSpace: 'nowrap' }}>+ Add Record</button>
@@ -1162,6 +1310,14 @@ function ZonesRecordsPanel() {
                 <table className="data-table">
                   <thead>
                     <tr>
+                      {canWrite && (
+                        <th style={{ width: 30 }}>
+                          <input type="checkbox" aria-label="Select all records"
+                            checked={records.length > 0 && selectedRecordRows.length === records.length}
+                            onChange={toggleSelectAll}
+                            style={{ cursor: 'pointer' }} />
+                        </th>
+                      )}
                       <th>Hostname</th>
                       <th>Type</th>
                       <th>Data</th>
@@ -1176,8 +1332,20 @@ function ZonesRecordsPanel() {
                     {records.map((r, i) => {
                       const age = recordAgeDays(r);
                       const stale = age != null && age > 90;
+                      const checked = !!selectedRecords[r.id];
                       return (
-                        <tr key={r.id ?? i} style={stale ? { background: 'var(--yellow)' + '14' } : undefined}>
+                        <tr key={r.id ?? i} style={
+                          checked ? { background: 'var(--primary-light)' }
+                          : stale ? { background: 'var(--yellow)' + '14' } : undefined
+                        }>
+                          {canWrite && (
+                            <td>
+                              <input type="checkbox" aria-label={`Select ${r.hostname}`}
+                                checked={checked}
+                                onChange={e => setSelectedRecords(p => ({ ...p, [r.id]: e.target.checked }))}
+                                style={{ cursor: 'pointer' }} />
+                            </td>
+                          )}
                           <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.hostname}</td>
                           <td><TypeBadge type={r.record_type} /></td>
                           <td style={{ fontFamily: 'monospace', fontSize: 12, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.record_data}>{r.record_data}</td>
@@ -1185,10 +1353,14 @@ function ZonesRecordsPanel() {
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.zone_name}</td>
                           {hasTimestamps && <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(r.last_updated || r.last_seen)}</td>}
                           {hasTimestamps && <td style={{ fontSize: 12, color: stale ? 'var(--orange)' : 'var(--text-muted)', fontWeight: stale ? 700 : 400 }}>{age != null ? `${age}d` : '—'}</td>}
-                          <td style={{ textAlign: 'right' }}>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {canWrite && (
-                              <button onClick={() => deleteRecord(r)}
-                                style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                              <>
+                                <button onClick={() => setEditRecord(r)}
+                                  style={{ fontSize: 12, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', marginRight: 10 }}>Edit</button>
+                                <button onClick={() => deleteRecord(r)}
+                                  style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                              </>
                             )}
                           </td>
                         </tr>
@@ -1222,9 +1394,14 @@ function ZonesRecordsPanel() {
           onDone={() => { setShowAddZone(false); loadZones(); loadBreakdown(); }} />
       )}
       {showAddRecord && selectedZone && (
-        <AddRecordModal zone={selectedZone} servers={servers}
+        <RecordModal zone={selectedZone} servers={servers}
           onClose={() => setShowAddRecord(false)}
           onDone={() => { setShowAddRecord(false); loadRecords(recordPage); loadBreakdown(); loadZones(); }} />
+      )}
+      {editRecord && zoneForRecord(editRecord) && (
+        <RecordModal zone={zoneForRecord(editRecord)!} servers={servers} editRecord={editRecord}
+          onClose={() => setEditRecord(null)}
+          onDone={() => { setEditRecord(null); loadRecords(recordPage); loadBreakdown(); loadZones(); }} />
       )}
     </div>
   );
