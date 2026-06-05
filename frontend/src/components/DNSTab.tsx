@@ -17,6 +17,8 @@ interface DnsServer {
   role: string;
   poll_status: string;
   last_polled: string;
+  health_score?: number | null;
+  winrm_test_ok?: boolean | null;
 }
 
 interface DnsZone {
@@ -73,6 +75,7 @@ interface TopologyServer {
   health_score: number;
   query_ms: number;
   poll_status: string;
+  winrm_test_ok?: boolean | null;
   is_dns_primary: boolean;
   dns_forwarders: string[] | null;
   is_pdc_emulator: boolean;
@@ -181,6 +184,22 @@ function scoreColor(n: number): string {
   if (n >= 90) return 'var(--green)';
   if (n >= 70) return 'var(--yellow)';
   return 'var(--red)';
+}
+
+// ── DNS server online status ──────────────────────────────────
+// ONLINE if health ≥ 70, DEGRADED if 50–69, OFFLINE if < 50 or the WinRM test
+// failed. Deliberately independent of poll_status (whether the DNS monitor has
+// successfully polled yet) — a healthy, reachable server must not read OFFLINE.
+type DnsServerStatus = 'online' | 'degraded' | 'offline';
+function dnsServerStatus(healthScore?: number | null, winrmOk?: boolean | null): DnsServerStatus {
+  if (winrmOk === false) return 'offline';
+  const h = healthScore ?? 0;
+  if (h < 50) return 'offline';
+  if (h < 70) return 'degraded';
+  return 'online';
+}
+function dnsStatusColor(s: DnsServerStatus): string {
+  return s === 'online' ? 'var(--green)' : s === 'degraded' ? 'var(--yellow)' : 'var(--red)';
 }
 
 // ── Shared inline styles ──────────────────────────────────────
@@ -404,7 +423,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
 function ServerPill({ server, active, onClick }: {
   server: DnsServer; active: boolean; onClick: () => void;
 }) {
-  const online = server.poll_status === 'ok';
+  const status = dnsServerStatus(server.health_score, server.winrm_test_ok);
   return (
     <button onClick={onClick} style={{
       padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 12,
@@ -412,7 +431,7 @@ function ServerPill({ server, active, onClick }: {
       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
       display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: 'inherit',
     }}>
-      <span style={{ width: 8, height: 8, borderRadius: '50%', background: online ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: dnsStatusColor(status), flexShrink: 0 }} />
       <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{server.hostname}</span>
       <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: 11 }}>{server.ip_address}</span>
       <span className={`badge ${server.role === 'both' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9 }}>{server.role}</span>
@@ -593,7 +612,11 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
             <span className={`badge ${srv.is_dns_primary ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9 }}>
               {srv.is_dns_primary ? 'PRIMARY' : 'SECONDARY'}
             </span>
-            {srv.poll_status !== 'ok' && <span className="badge badge-gray" style={{ fontSize: 9, color: 'var(--red)' }}>OFFLINE</span>}
+            {(() => {
+              const st = dnsServerStatus(srv.health_score, srv.winrm_test_ok);
+              if (st === 'online') return null;
+              return <span className="badge badge-gray" style={{ fontSize: 9, color: dnsStatusColor(st) }}>{st === 'degraded' ? 'DEGRADED' : 'OFFLINE'}</span>;
+            })()}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 2 }}>{srv.ip}</div>
           <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>

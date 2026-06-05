@@ -154,7 +154,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
     try {
       const [dnsZonesTotal, dnsServers, dnsSync, dnsRepl] = await Promise.all([
         db.query('SELECT COUNT(*) AS n FROM dns_zones'),
-        db.query("SELECT COUNT(*) FILTER (WHERE poll_status='ok') AS online, COUNT(*) AS total FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE"),
+        db.query("SELECT COUNT(*) FILTER (WHERE health_score >= 70 AND winrm_test_ok IS NOT FALSE) AS online, COUNT(*) AS total FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE"),
         db.query("SELECT COUNT(DISTINCT zone_name) FILTER (WHERE is_in_sync=TRUE) AS in_sync, COUNT(DISTINCT zone_name) FILTER (WHERE is_in_sync=FALSE) AS out_of_sync FROM dns_zone_sync"),
         db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE replication_lag=TRUE'),
       ]);
@@ -2038,7 +2038,8 @@ async function getServerWithAuth(serverId) {
 app.get('/api/dns/servers', async (req, res) => {
   try {
     const rows = await db.query(
-      `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled
+      `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled,
+              health_score, winrm_test_ok
        FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ORDER BY hostname`
     );
     res.json({ data: rows.rows });
@@ -2201,7 +2202,7 @@ app.get('/api/dns/health', async (req, res) => {
     ] = await Promise.all([
       db.query('SELECT COUNT(*) AS n FROM dns_zones'),
       db.query("SELECT COUNT(*) AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE"),
-      db.query("SELECT COUNT(*) AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE AND poll_status='ok'"),
+      db.query("SELECT COUNT(*) AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE AND health_score >= 70 AND winrm_test_ok IS NOT FALSE"),
       db.query('SELECT COUNT(DISTINCT zone_name) AS n FROM dns_zone_sync WHERE is_in_sync=TRUE'),
       db.query('SELECT COUNT(DISTINCT zone_name) AS n FROM dns_zone_sync WHERE is_in_sync=FALSE'),
       db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE replication_lag=TRUE'),
@@ -2233,7 +2234,7 @@ app.get('/api/dns/topology', async (req, res) => {
   try {
     const rows = await db.query(
       `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.health_score,
-              s.query_ms, s.poll_status, s.is_dns_primary, s.dns_forwarders,
+              s.query_ms, s.poll_status, s.winrm_test_ok, s.is_dns_primary, s.dns_forwarders,
               r.is_pdc_emulator, r.domain, r.replication_type,
               (SELECT COUNT(*) FROM dns_zones z WHERE z.server_id = s.id) AS zone_count,
               (SELECT COALESCE(SUM(record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count

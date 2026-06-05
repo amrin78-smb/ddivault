@@ -143,12 +143,16 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
     try { r = ps.testDnsForwarder(ip, auth, fwd); }
     catch (e) { log(`[Forwarders] ${ip}->${fwd}: ${e.message}`); continue; }
     if (!r) continue;
+    // PowerShell booleans can serialize as JSON true, the string "True", or 1
+    // depending on the ConvertTo-Json path — parse all forms explicitly so a
+    // reachable forwarder (e.g. 1.1.1.1 at 328ms) is never recorded as down.
+    const isReachable = r.Reachable === true || r.Reachable === 'True' || r.Reachable === 1;
     await db.query(
       `INSERT INTO dns_forwarder_health (server_id, forwarder_ip, is_reachable, response_time_ms, last_checked)
        VALUES ($1,$2,$3,$4,NOW())
        ON CONFLICT (server_id, forwarder_ip) DO UPDATE SET
          is_reachable=EXCLUDED.is_reachable, response_time_ms=EXCLUDED.response_time_ms, last_checked=NOW()`,
-      [server.id, fwd, r.Reachable === true, toInt(r.ResponseMs)]
+      [server.id, fwd, isReachable, toInt(r.ResponseMs)]
     ).catch(e => log(`[Forwarders] ${ip}->${fwd} upsert failed: ${e.message}`));
   }
 }
