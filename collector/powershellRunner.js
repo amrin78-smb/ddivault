@@ -345,7 +345,7 @@ function testDnsForwarder(serverIp, auth, forwarderIp) {
   // Force an A-record lookup and use -ErrorAction Stop so a failed resolve lands
   // in catch; both branches emit an explicit [PSCustomObject] with a real
   // boolean Reachable (never the raw record array, which has no .Reachable).
-  const script = `$start=Get-Date; try { $r=Resolve-DnsName -Name 'google.com' -Server '${f}' -Type A -ErrorAction Stop; $ms=[int](((Get-Date)-$start).TotalMilliseconds); [PSCustomObject]@{Reachable=$true;ResponseMs=$ms;Forwarder='${f}'} } catch { $ms=[int](((Get-Date)-$start).TotalMilliseconds); [PSCustomObject]@{Reachable=$false;ResponseMs=$ms;Forwarder='${f}'} } | ConvertTo-Json -Compress`;
+  const script = `$start=Get-Date;try{$r=Resolve-DnsName -Name 'google.com' -Server '${f}' -Type A -ErrorAction Stop;$ms=[int](((Get-Date)-$start).TotalMilliseconds);[PSCustomObject]@{Reachable=$true;ResponseMs=$ms;Forwarder='${f}'}}catch{$ms=[int](((Get-Date)-$start).TotalMilliseconds);[PSCustomObject]@{Reachable=$false;ResponseMs=$ms;Forwarder='${f}'}}|ConvertTo-Json -Compress`;
   return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
