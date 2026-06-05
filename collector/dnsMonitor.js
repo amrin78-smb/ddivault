@@ -44,7 +44,19 @@ async function detectDnsRoles(db, ps, server, ip, auth) {
   try { role = ps.getDnsServerRole(ip, auth); } catch (e) { log(`[Roles] ${ip}: ${e.message}`); return; }
   if (!role) return;
 
-  const isPdc = role.isPDC === true;
+  // Defensive: runPS double-encodes in some paths (a JSON string of a JSON
+  // string), so JSON.parse can hand back a STRING instead of an object — then
+  // role.isPDC is undefined and is_dns_primary is never set. Re-parse here.
+  if (typeof role === 'string') {
+    try { role = JSON.parse(role); } catch { log(`[Roles] ${ip}: role not parseable: ${role.slice(0, 120)}`); return; }
+  }
+  if (!role || typeof role !== 'object') return;
+
+  // PowerShell ConvertTo-Json emits lowercase booleans, but tolerate the
+  // string forms ("True"/"true") that show up when a value round-trips as text.
+  const isPdc = role.isPDC === true || role.isPDC === 'True' || role.isPDC === 'true';
+
+  console.log(`[DNS-Monitor] Role detection for ${server.hostname}: raw=${JSON.stringify(role)}, isPDC=${role?.isPDC}, isPdc=${isPdc}`);
   // Parse comma-separated forwarder string into a JS array (text[]).
   const forwarders = String(role.forwarders || '')
     .split(',')
