@@ -1197,6 +1197,21 @@ app.get('/api/anomalies/summary', async (req, res) => {
   }
 });
 
+app.post('/api/anomalies/acknowledge-all', requireWrite, async (req, res) => {
+  try {
+    const by = (req.user && req.user.email) || req.body.user || 'admin';
+    const result = await db.query(
+      `UPDATE anomaly_events SET acknowledged=TRUE, acknowledged_at=NOW(), acknowledged_by=$1 WHERE acknowledged=FALSE`,
+      [by]
+    );
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'anomaly_event', entity_id: null, entity_name: 'all', change_summary: `Acknowledged all anomalies (${result.rowCount})` });
+    res.json({ success: true, count: result.rowCount });
+  } catch (err) {
+    console.error('[API] anomaly ack-all error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/anomalies/:id/ack', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);

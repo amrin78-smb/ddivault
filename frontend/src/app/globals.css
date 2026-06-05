@@ -391,3 +391,9 @@ tbody tr:hover td { background: var(--bg-primary); }
   z-index: 1000;
   animation: fadeIn 0.15s ease;
 }
+
+/* ── IPAM subnet slide-over panel ──────────────────────────── */
+.ipam-slideover { width: 70%; max-width: 1100px; }
+@media (max-width: 768px) {
+  .ipam-slideover { width: 100% !important; max-width: none !important; }
+}

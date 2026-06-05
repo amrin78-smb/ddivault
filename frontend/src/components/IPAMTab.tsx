@@ -573,11 +573,29 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
   const [statusFilter, setStatus] = useState('');
   const [scanning, setScanning]   = useState(false);
   const [reserveIp, setReserveIp] = useState<string | null>(null);
+  const [visible, setVisible]     = useState(false);
   const { toast } = useToast();
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
   const canWrite = rbacCanWrite && licenseState.canWrite;
-  useEscape(onClose);
+
+  // Slide-in on mount; slide-out then close on dismiss
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    setVisible(false);
+    setTimeout(() => onClose(), 250);
+  }, [onClose]);
+
+  // ESC closes the panel (with slide-out animation)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') requestClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [requestClose]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -656,12 +674,31 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
     : 'Unassigned';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-primary)', zIndex: 200, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <>
+      {/* Dimmed backdrop — click to close */}
+      <div
+        onClick={requestClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000,
+          opacity: visible ? 1 : 0, transition: 'opacity 0.25s ease',
+        }}
+      />
+
+      {/* Slide-over panel */}
+      <div
+        className="ipam-slideover"
+        style={{
+          position: 'fixed', top: 0, right: 0, height: '100vh', maxWidth: 1100,
+          background: 'var(--bg-card)', zIndex: 1001, boxShadow: '-8px 0 24px rgba(0,0,0,0.15)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          transform: visible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
+        }}
+      >
       {/* Header */}
       <div style={{ background: 'var(--navy)', padding: '12px 24px', flexShrink: 0 }}>
         <div style={{ marginBottom: 8 }}>
           <Breadcrumb light items={[
-            { label: 'IPAM', onClick: onClose },
+            { label: 'IPAM', onClick: requestClose },
             { label: supLabel },
             { label: `${cleanNetwork(subnet.network)}/${subnet.prefix_length}` },
           ]} />
@@ -693,7 +730,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
               {scanning ? <><Spinner color="#fff" /> Scanning…</> : '⟳ Scan Now'}
             </button>
           )}
-          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn" onClick={requestClose}>Close</button>
         </div>
       </div>
 
@@ -777,7 +814,8 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
       </div>
 
       {reserveIp && <ReserveModal ip={reserveIp} onClose={() => setReserveIp(null)} onConfirm={doReserve} />}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -926,11 +964,6 @@ export default function IPAMTab() {
   const totalIPs   = useMemo(() => subnets.reduce((a, s) => a + (s.total_hosts || 0), 0), [subnets]);
   const totalUnknown = useMemo(() => subnets.reduce((a, s) => a + (s.unknown_hosts || 0), 0), [subnets]);
 
-  // ── Subnet detail overlay ─────────────────────────────────
-  if (selectedSubnet) {
-    return <SubnetDetail subnet={selectedSubnet} sites={sites} onClose={() => { setSelectedSubnet(null); loadAll(); }} />;
-  }
-
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader
@@ -1076,6 +1109,16 @@ export default function IPAMTab() {
       {showAddVlan && <AddVlanModal sites={sites} onClose={() => setAddVlan(false)} onSaved={loadAll} />}
       {editSupernet && <EditSupernetModal supernet={editSupernet} sites={sites} onClose={() => setEditSupernet(null)} onSaved={loadAll} />}
       {editSubnet && <EditSubnetModal subnet={editSubnet} sites={sites} onClose={() => setEditSubnet(null)} onSaved={loadAll} />}
+
+      {/* ── Subnet detail slide-over ── */}
+      {selectedSubnet && (
+        <SubnetDetail
+          key={selectedSubnet.id}
+          subnet={selectedSubnet}
+          sites={sites}
+          onClose={() => { setSelectedSubnet(null); loadAll(); }}
+        />
+      )}
     </div>
   );
 }

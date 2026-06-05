@@ -107,6 +107,8 @@ export default function IntelligenceTab() {
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [loading, setLoading] = useState(true);
   const [acking, setAcking] = useState<number | null>(null);
+  const [ackingAll, setAckingAll] = useState(false);
+  const [ackedOpen, setAckedOpen] = useState(false);
 
   // filters
   const [severity, setSeverity] = useState('');
@@ -191,6 +193,26 @@ export default function IntelligenceTab() {
     setAcking(null);
   };
 
+  const acknowledgeAll = async () => {
+    setAckingAll(true);
+    try {
+      await api('/anomalies/acknowledge-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      toast('All anomalies acknowledged', 'success');
+      await Promise.all([loadList(false), loadSummary()]);
+    } catch (e: any) {
+      toast(e.message, 'error');
+    }
+    setAckingAll(false);
+  };
+
+  // Split anomalies into open (unacknowledged) and acknowledged
+  const openAnoms = useMemo(() => anomalies.filter(a => !a.acknowledged), [anomalies]);
+  const ackedAnoms = useMemo(() => anomalies.filter(a => a.acknowledged), [anomalies]);
+
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="Intelligence" subtitle="Behavioral & security anomaly detection" />
@@ -229,9 +251,16 @@ export default function IntelligenceTab() {
 
       {/* Timeline */}
       <div style={CARD}>
-        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={TITLE}>Anomaly Timeline</div>
-          <span style={MUTED}>{anomalies.length} events</span>
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <div style={TITLE}>Anomaly Timeline</div>
+            <span style={MUTED}>{anomalies.length} events</span>
+          </div>
+          {canWrite && openAnoms.length > 0 && (
+            <button className="btn btn-primary" disabled={ackingAll} onClick={acknowledgeAll}>
+              {ackingAll ? 'Acking…' : 'Acknowledge All'}
+            </button>
+          )}
         </div>
         {loading ? <TableSkeleton rows={8} cols={6} /> : anomalies.length === 0 ? (
           <EmptyState
@@ -240,48 +269,100 @@ export default function IntelligenceTab() {
             message="Behavioral and security anomalies will appear here as the collector flags unusual DHCP, DNS or IPAM activity."
           />
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left' }}>Time</th>
-                  <th style={{ textAlign: 'left' }}>Type</th>
-                  <th style={{ textAlign: 'left' }}>Severity</th>
-                  <th style={{ textAlign: 'left' }}>Entity</th>
-                  <th style={{ textAlign: 'left' }}>Description</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {anomalies.map(a => (
-                  <tr key={a.id} style={{ opacity: a.acknowledged ? 0.6 : 1 }}>
-                    <td style={{ whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-secondary)' }}>
-                      {a.detected_at ? new Date(a.detected_at).toLocaleString() : '—'}
-                    </td>
-                    <td style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{typeLabel(a.anomaly_type)}</td>
-                    <td><SeverityBadge severity={a.severity} /></td>
-                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {a.entity_type || a.entity_id
-                        ? <>{a.entity_type || ''}{a.entity_type && a.entity_id ? ' · ' : ''}<span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{a.entity_id || ''}</span></>
-                        : '—'}
-                    </td>
-                    <td style={{ fontSize: 13, color: 'var(--text-primary)' }}>{a.description || '—'}</td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {a.acknowledged ? (
-                        <span style={MUTED}>✓ acked{a.acknowledged_by ? ` by ${a.acknowledged_by}` : ''}</span>
-                      ) : canWrite ? (
-                        <button className="btn" disabled={acking === a.id} onClick={() => acknowledge(a.id)}>
-                          {acking === a.id ? 'Acking…' : 'Acknowledge'}
-                        </button>
-                      ) : (
-                        <span style={MUTED}>—</span>
-                      )}
-                    </td>
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Time</th>
+                    <th style={{ textAlign: 'left' }}>Type</th>
+                    <th style={{ textAlign: 'left' }}>Severity</th>
+                    <th style={{ textAlign: 'left' }}>Entity</th>
+                    <th style={{ textAlign: 'left' }}>Description</th>
+                    <th style={{ textAlign: 'right' }}>Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {openAnoms.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ ...MUTED, padding: '14px 18px' }}>No open anomalies</td>
+                    </tr>
+                  ) : openAnoms.map(a => (
+                    <tr key={a.id}>
+                      <td style={{ whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-secondary)' }}>
+                        {a.detected_at ? new Date(a.detected_at).toLocaleString() : '—'}
+                      </td>
+                      <td style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>{typeLabel(a.anomaly_type)}</td>
+                      <td><SeverityBadge severity={a.severity} /></td>
+                      <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {a.entity_type || a.entity_id
+                          ? <>{a.entity_type || ''}{a.entity_type && a.entity_id ? ' · ' : ''}<span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{a.entity_id || ''}</span></>
+                          : '—'}
+                      </td>
+                      <td style={{ fontSize: 13, color: 'var(--text-primary)' }}>{a.description || '—'}</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {canWrite ? (
+                          <button className="btn" disabled={acking === a.id} onClick={() => acknowledge(a.id)}>
+                            {acking === a.id ? 'Acking…' : 'Acknowledge'}
+                          </button>
+                        ) : (
+                          <span style={MUTED}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {ackedAnoms.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border-light)' }}>
+                <div
+                  onClick={() => setAckedOpen(o => !o)}
+                  style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600 }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: ackedOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}><polyline points="6 9 12 15 18 9"/></svg>
+                  <span>✓ Acknowledged ({ackedAnoms.length} {ackedAnoms.length === 1 ? 'anomaly' : 'anomalies'})</span>
+                </div>
+                {ackedOpen && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left' }}>Time</th>
+                          <th style={{ textAlign: 'left' }}>Type</th>
+                          <th style={{ textAlign: 'left' }}>Severity</th>
+                          <th style={{ textAlign: 'left' }}>Entity</th>
+                          <th style={{ textAlign: 'left' }}>Description</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ackedAnoms.map(a => (
+                          <tr key={a.id}>
+                            <td style={{ whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-muted)' }}>
+                              {a.detected_at ? new Date(a.detected_at).toLocaleString() : '—'}
+                            </td>
+                            <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{typeLabel(a.anomaly_type)}</td>
+                            <td><span className="badge badge-gray">{(a.severity || 'info').toUpperCase()}</span></td>
+                            <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {a.entity_type || a.entity_id
+                                ? <>{a.entity_type || ''}{a.entity_type && a.entity_id ? ' · ' : ''}<span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{a.entity_id || ''}</span></>
+                                : '—'}
+                            </td>
+                            <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{a.description || '—'}</td>
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <span style={MUTED}>✓ acked{a.acknowledged_by ? ` by ${a.acknowledged_by}` : ''}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

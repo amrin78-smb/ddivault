@@ -34,6 +34,25 @@ async function recordAnomaly(db, { type, severity, entityType, entityId, descrip
     return null;
   }
 
+  // Extended dedup for MAC-based anomalies: skip if an un-acknowledged anomaly
+  // of the same type for the same MAC exists within the last 6 hours. Prevents
+  // a roaming/short-lived device from generating repeated identical anomalies.
+  const mac = details && (details.mac_address || details.mac);
+  if (mac) {
+    const macDup = await db.query(
+      `SELECT 1 FROM anomaly_events
+         WHERE anomaly_type = $1
+           AND details->>'mac_address' = $2
+           AND acknowledged = FALSE
+           AND detected_at > NOW() - INTERVAL '6 hours'
+         LIMIT 1`,
+      [type, String(mac)]
+    );
+    if (macDup.rows.length > 0) {
+      return null;
+    }
+  }
+
   const ins = await db.query(
     `INSERT INTO anomaly_events
        (detected_at, anomaly_type, severity, entity_type, entity_id, description, details, acknowledged)
@@ -274,6 +293,8 @@ async function detectAnomalies(db) {
   }
 
   // ---- 4. Subnet jumping --------------------------------------------------
+  // Only flag a MAC seen in 3+ distinct /24 subnets in 24h. Normal WiFi roaming
+  // between two adjacent SSIDs/subnets is expected and would otherwise be noise.
   try {
     if (await isRuleEnabled(db, 'subnet_jumping')) {
       const rows = (
@@ -298,7 +319,7 @@ async function detectAnomalies(db) {
                     split_part(host(ip_address),'.',1) || '.' ||
                     split_part(host(ip_address),'.',2) || '.' ||
                     split_part(host(ip_address),'.',3)
-                  )) >= 2`
+                  )) >= 3`
         )
       ).rows;
 

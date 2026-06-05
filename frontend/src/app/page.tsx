@@ -560,6 +560,33 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
 // ════════════════════════════════════════════════════════════
 // TAB: EVENTS & ALERTS
 // ════════════════════════════════════════════════════════════
+
+// Alert table body — shared by the open (active) and acknowledged (muted) tables.
+function AlertRows({ alerts, muted, onAck }: { alerts: AlertEvent[]; muted?: boolean; onAck?: (id: number) => void }) {
+  if (alerts.length === 0) {
+    return <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, ...MUTED }}>No alerts</td></tr>;
+  }
+  const rowStyle: React.CSSProperties = muted ? { color: 'var(--text-muted)' } : {};
+  return (
+    <>
+      {alerts.map(a => (
+        <tr key={a.id} style={rowStyle}>
+          <td><span className={`badge ${muted ? 'badge-gray' : a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
+          <td>{a.message}</td>
+          <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
+          <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
+          <td><span className={`badge ${a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.acknowledged ? 'ACK' : 'Open'}</span></td>
+          <td>
+            {muted
+              ? <span style={{ fontSize: 11, ...MUTED }}>✓ acked</span>
+              : (!a.acknowledged && onAck && <button onClick={() => onAck(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>)}
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 function EventsTab() {
   const [events, setEvents]   = useState<DhcpEvent[]>([]);
   const [alerts, setAlerts]   = useState<AlertEvent[]>([]);
@@ -569,6 +596,8 @@ function EventsTab() {
   const [hours, setHours]     = useState(24);
   const [typeFilter, setTypeFilter] = useState('');
   const [view, setView]       = useState<'alerts' | 'events'>('alerts');
+  const [alertFilter, setAlertFilter] = useState<'all' | 'open' | 'acked'>('all');
+  const [ackedOpen, setAckedOpen] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -591,6 +620,9 @@ function EventsTab() {
     reloadAlerts();
   };
 
+  const openAlerts  = useMemo(() => alerts.filter(a => !a.acknowledged), [alerts]);
+  const ackedAlerts = useMemo(() => alerts.filter(a =>  a.acknowledged), [alerts]);
+
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="Events & Alerts" subtitle="Fired alerts and the raw DHCP event log from your servers">
@@ -601,27 +633,52 @@ function EventsTab() {
       </PageHeader>
 
       {view === 'alerts' && (
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
-            <div style={TITLE}>Alert History</div>
-            {alerts.some(a => !a.acknowledged) && <button className="btn btn-primary" onClick={ackAll}>Acknowledge All</button>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Filter pills */}
+          <div className="segmented">
+            <button className={alertFilter === 'all' ? 'active' : ''} onClick={() => setAlertFilter('all')}>All</button>
+            <button className={alertFilter === 'open' ? 'active' : ''} onClick={() => setAlertFilter('open')}>Open ({openAlerts.length})</button>
+            <button className={alertFilter === 'acked' ? 'active' : ''} onClick={() => setAlertFilter('acked')}>Acknowledged ({ackedAlerts.length})</button>
           </div>
-          <table className="data-table">
-            <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody>
-              {alerts.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, ...MUTED }}>No alerts</td></tr>}
-              {alerts.map(a => (
-                <tr key={a.id}>
-                  <td><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
-                  <td>{a.message}</td>
-                  <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
-                  <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
-                  <td><span className={`badge ${a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.acknowledged ? 'ACK' : 'Open'}</span></td>
-                  <td>{!a.acknowledged && <button onClick={() => ack(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+          {/* Open alerts — always on top, full table */}
+          {alertFilter !== 'acked' && (
+            <div style={CARD}>
+              <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
+                <div style={TITLE}>Alert History</div>
+                {openAlerts.length > 0 && <button className="btn btn-primary" onClick={ackAll}>Acknowledge All</button>}
+              </div>
+              <table className="data-table">
+                <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody>
+                  <AlertRows alerts={openAlerts} onAck={ack} />
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Acknowledged alerts — collapsible, muted */}
+          {alertFilter !== 'open' && ackedAlerts.length > 0 && (
+            <div style={CARD}>
+              <div
+                onClick={() => setAckedOpen(o => !o)}
+                style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: (ackedOpen || alertFilter === 'acked') ? '1px solid var(--border-light)' : 'none' }}
+              >
+                <div style={{ ...TITLE, color: 'var(--text-muted)' }}>✓ Acknowledged ({ackedAlerts.length} alert{ackedAlerts.length === 1 ? '' : 's'})</div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: (ackedOpen || alertFilter === 'acked') ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </div>
+              {(ackedOpen || alertFilter === 'acked') && (
+                <table className="data-table">
+                  <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody>
+                    <AlertRows alerts={ackedAlerts} muted />
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </div>
       )}
 
