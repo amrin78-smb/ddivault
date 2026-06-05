@@ -300,7 +300,7 @@ function getDnsServerStats(serverIp, auth) {
 
 // Get DNS server role and AD info
 function getDnsServerRole(serverIp, auth) {
-  const script = `$role = @{}; try { $pdc = (Get-ADDomain -ErrorAction SilentlyContinue).PDCEmulator; $role.isPDC = ($pdc -split '\\.')[0] -eq $env:COMPUTERNAME } catch {}; try { $fwd = Get-DnsServerForwarder -ErrorAction SilentlyContinue; $role.forwarders = ($fwd.IPAddress | ForEach-Object { $_.IPAddressToString }) -join ',' } catch { $role.forwarders = '' }; try { $role.domain = (Get-WmiObject Win32_ComputerSystem).Domain } catch {}; $role | ConvertTo-Json -Compress`;
+  const script = `try{$pdc=(Get-ADDomain -ErrorAction SilentlyContinue).PDCEmulator;$isPdc=$pdc -eq "$env:COMPUTERNAME.$((Get-WmiObject Win32_ComputerSystem).Domain)";$fwd=(Get-DnsServerForwarder -ErrorAction SilentlyContinue).IPAddress.IPAddressToString -join ',';[PSCustomObject]@{isPDC=[bool]$isPdc;forwarders="$fwd";domain=(Get-WmiObject Win32_ComputerSystem).Domain}}catch{[PSCustomObject]@{isPDC=$false;forwarders='';domain=''}}|ConvertTo-Json -Compress`;
   return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
