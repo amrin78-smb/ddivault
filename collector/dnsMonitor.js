@@ -41,7 +41,7 @@ function toInt(v) {
 // ── 1. Server roles + forwarders ──────────────────────────────
 async function detectDnsRoles(db, ps, server, ip, auth) {
   let role;
-  try { role = ps.getDnsServerRole(ip, auth); } catch (e) { log(`[Roles] ${ip}: ${e.message}`); return; }
+  try { role = await ps.getDnsServerRole(ip, auth); } catch (e) { log(`[Roles] ${ip}: ${e.message}`); return; }
   if (!role) return;
 
   // Defensive: runPS double-encodes in some paths (a JSON string of a JSON
@@ -82,7 +82,7 @@ async function detectDnsRoles(db, ps, server, ip, auth) {
 async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
   for (const z of zones) {
     let soa;
-    try { soa = ps.getDnsZoneSoaDetail(ip, auth, z.zone_name); }
+    try { soa = await ps.getDnsZoneSoaDetail(ip, auth, z.zone_name); }
     catch (e) { log(`[SOA] ${ip}/${z.zone_name}: ${e.message}`); continue; }
     if (!soa || soa.Serial == null) continue;
     const serial = parseInt(soa.Serial);
@@ -128,7 +128,7 @@ async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
 async function pollZoneRecordCounts(db, ps, ip, auth, zones) {
   for (const z of zones) {
     let counts;
-    try { counts = ps.getDnsZoneRecordCounts(ip, auth, z.zone_name); }
+    try { counts = await ps.getDnsZoneRecordCounts(ip, auth, z.zone_name); }
     catch (e) { log(`[Counts] ${ip}/${z.zone_name}: ${e.message}`); continue; }
     if (!counts) continue;
     await db.query(
@@ -143,16 +143,31 @@ async function pollZoneRecordCounts(db, ps, ip, auth, zones) {
 // ── 4. Forwarder health ───────────────────────────────────────
 async function checkForwarderHealth(db, ps, server, ip, auth) {
   let raw;
-  try { raw = ps.getDnsForwarders(ip, auth); }
-  catch (e) { log(`[Forwarders] ${ip}: ${e.message}`); return; }
-  if (!raw) return;
-  const list = (Array.isArray(raw) ? raw : [raw])
+  try { raw = await ps.getDnsForwarders(ip, auth); }
+  catch (e) { log(`[Forwarders] ${ip}: PS call failed: ${e.message}`); raw = null; }
+
+  // Normalize the live PS result to a candidate array.
+  let candidates = raw == null ? [] : (Array.isArray(raw) ? raw : [raw]);
+  log(`[Forwarders] ${ip}: PS returned ${candidates.length} forwarders`);
+
+  // Fallback — if the live call returned nothing, use the forwarders already
+  // stored on ddi_servers (populated earlier by detectDnsRoles). Distinguishes
+  // a PS failure / empty result from a server that genuinely has no forwarders.
+  if (!candidates.length) {
+    const stored = await db
+      .query('SELECT dns_forwarders FROM ddi_servers WHERE id=$1', [server.id])
+      .catch(() => ({ rows: [] }));
+    candidates = stored.rows[0]?.dns_forwarders || [];
+    if (candidates.length) log(`[Forwarders] ${ip}: using ${candidates.length} stored forwarders`);
+  }
+
+  const list = candidates
     .map(v => (typeof v === 'string' ? v.trim() : v))
     .filter(isIpStr);
 
   for (const fwd of list) {
     let r;
-    try { r = ps.testDnsForwarder(ip, auth, fwd); }
+    try { r = await ps.testDnsForwarder(ip, auth, fwd); }
     catch (e) { log(`[Forwarders] ${ip}->${fwd}: ${e.message}`); continue; }
     if (!r) continue;
     // If result is an array, it means the DNS query succeeded (Resolve-DnsName
@@ -180,7 +195,7 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
 async function pollScavenging(db, ps, ip, auth, zones) {
   for (const z of zones) {
     let sc;
-    try { sc = ps.getDnsZoneScavenging(ip, auth, z.zone_name); }
+    try { sc = await ps.getDnsZoneScavenging(ip, auth, z.zone_name); }
     catch (e) { log(`[Scavenging] ${ip}/${z.zone_name}: ${e.message}`); continue; }
     if (!sc) continue;
     const aging = sc.AgingEnabled === true;
@@ -269,7 +284,7 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
 
     for (const z of zones) {
       let raw;
-      try { raw = ps.getDnsStaleRecords(ip, auth, z.zone_name, 90); }
+      try { raw = await ps.getDnsStaleRecords(ip, auth, z.zone_name, 90); }
       catch (e) { log(`[Stale] ${ip}/${z.zone_name}: ${e.message}`); continue; }
       const records = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
 

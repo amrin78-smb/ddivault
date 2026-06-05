@@ -85,7 +85,8 @@ async function scoreDhcp(db, siteId) {
     `SELECT COUNT(*)::int AS n
        FROM ddi_servers
       WHERE site_id = $1
-        AND (poll_status = 'error' OR (is_active = TRUE AND poll_status = 'unreachable'))`,
+        AND is_active = TRUE
+        AND (winrm_test_ok = FALSE OR health_score < 50)`,
     [siteId]
   );
   const unreachable = unreach.rows[0] ? unreach.rows[0].n : 0;

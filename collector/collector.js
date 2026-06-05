@@ -582,6 +582,13 @@ async function pollAll(fn, label) {
     return;
   }
   for (const server of servers) {
+    // Skip servers with placeholder / invalid IPs (e.g. 192.168.x.x, localhost,
+    // empty) — strip the ::text CIDR suffix first, then validate.
+    const ip = (server.ip_address || '').replace(/\/\d+$/, '').trim();
+    if (!isValidIp(ip)) {
+      log(`[${label}] Skipping ${server.hostname || ip || 'unknown'} — placeholder/invalid IP`);
+      continue;
+    }
     try { await fn(server); }
     catch (err) { console.error(`[${label}] Error on ${server.ip_address}:`, err.message); }
   }

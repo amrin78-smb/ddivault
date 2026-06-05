@@ -199,9 +199,12 @@ async function detectAnomalies(db) {
       const bhStart = await getSettingInt(db, 'business_hours_start', 7);
       const bhEnd = await getSettingInt(db, 'business_hours_end', 20);
 
+      // Compute hour/day in Bangkok time (UTC+7) regardless of the host
+      // timezone — production runs in Asia/Bangkok and business hours are
+      // defined in local time.
       const now = new Date();
-      const hour = now.getHours();
-      const dow = now.getDay(); // 0=Sun..6=Sat
+      const hour = (now.getUTCHours() + 7) % 24;
+      const dow = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCDay(); // 0=Sun..6=Sat
       const isWeekend = dow === 0 || dow === 6;
       const inBusinessHours = !isWeekend && hour >= bhStart && hour < bhEnd;
 

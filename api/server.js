@@ -2068,10 +2068,20 @@ app.post('/api/dns/records', requireWrite, async (req, res) => {
 
     switch (record_type.toUpperCase()) {
       case 'A':     ok = psWrite.addDnsARecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'AAAA':  ok = psWrite.addDnsAaaaRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'CNAME': ok = psWrite.addDnsCNameRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'PTR':   ok = psWrite.addDnsPtrRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'MX':    ok = psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, parseInt(preference||'10'), ttlSec, auth); break;
       case 'TXT':   ok = psWrite.addDnsTxtRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'SRV': {
+        // record_data format: "priority weight port target"
+        const [priority, weight, port, target] = String(record_data).trim().split(/\s+/);
+        if (!target) return res.status(400).json({ error: 'SRV record_data must be "priority weight port target"' });
+        ok = psWrite.addDnsSrvRecord(serverIp, zone_name, hostname, priority, weight, port, target, ttlSec, auth);
+        break;
+      }
+      case 'NS':
+        return res.status(400).json({ error: 'NS records must be managed via the DNS server console (requires domain admin delegation)' });
       default: return res.status(400).json({ error: `Unsupported record type: ${record_type}` });
     }
 

@@ -369,6 +369,16 @@ function addDnsCNameRecord(serverIp, zoneName, hostname, alias, ttl, auth) {
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
+function addDnsAaaaRecord(serverIp, zoneName, hostname, ipv6Address, ttl, auth) {
+  const script = `Add-DnsServerResourceRecordAAAA -ZoneName '${zoneName}' -Name '${hostname}' -IPv6Address '${ipv6Address}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
+}
+
+function addDnsSrvRecord(serverIp, zoneName, hostname, priority, weight, port, target, ttl, auth) {
+  const script = `Add-DnsServerResourceRecord -Srv -ZoneName '${zoneName}' -Name '${hostname}' -DomainName '${target}' -Priority ${priority||0} -Weight ${weight||0} -Port ${port||0} -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
+}
+
 function addDnsPtrRecord(serverIp, zoneName, hostname, ptrDomain, ttl, auth) {
   const script = `Add-DnsServerResourceRecordPtr -ZoneName '${zoneName}' -Name '${hostname}' -PtrDomainName '${ptrDomain}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
@@ -498,6 +508,8 @@ module.exports = {
   getDnsQueryStats,
   // DNS write
   addDnsARecord,
+  addDnsAaaaRecord,
+  addDnsSrvRecord,
   addDnsCNameRecord,
   addDnsPtrRecord,
   addDnsMxRecord,
