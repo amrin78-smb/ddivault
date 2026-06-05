@@ -320,6 +320,54 @@ function AttentionRow({ s, onClick }: { s: any; onClick: () => void }) {
   );
 }
 
+// ── DNS Health card (compact, clickable → DNS tab) ─────────────
+interface DnsHealth {
+  zones_total: number;
+  servers_total: number;
+  servers_online: number;
+  zones_in_sync: number;
+  zones_out_of_sync: number;
+  replication_issues: number;
+}
+function DnsHealthCard({ data, onClick }: { data?: DnsHealth; onClick: () => void }) {
+  const syncDenom = data ? data.zones_in_sync + data.zones_out_of_sync : 0;
+  const issues = data?.replication_issues ?? 0;
+  const issueColor = issues > 0 ? 'var(--red)' : 'var(--green)';
+  const rowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12.5 };
+  return (
+    <div onClick={onClick} className="clickable"
+      style={{ ...CARD, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={TITLE}>DNS Health</div>
+        <span style={{ ...MUTED, color: 'var(--primary)', fontWeight: 600 }}>Open DNS →</span>
+      </div>
+      <div style={{ padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={rowStyle}>
+          <span style={{ color: 'var(--text-secondary)' }}>Servers Online</span>
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+            {data ? `${data.servers_online} / ${data.servers_total}` : '—'}
+          </span>
+        </div>
+        <div style={rowStyle}>
+          <span style={{ color: 'var(--text-secondary)' }}>Zones In Sync</span>
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+            {data ? `${data.zones_in_sync} / ${syncDenom}` : '—'}
+          </span>
+        </div>
+        <div style={rowStyle}>
+          <span style={{ color: 'var(--text-secondary)' }}>Replication Issues</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: data ? issueColor : 'var(--text-muted)' }}>
+            {data && issues > 0 && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red)', boxShadow: '0 0 0 3px rgba(200,16,46,0.18)' }} />}
+            {data ? issues : '—'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ════════════════════════════════════════════════════════════
 // TAB: DASHBOARD — operations center
 // ════════════════════════════════════════════════════════════
@@ -566,9 +614,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
       {/* Row 5 — Intelligence & Security */}
       <div>
         <SectionHeader>Intelligence &amp; Security</SectionHeader>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
           <SecurityOverview onViewAll={() => onNavigate('intelligence')} onTypeClick={(t) => onNavigate('intelligence', { anomalyType: t })} />
           <SiteHealth onSiteClick={() => onNavigate('infra')} />
+          <DnsHealthCard data={stats?.dns_health} onClick={() => onNavigate('dns')} />
         </div>
       </div>
 

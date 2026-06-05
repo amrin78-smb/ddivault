@@ -146,6 +146,30 @@ app.get('/api/dashboard/stats', async (req, res) => {
     const totalIPs   = await db.query('SELECT COALESCE(SUM(total_ips),0) as total, COALESCE(SUM(free),0) as free, COALESCE(SUM(in_use),0) as in_use FROM dhcp_scopes');
     const ipRow      = totalIPs.rows[0];
 
+    // DNS health summary — defensive: never break the dashboard if these tables/columns are missing
+    let dnsHealth = {
+      zones_total: 0, servers_total: 0, servers_online: 0,
+      zones_in_sync: 0, zones_out_of_sync: 0, replication_issues: 0,
+    };
+    try {
+      const [dnsZonesTotal, dnsServers, dnsSync, dnsRepl] = await Promise.all([
+        db.query('SELECT COUNT(*) AS n FROM dns_zones'),
+        db.query("SELECT COUNT(*) FILTER (WHERE poll_status='ok') AS online, COUNT(*) AS total FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE"),
+        db.query("SELECT COUNT(DISTINCT zone_name) FILTER (WHERE is_in_sync=TRUE) AS in_sync, COUNT(DISTINCT zone_name) FILTER (WHERE is_in_sync=FALSE) AS out_of_sync FROM dns_zone_sync"),
+        db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE replication_lag=TRUE'),
+      ]);
+      dnsHealth = {
+        zones_total:       parseInt(dnsZonesTotal.rows[0].n) || 0,
+        servers_total:     parseInt(dnsServers.rows[0].total) || 0,
+        servers_online:    parseInt(dnsServers.rows[0].online) || 0,
+        zones_in_sync:     parseInt(dnsSync.rows[0].in_sync) || 0,
+        zones_out_of_sync: parseInt(dnsSync.rows[0].out_of_sync) || 0,
+        replication_issues: parseInt(dnsRepl.rows[0].n) || 0,
+      };
+    } catch (e) {
+      console.error('[API] dashboard/stats dns_health error:', e.message);
+    }
+
     res.json({
       scopes: {
         total:    parseInt(scopeRow.total),
@@ -160,6 +184,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
       active_leases:    parseInt(leases.rows[0].total),
       dns_zones:        parseInt(zones.rows[0].total),
       unacked_alerts:   parseInt(alerts.rows[0].total),
+      dns_health:       dnsHealth,
     });
   } catch (err) {
     console.error('[API] dashboard/stats error:', err.message);
@@ -2158,6 +2183,343 @@ app.get('/api/dns/stats/:serverId', async (req, res) => {
     res.json({ data: stats || {} });
   } catch (err) {
     console.error('[API] dns stats error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── DNS Health / Topology / Sync / Forwarders / Scavenging ────
+
+// Aggregate DNS health summary
+app.get('/api/dns/health', async (req, res) => {
+  try {
+    const [
+      zonesTotal, serversTotal, serversOnline, zonesInSync, zonesOutOfSync,
+      replicationIssues, forwardersTotal, forwardersDown, staleRecords, scavengingDisabled,
+    ] = await Promise.all([
+      db.query('SELECT COUNT(*) AS n FROM dns_zones'),
+      db.query("SELECT COUNT(*) AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE"),
+      db.query("SELECT COUNT(*) AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE AND poll_status='ok'"),
+      db.query('SELECT COUNT(DISTINCT zone_name) AS n FROM dns_zone_sync WHERE is_in_sync=TRUE'),
+      db.query('SELECT COUNT(DISTINCT zone_name) AS n FROM dns_zone_sync WHERE is_in_sync=FALSE'),
+      db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE replication_lag=TRUE'),
+      db.query('SELECT COUNT(*) AS n FROM dns_forwarder_health'),
+      db.query('SELECT COUNT(*) AS n FROM dns_forwarder_health WHERE is_reachable=FALSE'),
+      db.query('SELECT COUNT(*) AS n FROM dns_stale_records'),
+      db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE is_reverse=FALSE AND is_auto_created=FALSE AND scavenging_enabled=FALSE'),
+    ]);
+    res.json({
+      zones_total:               parseInt(zonesTotal.rows[0].n) || 0,
+      servers_total:             parseInt(serversTotal.rows[0].n) || 0,
+      servers_online:            parseInt(serversOnline.rows[0].n) || 0,
+      zones_in_sync:             parseInt(zonesInSync.rows[0].n) || 0,
+      zones_out_of_sync:         parseInt(zonesOutOfSync.rows[0].n) || 0,
+      replication_issues:        parseInt(replicationIssues.rows[0].n) || 0,
+      forwarders_total:          parseInt(forwardersTotal.rows[0].n) || 0,
+      forwarders_down:           parseInt(forwardersDown.rows[0].n) || 0,
+      stale_records:             parseInt(staleRecords.rows[0].n) || 0,
+      scavenging_disabled_zones: parseInt(scavengingDisabled.rows[0].n) || 0,
+    });
+  } catch (err) {
+    console.error('[API] dns health error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS topology — servers with roles, zone + record counts
+app.get('/api/dns/topology', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.health_score,
+              s.query_ms, s.poll_status, s.is_dns_primary, s.dns_forwarders,
+              r.is_pdc_emulator, r.domain, r.replication_type,
+              (SELECT COUNT(*) FROM dns_zones z WHERE z.server_id = s.id) AS zone_count,
+              (SELECT COALESCE(SUM(record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count
+       FROM ddi_servers s
+       LEFT JOIN dns_server_roles r ON r.server_id = s.id
+       WHERE s.role IN ('dns','both') AND s.is_active=TRUE
+       ORDER BY s.is_dns_primary DESC, s.hostname`
+    );
+    res.json({ servers: rows.rows });
+  } catch (err) {
+    console.error('[API] dns topology error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS zones SOA serial comparison matrix (all zones)
+app.get('/api/dns/zones/sync', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT zs.zone_name, zs.server_id, zs.soa_serial, zs.lag_seconds,
+              zs.is_in_sync, zs.checked_at, s.hostname
+       FROM dns_zone_sync zs
+       JOIN ddi_servers s ON s.id = zs.server_id
+       ORDER BY zs.zone_name`
+    );
+
+    const serverMap = new Map();
+    const zoneMap   = new Map();
+    for (const row of rows.rows) {
+      if (!serverMap.has(row.server_id)) {
+        serverMap.set(row.server_id, { id: row.server_id, hostname: row.hostname });
+      }
+      let z = zoneMap.get(row.zone_name);
+      if (!z) {
+        z = { zone_name: row.zone_name, max_serial: 0, in_sync: true, serials: {} };
+        zoneMap.set(row.zone_name, z);
+      }
+      const serial = parseInt(row.soa_serial) || 0;
+      z.serials[row.server_id] = {
+        soa_serial: row.soa_serial,
+        lag_seconds: row.lag_seconds,
+        checked_at: row.checked_at,
+        is_in_sync: row.is_in_sync,
+      };
+      if (serial > z.max_serial) z.max_serial = serial;
+    }
+    // Compute in_sync = all serials equal per zone
+    for (const z of zoneMap.values()) {
+      const serials = Object.values(z.serials).map((s) => String(s.soa_serial));
+      z.in_sync = new Set(serials).size <= 1;
+    }
+
+    res.json({ zones: Array.from(zoneMap.values()), servers: Array.from(serverMap.values()) });
+  } catch (err) {
+    console.error('[API] dns zones sync error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS sync detail for a single zone (must come after /zones/sync)
+app.get('/api/dns/zones/:name/sync', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT zs.server_id, zs.soa_serial, zs.lag_seconds, zs.is_in_sync, zs.checked_at, s.hostname
+       FROM dns_zone_sync zs
+       JOIN ddi_servers s ON s.id = zs.server_id
+       WHERE zs.zone_name=$1
+       ORDER BY s.hostname`,
+      [req.params.name]
+    );
+    let maxSerial = 0;
+    const serverRows = rows.rows.map((row) => {
+      const serial = parseInt(row.soa_serial) || 0;
+      if (serial > maxSerial) maxSerial = serial;
+      return {
+        server_id:  row.server_id,
+        hostname:   row.hostname,
+        soa_serial: row.soa_serial,
+        lag_seconds: row.lag_seconds,
+        is_in_sync: row.is_in_sync,
+        checked_at: row.checked_at,
+      };
+    });
+    const inSync = new Set(serverRows.map((r) => String(r.soa_serial))).size <= 1;
+    res.json({ zone_name: req.params.name, max_serial: maxSerial, in_sync: inSync, servers: serverRows });
+  } catch (err) {
+    console.error('[API] dns zone sync detail error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS forwarder health list
+app.get('/api/dns/forwarders', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT fh.*, s.hostname, host(s.ip_address) AS server_ip
+       FROM dns_forwarder_health fh
+       JOIN ddi_servers s ON s.id = fh.server_id
+       ORDER BY s.hostname, fh.forwarder_ip`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] dns forwarders error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS stale records (optional zone_id + min_days filters)
+app.get('/api/dns/stale-records', async (req, res) => {
+  try {
+    const params = [];
+    const where  = [];
+    if (req.query.zone_id) {
+      params.push(parseInt(req.query.zone_id));
+      where.push(`sr.zone_id = $${params.length}`);
+    }
+    const minDays = parseInt(req.query.min_days) || 0;
+    params.push(minDays);
+    where.push(`sr.days_stale >= $${params.length}`);
+
+    const whereClause = 'WHERE ' + where.join(' AND ');
+    const rows = await db.query(
+      `SELECT sr.*, z.zone_name
+       FROM dns_stale_records sr
+       JOIN dns_zones z ON z.id = sr.zone_id
+       ${whereClause}
+       ORDER BY sr.days_stale DESC
+       LIMIT 1000`,
+      params
+    );
+    res.json({ data: rows.rows, total: rows.rows.length });
+  } catch (err) {
+    console.error('[API] dns stale records error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS query statistics — latest + 24h history per server
+app.get('/api/dns/query-stats', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT qs.server_id, qs.recorded_at, qs.total_queries, qs.successful, qs.failed,
+              qs.nxdomain_count, qs.response_time_ms, qs.queries_per_sec, s.hostname
+       FROM dns_query_stats qs
+       JOIN ddi_servers s ON s.id = qs.server_id
+       WHERE qs.recorded_at >= NOW() - INTERVAL '24 hours'
+       ORDER BY qs.server_id, qs.recorded_at ASC`
+    );
+    if (!rows.rows.length) return res.json({ data: [] });
+
+    const byServer = new Map();
+    for (const row of rows.rows) {
+      let entry = byServer.get(row.server_id);
+      if (!entry) {
+        entry = { server_id: row.server_id, hostname: row.hostname, latest: null, history: [] };
+        byServer.set(row.server_id, entry);
+      }
+      const point = {
+        recorded_at: row.recorded_at,
+        total_queries: row.total_queries,
+        successful: row.successful,
+        failed: row.failed,
+        nxdomain_count: row.nxdomain_count,
+        response_time_ms: row.response_time_ms,
+        queries_per_sec: row.queries_per_sec,
+      };
+      entry.history.push(point);
+      entry.latest = point; // rows are ordered ascending, so last wins
+    }
+    res.json({ data: Array.from(byServer.values()) });
+  } catch (err) {
+    console.error('[API] dns query stats error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DNS scavenging / aging configuration per zone
+app.get('/api/dns/scavenging', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT z.id, z.zone_name, z.server_id, s.hostname, z.scavenging_enabled,
+              z.aging_enabled, z.last_scavenged, z.is_reverse
+       FROM dns_zones z
+       LEFT JOIN ddi_servers s ON s.id = z.server_id
+       WHERE z.is_auto_created=FALSE
+       ORDER BY z.scavenging_enabled NULLS FIRST, z.zone_name`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] dns scavenging error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test a DNS forwarder (diagnostic) — records result in dns_forwarder_health
+app.post('/api/dns/forwarders/test', async (req, res) => {
+  try {
+    const { server_id, forwarder_ip } = req.body;
+    if (!server_id || !forwarder_ip) {
+      return res.status(400).json({ error: 'server_id and forwarder_ip required' });
+    }
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const r = psWrite.testDnsForwarder(serverData.ip, serverData.auth, forwarder_ip);
+    if (r) {
+      await db.query(
+        `INSERT INTO dns_forwarder_health (server_id, forwarder_ip, is_reachable, response_time_ms, last_checked)
+         VALUES ($1,$2,$3,$4,NOW())
+         ON CONFLICT (server_id, forwarder_ip)
+         DO UPDATE SET is_reachable=EXCLUDED.is_reachable,
+                       response_time_ms=EXCLUDED.response_time_ms,
+                       last_checked=NOW()`,
+        [parseInt(server_id), forwarder_ip, r.Reachable, r.ResponseMs]
+      ).catch((e) => console.error('[API] forwarder upsert error:', e.message));
+    }
+    res.json({ success: true, result: r });
+  } catch (err) {
+    console.error('[API] dns forwarder test error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Enable / disable scavenging (aging) on a zone via PowerShell
+app.post('/api/dns/scavenging/enable', requireWrite, async (req, res) => {
+  try {
+    const { server_id, zone_name, enabled } = req.body;
+    if (!server_id || !zone_name) {
+      return res.status(400).json({ error: 'server_id and zone_name required' });
+    }
+    const en = enabled !== false;
+    const serverData = await getServerWithAuth(server_id);
+    if (!serverData) return res.status(404).json({ error: 'Server not found' });
+
+    const ok = psWrite.setDnsZoneAging(serverData.ip, serverData.auth, zone_name, en);
+    if (!ok) return res.status(500).json({ error: 'PowerShell command failed — check WinRM and DNS server role' });
+
+    await db.query(
+      `UPDATE dns_zones SET scavenging_enabled=$1, aging_enabled=$1 WHERE zone_name=$2 AND server_id=$3`,
+      [en, zone_name, parseInt(server_id)]
+    );
+
+    if (req.audit) req.audit({ action: 'update', entity_type: 'dns_zone', entity_name: zone_name, server_id, change_summary: `${en ? 'Enabled' : 'Disabled'} scavenging on ${zone_name}` });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] dns scavenging enable error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Cleanup stale DNS records via PowerShell
+app.post('/api/dns/stale-records/cleanup', requireWrite, async (req, res) => {
+  try {
+    const { records } = req.body;
+    if (!Array.isArray(records) || !records.length) {
+      return res.status(400).json({ error: 'records array required' });
+    }
+
+    const serverCache = new Map();
+    let deleted = 0;
+    let failed  = 0;
+
+    for (const rec of records) {
+      const { server_id, zone_name, hostname, record_type, record_data } = rec;
+      if (!server_id || !zone_name || !hostname || !record_type) { failed++; continue; }
+
+      let serverData = serverCache.get(server_id);
+      if (serverData === undefined) {
+        serverData = await getServerWithAuth(server_id);
+        serverCache.set(server_id, serverData);
+      }
+      if (!serverData) { failed++; continue; }
+
+      const ok = psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
+      if (!ok) { failed++; continue; }
+
+      deleted++;
+      await db.query(
+        `DELETE FROM dns_stale_records
+         WHERE zone_id IN (SELECT id FROM dns_zones WHERE zone_name=$1 AND server_id=$2)
+           AND hostname=$3 AND record_type=$4`,
+        [zone_name, parseInt(server_id), hostname, record_type]
+      ).catch(() => {});
+    }
+
+    if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_record', entity_name: 'stale-records-cleanup', change_summary: `Stale record cleanup: ${deleted} deleted, ${failed} failed` });
+    res.json({ success: true, deleted, failed });
+  } catch (err) {
+    console.error('[API] dns stale records cleanup error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

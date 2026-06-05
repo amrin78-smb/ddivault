@@ -480,6 +480,214 @@ async function detectAnomalies(db) {
 }
 
 /**
+ * detectDnsAnomalies — DNS infrastructure anomaly checks, each isolated.
+ * Returns a summary object of counts per check.
+ */
+async function detectDnsAnomalies(db) {
+  const summary = {
+    dns_replication_lag: 0,
+    dns_forwarder_down: 0,
+    dns_record_count_drop: 0,
+    dns_stale_records: 0,
+    dns_scavenging_disabled: 0,
+  };
+
+  // ---- 1. Replication lag (divergent SOA serials across servers) ----------
+  try {
+    if (await isRuleEnabled(db, 'dns_replication_lag')) {
+      const rows = (
+        await db.query(
+          `SELECT zone_name,
+                  COUNT(DISTINCT soa_serial) AS serial_count,
+                  MAX(soa_serial) - MIN(soa_serial) AS serial_lag
+             FROM dns_zone_sync
+            WHERE checked_at > NOW() - INTERVAL '30 minutes'
+            GROUP BY zone_name
+           HAVING COUNT(DISTINCT soa_serial) > 1`
+        )
+      ).rows;
+
+      for (const r of rows) {
+        const lag = Number(r.serial_lag) || 0;
+        const res = await recordAnomaly(db, {
+          type: 'dns_replication_lag',
+          severity: lag >= 3 ? 'critical' : 'warning',
+          entityType: 'dns_zone',
+          entityId: r.zone_name,
+          description:
+            'DNS replication lag on zone ' +
+            r.zone_name +
+            ': SOA serials diverge by ' +
+            lag +
+            ' across ' +
+            r.serial_count +
+            ' distinct serial(s)',
+          details: {
+            zone_name: r.zone_name,
+            serial_count: Number(r.serial_count),
+            serial_lag: lag,
+          },
+        });
+        if (res) summary.dns_replication_lag++;
+      }
+    }
+  } catch (e) {
+    log('dns_replication_lag check failed: ' + e.message);
+  }
+
+  // ---- 2. Forwarder down --------------------------------------------------
+  try {
+    if (await isRuleEnabled(db, 'dns_forwarder_down')) {
+      const rows = (
+        await db.query(
+          `SELECT server_id, forwarder_ip
+             FROM dns_forwarder_health
+            WHERE is_reachable = false
+              AND last_checked > NOW() - INTERVAL '20 minutes'`
+        )
+      ).rows;
+
+      for (const r of rows) {
+        const res = await recordAnomaly(db, {
+          type: 'dns_forwarder_down',
+          severity: 'warning',
+          entityType: 'server',
+          entityId: r.server_id,
+          description:
+            'DNS forwarder unreachable: ' +
+            r.forwarder_ip +
+            ' (server ' +
+            r.server_id +
+            ')',
+          details: { server_id: r.server_id, forwarder_ip: r.forwarder_ip },
+        });
+        if (res) summary.dns_forwarder_down++;
+      }
+    }
+  } catch (e) {
+    log('dns_forwarder_down check failed: ' + e.message);
+  }
+
+  // ---- 3. Record count drop (>10% vs ~24h ago) ----------------------------
+  try {
+    if (await isRuleEnabled(db, 'dns_record_count_drop')) {
+      const rows = (
+        await db.query(
+          `SELECT z.id, z.zone_name, z.record_count AS current, prev.record_count AS previous
+             FROM dns_zones z
+             JOIN LATERAL (
+                    SELECT record_count
+                      FROM dns_zone_sync s
+                     WHERE s.zone_name = z.zone_name
+                       AND s.checked_at < NOW() - INTERVAL '20 hours'
+                     ORDER BY s.checked_at DESC
+                     LIMIT 1
+                  ) prev ON TRUE
+            WHERE z.record_count IS NOT NULL
+              AND prev.record_count IS NOT NULL
+              AND prev.record_count > 0
+              AND z.record_count < prev.record_count * 0.9`
+        )
+      ).rows;
+
+      for (const r of rows) {
+        const cur = Number(r.current);
+        const prev = Number(r.previous);
+        const res = await recordAnomaly(db, {
+          type: 'dns_record_count_drop',
+          severity: 'warning',
+          entityType: 'dns_zone',
+          entityId: r.zone_name,
+          description:
+            'DNS record count drop on zone ' +
+            r.zone_name +
+            ': ' +
+            cur +
+            ' records (was ' +
+            prev +
+            ' ~24h ago)',
+          details: { zone_id: r.id, zone_name: r.zone_name, current: cur, previous: prev },
+        });
+        if (res) summary.dns_record_count_drop++;
+      }
+    }
+  } catch (e) {
+    log('dns_record_count_drop check failed: ' + e.message);
+  }
+
+  // ---- 4. Excessive stale records (>50 per zone) --------------------------
+  try {
+    if (await isRuleEnabled(db, 'dns_stale_records')) {
+      const rows = (
+        await db.query(
+          `SELECT z.id, z.zone_name, COUNT(*) AS c
+             FROM dns_stale_records sr
+             JOIN dns_zones z ON z.id = sr.zone_id
+            GROUP BY z.id, z.zone_name
+           HAVING COUNT(*) > 50`
+        )
+      ).rows;
+
+      for (const r of rows) {
+        const res = await recordAnomaly(db, {
+          type: 'dns_stale_records',
+          severity: 'warning',
+          entityType: 'dns_zone',
+          entityId: r.zone_name,
+          description:
+            'Excessive stale DNS records in zone ' +
+            r.zone_name +
+            ': ' +
+            r.c +
+            ' stale record(s)',
+          details: { zone_id: r.id, zone_name: r.zone_name, stale_count: Number(r.c) },
+        });
+        if (res) summary.dns_stale_records++;
+      }
+    }
+  } catch (e) {
+    log('dns_stale_records check failed: ' + e.message);
+  }
+
+  // ---- 5. Scavenging disabled on manual forward zones ---------------------
+  try {
+    if (await isRuleEnabled(db, 'dns_scavenging_disabled')) {
+      const rows = (
+        await db.query(
+          `SELECT id, zone_name
+             FROM dns_zones
+            WHERE is_reverse = FALSE
+              AND is_auto_created = FALSE
+              AND scavenging_enabled = FALSE`
+        )
+      ).rows;
+
+      for (const r of rows) {
+        const res = await recordAnomaly(db, {
+          type: 'dns_scavenging_disabled',
+          severity: 'warning',
+          entityType: 'dns_zone',
+          entityId: r.zone_name,
+          description: 'DNS scavenging disabled on zone ' + r.zone_name,
+          details: { zone_id: r.id, zone_name: r.zone_name },
+        });
+        if (res) summary.dns_scavenging_disabled++;
+      }
+    }
+  } catch (e) {
+    log('dns_scavenging_disabled check failed: ' + e.message);
+  }
+
+  log(
+    'detectDnsAnomalies complete: ' +
+      Object.entries(summary)
+        .map(([k, v]) => k + '=' + v)
+        .join(' ')
+  );
+  return summary;
+}
+
+/**
  * buildBaselines — aggregate dhcp_scope_history per scope into hour/day buckets
  * and upsert into device_baselines. Requires >= 7 days of data per scope and
  * >= 3 samples per bucket.
@@ -562,4 +770,4 @@ async function buildBaselines(db) {
   return { baselines: upserted };
 }
 
-module.exports = { detectAnomalies, buildBaselines };
+module.exports = { detectAnomalies, detectDnsAnomalies, buildBaselines };

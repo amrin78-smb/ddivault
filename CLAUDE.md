@@ -210,18 +210,24 @@ GRANT SELECT ON sites, countries TO ddivault_user;
 | `dhcp_failover_pairs` | DHCP failover/HA relationships between servers |
 | `dhcp_scope_sync_status` | Per-scope sync state for a failover pair |
 | `server_health_history` | Per-server health/query-latency snapshots |
+| `dns_server_roles` | DNS server role + AD relationship (PDC emulator, domain, replication type) |
+| `dns_zone_sync` | Per-server zone SOA snapshots for replication-lag / sync matrix |
+| `dns_query_stats` | DNS query statistics history per server (qps, response time, NXDOMAIN) |
+| `dns_stale_records` | Stale DNS records (not refreshed within threshold) per zone |
+| `dns_forwarder_health` | DNS forwarder reachability + response time |
 
-New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`, `dns_zones.{soa_serial,soa_checked_at,replication_lag}`, `ddi_servers.{health_score,health_checked_at,query_ms}`.
+New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`, `dns_zones.{soa_serial,soa_checked_at,replication_lag,record_count_a,record_count_ptr,record_count_cname,record_count_mx,scavenging_enabled,aging_enabled,last_scavenged}`, `ddi_servers.{health_score,health_checked_at,query_ms,is_dns_primary,dns_forwarders}`.
 
 ## Intelligence & Alerting (Features 1-6) — all on-premises, no external calls
 - **Email alerting** — `api/emailer.js` (nodemailer, HTML templates, HMAC ack tokens), `api/alertDispatcher.js` (cooldown, site/severity recipient filtering, hourly digest). SMTP/rule config is super-admin only.
 - **Capacity planning** — `collector/forecastEngine.js` (least-squares regression on `dhcp_scope_history`), runs every 6h, fires `scope_exhaustion_forecast` alerts.
 - **Device fingerprinting** — `api/ouiLookup.js` + bundled `data/oui.json` (full IEEE OUI registry, ~39k vendors) + `api/deviceClassifier.js`; applied in `syncLeases`/`syncReservations`/`ipamScanner`. Rebuild the OUI table with `node scripts/update-oui.js` (downloads the authoritative IEEE/Wireshark registry) then `node scripts/expand-oui.js` (re-derives device types from vendor names). The classifier matches generic hostname conventions first (e.g. `iphone`/`ipad`, `android`, `-POR-`/`-DSK-`/`-MB-`, `macbook`, `surface`, `printer`, `voip`, `switch`/`router`/`ap-`) so common devices classify even when the OUI is unknown; vendor identity otherwise comes from the OUI registry.
   - **⚠️ Rule — never add customer-specific patterns to `api/deviceClassifier.js`.** This is a commercial product. Hostname patterns must be generic and universally applicable to any enterprise. Do not encode any single customer's naming convention (site codes, asset-tag prefixes, org-specific abbreviations) — those belong nowhere in the shipped classifier.
-- **Anomaly detection** — `collector/anomalyDetector.js` (lease spikes vs baselines, after-hours, MAC spoofing, subnet jumping, IP conflict, sensitive-subnet new device, DHCP starvation), every 30m; nightly baseline builder at 02:00.
+- **Anomaly detection** — `collector/anomalyDetector.js` (lease spikes vs baselines, after-hours, MAC spoofing, subnet jumping, IP conflict, sensitive-subnet new device, DHCP starvation), every 30m; nightly baseline builder at 02:00. Also exports `detectDnsAnomalies(db)` (called by the DNS monitor): `dns_replication_lag`, `dns_forwarder_down`, `dns_record_count_drop`, `dns_stale_records`, `dns_scavenging_disabled`.
+- **DNS Health & Intelligence** — `collector/dnsMonitor.js` (runs every 15m via `runDnsMonitor`): detects DNS server roles (PDC emulator → primary, `dns_server_roles` + `ddi_servers.is_dns_primary`/`dns_forwarders`), polls zone SOA serials → replication sync matrix (`dns_zone_sync`), polls record counts by type (`dns_zones.record_count_*`), tests forwarder reachability (`dns_forwarder_health`), reads scavenging/aging state, then runs `detectDnsAnomalies`. Nightly (02:00) `detectStaleRecords` snapshots stale records (>90d, `dns_stale_records`). New PowerShell readers in `collector/powershellRunner.js`: `getDnsServerRole`, `getDnsZoneSoaDetail`, `getDnsZoneRecordCounts`, `getDnsForwarders`, `getDnsZoneScavenging`, `getDnsStaleRecords`, `testDnsForwarder`, `getDnsQueryStats`; writer `setDnsZoneAging`.
 - **Site health scoring** — `collector/healthScorer.js` (DHCP 40% / IPAM 20% / DNS 20% / Security 20%), every 15m.
 - **Smart search** — `GET /api/search` parses `type:`, `vendor:`, `subnet:`, `scope:>N`, `site:`, `new:today|7days`, `risk:`, `anomaly:today`, `status:` structured queries.
-- **Frontend** — Intelligence tab (anomaly console), Settings sections (SMTP/Recipients/Rules), Dashboard widgets (Capacity Forecast, Site Health, Security Overview, Device Donut), DHCP device+forecast columns, IPAM device icons + sensitive toggle.
+- **Frontend** — Intelligence tab (anomaly console), Settings sections (SMTP/Recipients/Rules), Dashboard widgets (Capacity Forecast, Site Health, Security Overview, Device Donut, DNS Health card), DHCP device+forecast columns, IPAM device icons + sensitive toggle. DNS tab (`components/DNSTab.tsx`) is a 4 sub-tab console: Health Overview (server cards, SVG topology diagram, zone-sync matrix), Zones & Records (existing master-detail), Intelligence (stale records cleanup, forwarder health tests, scavenging enable), Analytics (record-type donut, top zones, query-rate sparklines, NXDOMAIN rate).
 
 ## Platform & Integration modules
 - **Audit trail** — `api/middleware/audit.js` (`auditContext` attaches per-request user/IP context, `writeAudit` records changes); writes to `audit_log`. Exposed via `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, and `/api/audit/export` (super-admin, CSV).
@@ -248,6 +254,7 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - API keys: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin)
 - Reports: `GET /api/reports`, `GET /api/reports/:type` (PDF/CSV)
 - Infrastructure: `GET /api/infrastructure/failover`
+- DNS health: `GET /api/dns/health`, `/api/dns/topology`, `/api/dns/zones/sync`, `/api/dns/zones/:name/sync`, `/api/dns/forwarders`, `/api/dns/stale-records`, `/api/dns/query-stats`, `/api/dns/scavenging`; writes `POST /api/dns/forwarders/test`, `POST /api/dns/scavenging/enable`, `POST /api/dns/stale-records/cleanup` (all under the already-proxied `/api/dns/*`)
 - Public API v1: `/api/v1/*` (API-key authenticated — subnets, supernets, dns, scopes, leases, dhcp/reservations, search, audit, health, version)
 
 ## API Endpoints

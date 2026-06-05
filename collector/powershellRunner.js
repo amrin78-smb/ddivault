@@ -295,6 +295,60 @@ function getDnsServerStats(serverIp, auth) {
   return runPS(serverIp, script, auth);
 }
 
+// Get DNS server role and AD info
+function getDnsServerRole(serverIp, auth) {
+  const script = `$role = @{}; try { $pdc = (Get-ADDomain -ErrorAction SilentlyContinue).PDCEmulator; $role.isPDC = ($pdc -split '\\.')[0] -eq $env:COMPUTERNAME } catch {}; try { $fwd = Get-DnsServerForwarder -ErrorAction SilentlyContinue; $role.forwarders = ($fwd.IPAddress | ForEach-Object { $_.IPAddressToString }) -join ',' } catch { $role.forwarders = '' }; try { $role.domain = (Get-WmiObject Win32_ComputerSystem).Domain } catch {}; $role | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get SOA record detail for a zone
+function getDnsZoneSoaDetail(serverIp, auth, zoneName) {
+  const z = String(zoneName).replace(/'/g, "''");
+  const script = `Get-DnsServerResourceRecord -ZoneName '${z}' -RRType Soa -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $soa = $_.RecordData; [PSCustomObject]@{ Serial=$soa.SerialNumber; PrimaryServer=$soa.PrimaryServer; AdminEmail=$soa.ResponsiblePerson; Refresh=$soa.RefreshInterval.TotalSeconds; Retry=$soa.RetryDelay.TotalSeconds; Expire=$soa.ExpireLimit.TotalSeconds; MinTTL=$soa.TimeToLive.TotalSeconds } } | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get record counts by type per zone
+function getDnsZoneRecordCounts(serverIp, auth, zoneName) {
+  const z = String(zoneName).replace(/'/g, "''");
+  const script = `$recs = Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue; [PSCustomObject]@{ Total=$recs.Count; A=($recs | Where-Object RecordType -eq 'A').Count; PTR=($recs | Where-Object RecordType -eq 'PTR').Count; CNAME=($recs | Where-Object RecordType -eq 'CNAME').Count; MX=($recs | Where-Object RecordType -eq 'MX').Count; TXT=($recs | Where-Object RecordType -eq 'TXT').Count; SRV=($recs | Where-Object RecordType -eq 'SRV').Count; AAAA=($recs | Where-Object RecordType -eq 'AAAA').Count } | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get DNS forwarders
+function getDnsForwarders(serverIp, auth) {
+  const script = `Get-DnsServerForwarder -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress | ForEach-Object { $_.IPAddressToString } | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get scavenging/aging settings per zone
+function getDnsZoneScavenging(serverIp, auth, zoneName) {
+  const z = String(zoneName).replace(/'/g, "''");
+  const script = `Get-DnsServerZoneAging -ZoneName '${z}' -ErrorAction SilentlyContinue | Select-Object AgingEnabled,ScavengeServers,NoRefreshInterval,RefreshInterval | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get stale records (not updated in X days)
+function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
+  const z = String(zoneName).replace(/'/g, "''");
+  const cutoff = staleDays || 90;
+  const script = `$cutoff = (Get-Date).AddDays(-${cutoff}); Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Test forwarder reachability (resolves a name via the forwarder, measures ms)
+function testDnsForwarder(serverIp, auth, forwarderIp) {
+  const f = String(forwarderIp).replace(/'/g, "''");
+  const script = `$start = Get-Date; $result = Resolve-DnsName -Name 'google.com' -Server '${f}' -ErrorAction SilentlyContinue; $ms = [int](((Get-Date) - $start).TotalMilliseconds); [PSCustomObject]@{ Reachable=($result -ne $null); ResponseMs=$ms; Forwarder='${f}' } | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
+// Get DNS query statistics from performance counters
+function getDnsQueryStats(serverIp, auth) {
+  const script = `$counters = Get-Counter -Counter '\\DNS\\Total Query Received/sec','\\DNS\\Total Response Sent/sec','\\DNS\\Total Query Received','\\DNS\\Recursive Queries/sec' -ErrorAction SilentlyContinue; $vals = @{}; if ($counters) { $counters.CounterSamples | ForEach-Object { $vals[$_.Path.Split('\\')[-1]] = [math]::Round($_.CookedValue,2) } }; $vals | ConvertTo-Json -Compress`;
+  return runPS(cleanIp(serverIp), script, auth);
+}
+
 // ════════════════════════════════════════════════════════════
 // DNS — WRITE
 // ════════════════════════════════════════════════════════════
@@ -348,6 +402,14 @@ function addDnsZone(serverIp, zoneName, zoneType, replicationScope, auth) {
 function removeDnsZone(serverIp, zoneName, auth) {
   const script = `Remove-DnsServerZone -Name '${zoneName}' -Force -ErrorAction Stop; Write-Output 'ok'`;
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
+}
+
+// Enable/disable scavenging (aging) on a zone — WRITE
+function setDnsZoneAging(serverIp, auth, zoneName, enabled) {
+  const z = String(zoneName).replace(/'/g, "''");
+  const flag = enabled ? '$true' : '$false';
+  const script = `Set-DnsServerZoneAging -Name '${z}' -Aging ${flag} -Force -ErrorAction Stop; Write-Output 'ok'`;
+  return !!(runPS(cleanIp(serverIp), script, auth, true) || '').includes('ok');
 }
 
 // ════════════════════════════════════════════════════════════
@@ -420,6 +482,14 @@ module.exports = {
   getDnsZones,
   getDnsRecords,
   getDnsServerStats,
+  getDnsServerRole,
+  getDnsZoneSoaDetail,
+  getDnsZoneRecordCounts,
+  getDnsForwarders,
+  getDnsZoneScavenging,
+  getDnsStaleRecords,
+  testDnsForwarder,
+  getDnsQueryStats,
   // DNS write
   addDnsARecord,
   addDnsCNameRecord,
@@ -429,4 +499,5 @@ module.exports = {
   removeDnsRecord,
   addDnsZone,
   removeDnsZone,
+  setDnsZoneAging,
 };

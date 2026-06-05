@@ -524,6 +524,99 @@ CREATE TABLE IF NOT EXISTS site_health_scores (
 );
 CREATE INDEX IF NOT EXISTS idx_site_health_site ON site_health_scores(site_id, calculated_at DESC);
 
+-- ════════════════════════════════════════════════════════════
+-- DNS Health & Intelligence (DNS topology, replication, hygiene)
+-- ════════════════════════════════════════════════════════════
+
+-- DNS server roles & AD relationships
+CREATE TABLE IF NOT EXISTS dns_server_roles (
+  id              SERIAL PRIMARY KEY,
+  server_id       INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  is_primary      BOOLEAN DEFAULT FALSE,
+  is_pdc_emulator BOOLEAN DEFAULT FALSE,
+  forest_root     TEXT,
+  domain          TEXT,
+  replication_type TEXT DEFAULT 'ad-integrated', -- 'ad-integrated', 'standard', 'stub'
+  detected_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(server_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_server_roles_server ON dns_server_roles(server_id);
+
+-- Per-server zone SOA snapshots for replication-lag detection
+CREATE TABLE IF NOT EXISTS dns_zone_sync (
+  id              BIGSERIAL PRIMARY KEY,
+  zone_name       TEXT NOT NULL,
+  server_id       INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  soa_serial      BIGINT,
+  soa_primary     TEXT,
+  soa_email       TEXT,
+  soa_refresh     INTEGER,
+  soa_retry       INTEGER,
+  soa_expire      INTEGER,
+  soa_ttl         INTEGER,
+  record_count    INTEGER,
+  is_in_sync      BOOLEAN,
+  lag_seconds     INTEGER,
+  checked_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(zone_name, server_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_zone_sync_zone ON dns_zone_sync(zone_name);
+CREATE INDEX IF NOT EXISTS idx_dns_zone_sync_server ON dns_zone_sync(server_id);
+
+-- DNS query statistics history (per server)
+CREATE TABLE IF NOT EXISTS dns_query_stats (
+  id              BIGSERIAL PRIMARY KEY,
+  server_id       INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  recorded_at     TIMESTAMPTZ DEFAULT NOW(),
+  total_queries   BIGINT,
+  successful      BIGINT,
+  failed          BIGINT,
+  nxdomain_count  BIGINT,
+  response_time_ms INTEGER,
+  queries_per_sec  NUMERIC(10,2)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_query_stats_server ON dns_query_stats(server_id, recorded_at DESC);
+
+-- Stale DNS records (not refreshed within threshold)
+CREATE TABLE IF NOT EXISTS dns_stale_records (
+  id              BIGSERIAL PRIMARY KEY,
+  zone_id         INTEGER REFERENCES dns_zones(id) ON DELETE CASCADE,
+  hostname        TEXT,
+  record_type     TEXT,
+  record_data     TEXT,
+  last_updated    TIMESTAMPTZ,
+  days_stale      INTEGER,
+  detected_at     TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dns_stale_records_zone ON dns_stale_records(zone_id);
+
+-- DNS forwarder reachability health
+CREATE TABLE IF NOT EXISTS dns_forwarder_health (
+  id              SERIAL PRIMARY KEY,
+  server_id       INTEGER REFERENCES ddi_servers(id) ON DELETE CASCADE,
+  forwarder_ip    TEXT NOT NULL,
+  is_reachable    BOOLEAN,
+  response_time_ms INTEGER,
+  last_checked    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(server_id, forwarder_ip)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_forwarder_health_server ON dns_forwarder_health(server_id);
+
+-- Extra columns on dns_zones for record breakdown + scavenging/aging
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS soa_serial BIGINT;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS record_count_a INTEGER DEFAULT 0;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS record_count_ptr INTEGER DEFAULT 0;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS record_count_cname INTEGER DEFAULT 0;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS record_count_mx INTEGER DEFAULT 0;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS scavenging_enabled BOOLEAN;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS aging_enabled BOOLEAN;
+ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS last_scavenged TIMESTAMPTZ;
+
+-- DNS role/forwarder columns on ddi_servers
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS is_dns_primary BOOLEAN DEFAULT FALSE;
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_forwarders TEXT[];
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt

@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const ps        = require('./powershellRunner');
 const dhcp      = require('./dhcpReader');
 const ha        = require('./haMonitor');
+const dnsMonitor = require('./dnsMonitor');
 const ipamSync  = require('./ipamSync');
 const { decrypt } = require('./credStore');
 const forecastEngine  = require('./forecastEngine');   // { runForecasts(db) }
@@ -47,6 +48,7 @@ const INTERVAL_HEALTH      = 5   * 60 * 1000;   // per-server health score
 const INTERVAL_FORECAST    = 6   * 60 * 60 * 1000; // 6 hours
 const INTERVAL_ANOMALY     = 30  * 60 * 1000;      // 30 minutes
 const INTERVAL_SITEHEALTH  = 15  * 60 * 1000;      // 15 minutes
+const INTERVAL_DNS_MONITOR = 15  * 60 * 1000;      // 15 minutes — DNS infra monitoring
 const INTERVAL_DIGEST      = 60  * 60 * 1000;      // hourly digest + nightly-baseline tick
 
 const lastLogEventTime = {};
@@ -528,6 +530,18 @@ async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serve
 async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
 async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
 async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
+async function runDnsMonitor() {
+  const servers = await getActiveServers().catch(() => []);
+  if (!servers.length) return;
+  try { await dnsMonitor.runDnsMonitor(db, ps, servers, serverAuth); }
+  catch (e) { console.error('[DNS-Monitor] error:', e.message); }
+}
+async function runDnsStale() {
+  const servers = await getActiveServers().catch(() => []);
+  if (!servers.length) return;
+  try { await dnsMonitor.detectStaleRecords(db, ps, servers, serverAuth); }
+  catch (e) { console.error('[DNS-Stale] error:', e.message); }
+}
 // hourly tick: send digest emails; run baselines once per day around 02:00
 let _lastBaselineDay = null;
 async function hourlyTick() {
@@ -537,6 +551,7 @@ async function hourlyTick() {
     if (now.getHours() === 2 && _lastBaselineDay !== day) {
       _lastBaselineDay = day;
       const r = await anomalyDetector.buildBaselines(db); log(`[Baselines] ${JSON.stringify(r)}`);
+      try { await runDnsStale(); } catch (e) { console.error('[DNS-Stale] error:', e.message); }
     }
   } catch (e) { console.error('[Baselines] error:', e.message); }
 }
@@ -582,6 +597,7 @@ async function main() {
   try { await runForecasts(); }  catch (e) { console.error('[Forecast] startup error:', e.message); }
   try { await runSiteHealth(); } catch (e) { console.error('[SiteHealth] startup error:', e.message); }
   try { await runAnomalies(); }  catch (e) { console.error('[Anomaly] startup error:', e.message); }
+  try { await runDnsMonitor(); } catch (e) { console.error('[DNS-Monitor] startup error:', e.message); }
 
   setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
   setInterval(() => pollAll(collectScopeStats, 'Scopes'),       INTERVAL_SCOPE_STATS);
@@ -595,6 +611,7 @@ async function main() {
   setInterval(runForecasts,  INTERVAL_FORECAST);
   setInterval(runAnomalies,  INTERVAL_ANOMALY);
   setInterval(runSiteHealth, INTERVAL_SITEHEALTH);
+  setInterval(runDnsMonitor, INTERVAL_DNS_MONITOR);
   setInterval(hourlyTick,    INTERVAL_DIGEST);
 
   log('=== DDIVault Collector running ===');
