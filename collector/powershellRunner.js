@@ -95,6 +95,9 @@ function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
 
   try {
     const raw = execSync(psCmd, { encoding: 'utf8', timeout: timeoutMs || PS_TIMEOUT }).trim();
+    if (script.includes('testDnsForwarder') || script.includes('Resolve-DnsName')) {
+      console.log(`[DEBUG] testDnsForwarder raw output: ${raw}`);
+    }
     if (!raw) return returnRaw ? '' : null;
     if (returnRaw) return raw;
     return JSON.parse(raw);

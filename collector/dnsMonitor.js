@@ -170,8 +170,9 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
   for (const fwd of list) {
     let r;
     try { r = await ps.testDnsForwarder(ip, auth, fwd); }
-    catch (e) { log(`[Forwarders] ${ip}->${fwd}: ${e.message}`); continue; }
-    if (!r) continue;
+    catch (e) { log(`[Forwarders] ${ip}->${fwd}: exception: ${e.message}`); continue; }
+    log(`[Forwarders] ${ip}->${fwd}: raw result = ${JSON.stringify(r)}`);
+    if (!r) { log(`[Forwarders] ${ip}->${fwd}: null result, skipping`); continue; }
     // If result is an array, it means the DNS query succeeded (Resolve-DnsName
     // returned raw records) but the PS script didn't wrap it in our expected
     // object format. Treat that as reachable. Otherwise parse the explicit
