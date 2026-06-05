@@ -1550,13 +1550,16 @@ function IntelligencePanel() {
 // Donut chart (module scope) — mirrors DeviceDonut bar style
 // ════════════════════════════════════════════════════════════
 function RecordDonut({ data }: { data: { record_type: string; count: number }[] }) {
-  const total = data.reduce((a, b) => a + (b.count || 0), 0);
+  // COUNT(*) can arrive as a string from the API — coerce to a number so the
+  // total is summed (not string-concatenated) and percentages divide correctly.
+  const rows = data.map(d => ({ record_type: d.record_type, count: Number(d.count) || 0 }));
+  const total = rows.reduce((sum, item) => sum + item.count, 0);
   if (total === 0) return <EmptyState title="No records" message="No DNS records to chart." />;
 
   // build donut segments
   const R = 64, SW = 22, C = 2 * Math.PI * R;
   let acc = 0;
-  const segments = data.map(d => {
+  const segments = rows.map(d => {
     const frac = d.count / total;
     const seg = { ...d, frac, dash: frac * C, offset: acc * C, color: RECORD_COLORS[d.record_type] || '#6b7280' };
     acc += frac;

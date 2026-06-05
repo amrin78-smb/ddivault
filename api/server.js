@@ -855,7 +855,7 @@ app.get('/api/dns/records', async (req, res) => {
 app.get('/api/dns/record-type-breakdown', async (req, res) => {
   try {
     const rows = await db.query(
-      `SELECT record_type, COUNT(*) as count
+      `SELECT record_type, COUNT(*)::int as count
        FROM dns_records
        GROUP BY record_type
        ORDER BY count DESC`
@@ -2207,7 +2207,7 @@ app.get('/api/dns/health', async (req, res) => {
       db.query('SELECT COUNT(DISTINCT zone_name) AS n FROM dns_zone_sync WHERE is_in_sync=FALSE'),
       db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE replication_lag=TRUE'),
       db.query('SELECT COUNT(*) AS n FROM dns_forwarder_health'),
-      db.query('SELECT COUNT(*) AS n FROM dns_forwarder_health WHERE is_reachable=FALSE'),
+      db.query("SELECT COUNT(*) AS n FROM dns_forwarder_health WHERE is_reachable=FALSE AND last_checked > NOW() - INTERVAL '30 minutes'"),
       db.query('SELECT COUNT(*) AS n FROM dns_stale_records'),
       db.query('SELECT COUNT(*) AS n FROM dns_zones WHERE is_reverse=FALSE AND is_auto_created=FALSE AND scavenging_enabled=FALSE'),
     ]);

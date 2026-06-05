@@ -147,6 +147,7 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
     // depending on the ConvertTo-Json path — parse all forms explicitly so a
     // reachable forwarder (e.g. 1.1.1.1 at 328ms) is never recorded as down.
     const isReachable = r.Reachable === true || r.Reachable === 'True' || r.Reachable === 1;
+    log(`Forwarder ${fwd}: reachable=${isReachable}, raw=${JSON.stringify(r.Reachable)}, ms=${toInt(r.ResponseMs)}`);
     await db.query(
       `INSERT INTO dns_forwarder_health (server_id, forwarder_ip, is_reachable, response_time_ms, last_checked)
        VALUES ($1,$2,$3,$4,NOW())
