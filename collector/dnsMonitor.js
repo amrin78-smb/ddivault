@@ -149,7 +149,6 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
   // Normalize the live PS result to a candidate array.
   let candidates = raw == null ? [] : (Array.isArray(raw) ? raw : [raw]);
   log(`[Forwarders] ${ip}: PS returned ${candidates.length} forwarders`);
-  log(`[Forwarders] ${ip}: candidates raw = ${JSON.stringify(candidates)}`);
 
   // Fallback — if the live call returned nothing, use the forwarders already
   // stored on ddi_servers (populated earlier by detectDnsRoles). Distinguishes
@@ -165,14 +164,12 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
   const list = candidates
     .map(v => (typeof v === 'string' ? v.trim() : v))
     .filter(isIpStr);
-  log(`[Forwarders] ${ip}: list after filter = ${JSON.stringify(list)}`);
 
   for (const fwd of list) {
     let r;
     try { r = await ps.testDnsForwarder(ip, auth, fwd); }
-    catch (e) { log(`[Forwarders] ${ip}->${fwd}: exception: ${e.message}`); continue; }
-    log(`[Forwarders] ${ip}->${fwd}: raw result = ${JSON.stringify(r)}`);
-    if (!r) { log(`[Forwarders] ${ip}->${fwd}: null result, skipping`); continue; }
+    catch (e) { log(`[Forwarders] ${ip}->${fwd}: ${e.message}`); continue; }
+    if (!r) continue;
     // If result is an array, it means the DNS query succeeded (Resolve-DnsName
     // returned raw records) but the PS script didn't wrap it in our expected
     // object format. Treat that as reachable. Otherwise parse the explicit
