@@ -23,29 +23,29 @@ function classifyDevice(mac, hostname) {
   let result = null;
 
   // ── 1. Hostname-driven classification ──────────────────────────────────────
+  // IMPORTANT: only GENERIC, universally-recognizable conventions belong here.
+  // Never add customer-specific naming schemes — vendor identity comes from the
+  // OUI registry, not from any one organization's hostname convention.
   if (h) {
     if (/iphone|ipad|ipod/i.test(h)) {
       result = { type: 'mobile', os: 'iOS', icon: '📱' };
     } else if (/android|galaxy|pixel|-mb-|\bmobile\b/i.test(h)) {
       result = { type: 'mobile', os: 'Android', icon: '📱' };
-    } else if (/macbook|imac|\bmac\b/i.test(h)) {
+    } else if (/macbook|imac|\bmac\b|mac-/i.test(h)) {
       result = { type: 'workstation', os: 'macOS', icon: '💻' };
-    } else if (/-por-|portable|laptop|notebook|\bnb\d/i.test(h)) {
-      // e.g. TH-SMTO-POR-xxx → Windows portable/laptop
+    } else if (/surface/i.test(h)) {
       result = { type: 'workstation', os: 'Windows', icon: '💻' };
-    } else if (/-dsk-|desktop|\bwks\b|workstation/i.test(h)) {
-      // e.g. TH-SMTO-DSK-xxx → Windows desktop
+    } else if (/-por-|\bpor\b|portable|laptop|notebook|\bnb\d/i.test(h)) {
+      result = { type: 'workstation', os: 'Windows', icon: '💻' };
+    } else if (/-dsk-|\bdsk\b|desktop|\bwks\b|workstation/i.test(h)) {
       result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
     } else if (/-srv-|server|\bdc\d|\bsql\b|\bvm-/i.test(h)) {
-      result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
-    } else if (/^th-[a-z]{2,5}-/i.test(h) || /^\d[a-z0-9]{3}-/i.test(h) || /\d{2}[a-z]{2}-\d{3}/i.test(h)) {
-      // Corporate naming conventions: TH-SMTO-xxx, 1EX0-xxx, 2GCF-xxx → Windows workstation
       result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
     } else if (/voip|sip|\bphone\b|polycom|yealink/i.test(h)) {
       result = { type: 'voip', icon: '📞' };
     } else if (/printer|print-|\bmfp\b|copier/i.test(h)) {
       result = { type: 'printer', icon: '🖨️' };
-    } else if (/\bap-|-ap\d|access-?point|wifi|wlan|switch|router|\bfw-|firewall/i.test(h)) {
+    } else if (/\bap-|-ap\d|\bwap-|access-?point|wifi|wlan|switch|router|\bfw-|firewall/i.test(h)) {
       result = { type: 'network', icon: '🔌' };
     }
   }
