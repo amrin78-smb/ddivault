@@ -1383,7 +1383,7 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
     const {
       hostname, ip_address, role, description, is_active,
       auth_mode, ps_username, ps_password,
-      winrm_port, winrm_https, notes,
+      winrm_port, winrm_https, notes, site_id,
     } = req.body;
 
     // Only re-encrypt password if a new one was provided
@@ -1400,18 +1400,21 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
          winrm_port=${encryptedPass !== undefined ? '$10' : '$9'},
          winrm_https=${encryptedPass !== undefined ? '$11' : '$10'},
          notes=${encryptedPass !== undefined ? '$12' : '$11'},
+         site_id=${encryptedPass !== undefined ? '$13' : '$12'},
          updated_at=NOW()
        WHERE id=$1
        RETURNING id, hostname, ip_address::text, role, description,
                  auth_mode, ps_username, winrm_port, winrm_https,
-                 winrm_test_ok, winrm_tested_at, notes, is_active`,
+                 winrm_test_ok, winrm_tested_at, notes, is_active, site_id`,
       encryptedPass !== undefined
         ? [id, hostname||null, ip_address||null, role||'both', description||null,
            is_active !== false, auth_mode||'kerberos', ps_username||null,
-           encryptedPass, parseInt(winrm_port||'5985'), winrm_https===true, notes||null]
+           encryptedPass, parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
+           site_id ? parseInt(site_id) : null]
         : [id, hostname||null, ip_address||null, role||'both', description||null,
            is_active !== false, auth_mode||'kerberos', ps_username||null,
-           parseInt(winrm_port||'5985'), winrm_https===true, notes||null]
+           parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
+           site_id ? parseInt(site_id) : null]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
     if (req.audit) req.audit({ action: 'modify', entity_type: 'server', entity_id: id, entity_name: result.rows[0].hostname, server_id: id, new_value: { hostname, role, auth_mode, is_active: is_active !== false } });
