@@ -84,7 +84,7 @@ function SiteTile({ site, expanded, onToggle }: {
       onClick={onToggle}
       style={{
         background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)', padding: 10, cursor: 'pointer',
+        borderRadius: 'var(--radius-sm)', padding: 8, cursor: 'pointer',
         transition: 'border-color 0.12s',
       }}
       onMouseEnter={e => (e.currentTarget.style.borderColor = color)}
@@ -153,7 +153,7 @@ export default function SiteHealth() {
   return (
     <div style={CARD}>
       <div style={{
-        padding: '16px 20px', borderBottom: '1px solid var(--border)',
+        padding: '12px 16px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Site Health</div>
@@ -168,9 +168,9 @@ export default function SiteHealth() {
         )}
       </div>
 
-      <div style={{ padding: '16px 20px' }}>
+      <div style={{ padding: '12px 16px' }}>
         {loading ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
             <CardSkeleton count={4} height={64} />
           </div>
         ) : error ? (
@@ -178,7 +178,7 @@ export default function SiteHealth() {
         ) : rows.length === 0 ? (
           <EmptyState icon="🏢" title="No site health data yet" message="Scores compute every 15 minutes." />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
             {rows.map(site => {
               const id = String(site.site_id);
               return (

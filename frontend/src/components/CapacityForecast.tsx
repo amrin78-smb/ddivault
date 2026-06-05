@@ -72,7 +72,7 @@ function fmtDays(days: number | null): string {
 // ════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════
-export default function CapacityForecast() {
+export default function CapacityForecast({ onViewAll }: { onViewAll?: () => void }) {
   const [rows, setRows] = useState<ScopeForecast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +94,7 @@ export default function CapacityForecast() {
   useEffect(() => { load(); }, [load]);
 
   const visible = rows.filter(r => (num(r.growth_rate_per_day) ?? 0) > 0.1);
-  const shown = visible.slice(0, 5);
+  const shown = visible.slice(0, 4);
   const extra = visible.length - shown.length;
 
   return (
@@ -105,8 +105,18 @@ export default function CapacityForecast() {
       }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Capacity Forecast</div>
         {!loading && !error && visible.length > 0 && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            {visible.length} scope{visible.length > 1 ? 's' : ''} trending up
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {visible.length} scope{visible.length > 1 ? 's' : ''} trending up
+            </div>
+            {onViewAll && (
+              <button
+                onClick={() => onViewAll?.()}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12 }}
+              >
+                View all →
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -150,7 +160,9 @@ export default function CapacityForecast() {
                     <td style={TD}>{fmtDays(days80)}</td>
                     <td style={{ ...TD, fontWeight: 700, color: daysToFullColor(daysFull) }}>{fmtDays(daysFull)}</td>
                     <td style={TD}><span className={`badge ${confidenceBadge(r.confidence)}`}>{r.confidence || 'unknown'}</span></td>
-                    <td style={{ ...TD, fontSize: 12, color: 'var(--text-muted)' }}>{r.recommendation || '—'}</td>
+                    <td style={{ ...TD, fontSize: 12, color: 'var(--text-muted)' }}>
+                      <div title={r.recommendation || ''} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.recommendation || '—'}</div>
+                    </td>
                   </tr>
                 );
               })}
@@ -158,7 +170,16 @@ export default function CapacityForecast() {
           </table>
           {extra > 0 && (
             <div style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-muted)' }}>
-              +{extra} more
+              {onViewAll ? (
+                <button
+                  onClick={() => onViewAll?.()}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 11 }}
+                >
+                  +{extra} more — View all →
+                </button>
+              ) : (
+                <>+{extra} more</>
+              )}
             </div>
           )}
         </div>

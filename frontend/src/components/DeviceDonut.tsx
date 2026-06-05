@@ -106,7 +106,7 @@ export default function DeviceDonut() {
 
   return (
     <div style={CARD}>
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Device Type Distribution</div>
         {!loading && !error && total > 0 && (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total.toLocaleString()} devices</div>
@@ -122,11 +122,11 @@ export default function DeviceDonut() {
       ) : total === 0 ? (
         <EmptyState icon="📡" title="No leases found" message="No DHCP leases available to categorize." />
       ) : (
-        <div style={{ padding: '16px 20px', maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ padding: '12px 16px', maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 7 }}>
           {slices.map(s => (
             <div key={s.category} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 12, color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
-              <div style={{ flex: 1, height: 12, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{
                   width: `${maxPct > 0 ? (s.pct / maxPct) * 100 : 0}%`,
                   height: '100%', background: s.color, borderRadius: 4,

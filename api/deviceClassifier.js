@@ -1,55 +1,96 @@
 'use strict';
 const { lookupOUI } = require('./ouiLookup');
 
+/**
+ * classifyDevice — best-effort device classification from MAC OUI + hostname.
+ *
+ * Order of precedence:
+ *   1. Hostname patterns (highest confidence — covers corporate naming conventions
+ *      like Thai Union's TH-SMTO-POR-xxx / 1EX0-xxx even when the OUI is unknown).
+ *   2. Vendor (OUI) — Apple, computer makers, network/printer/VoIP brands, mobile.
+ *   3. Coarse OUI type hint as a last resort.
+ *
+ * Returns { type, os?, icon, vendor, risk_level }.
+ *   type ∈ mobile | workstation | network | printer | voip | iot | unknown
+ */
 function classifyDevice(mac, hostname) {
   const info = lookupOUI(mac);
   const vendor = info.vendor || 'Unknown';
   const ouiType = info.type || 'unknown';
   const v = vendor.toLowerCase();
-  const h = hostname ? String(hostname) : '';
+  const h = hostname ? String(hostname).trim() : '';
 
-  let result;
+  let result = null;
 
-  if (vendor === 'Apple' && /iphone|ipad/i.test(h)) {
-    result = { type: 'mobile', os: 'iOS', icon: '📱' };
-  } else if (vendor === 'Apple' && (/macbook|imac|\bmac\b/i.test(h) || true)) {
-    // Apple OUI with mac-like hostname, or Apple OUI with no mobile hint
-    result = { type: 'workstation', os: 'macOS', icon: '💻' };
-  } else if (/\d{2}[A-Z]{2}-\d{3}/.test(h)) {
-    result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
-  } else if (
-    ouiType === 'network' &&
-    (v.includes('cisco') || v.includes('juniper') || v.includes('aruba') ||
-     v.includes('fortinet') || v.includes('palo alto') || v.includes('ubiquiti'))
-  ) {
-    result = { type: 'network', icon: '🔌' };
-  } else if (
-    ouiType === 'printer' &&
-    (v.includes('hp') || v.includes('canon') || v.includes('epson') ||
-     v.includes('xerox') || v.includes('ricoh') || v.includes('konica') ||
-     v.includes('brother'))
-  ) {
-    result = { type: 'printer', icon: '🖨️' };
-  } else if (
-    v.includes('polycom') || v.includes('yealink') || v.includes('grandstream') ||
-    /polycom|voip|phone/i.test(h)
-  ) {
-    result = { type: 'voip', icon: '📞' };
-  } else if (
-    (v.includes('samsung') || v.includes('huawei') || v.includes('google') ||
-     v.includes('xiaomi')) &&
-    ouiType === 'consumer' &&
-    /phone|android|galaxy|pixel|mobile/i.test(h)
-  ) {
-    result = { type: 'mobile', os: 'Android', icon: '📱' };
-  } else {
-    result = { type: 'unknown', icon: '❓' };
+  // ── 1. Hostname-driven classification ──────────────────────────────────────
+  if (h) {
+    if (/iphone|ipad|ipod/i.test(h)) {
+      result = { type: 'mobile', os: 'iOS', icon: '📱' };
+    } else if (/android|galaxy|pixel|-mb-|\bmobile\b/i.test(h)) {
+      result = { type: 'mobile', os: 'Android', icon: '📱' };
+    } else if (/macbook|imac|\bmac\b/i.test(h)) {
+      result = { type: 'workstation', os: 'macOS', icon: '💻' };
+    } else if (/-por-|portable|laptop|notebook|\bnb\d/i.test(h)) {
+      // e.g. TH-SMTO-POR-xxx → Windows portable/laptop
+      result = { type: 'workstation', os: 'Windows', icon: '💻' };
+    } else if (/-dsk-|desktop|\bwks\b|workstation/i.test(h)) {
+      // e.g. TH-SMTO-DSK-xxx → Windows desktop
+      result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
+    } else if (/-srv-|server|\bdc\d|\bsql\b|\bvm-/i.test(h)) {
+      result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
+    } else if (/^th-[a-z]{2,5}-/i.test(h) || /^\d[a-z0-9]{3}-/i.test(h) || /\d{2}[a-z]{2}-\d{3}/i.test(h)) {
+      // Corporate naming conventions: TH-SMTO-xxx, 1EX0-xxx, 2GCF-xxx → Windows workstation
+      result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
+    } else if (/voip|sip|\bphone\b|polycom|yealink/i.test(h)) {
+      result = { type: 'voip', icon: '📞' };
+    } else if (/printer|print-|\bmfp\b|copier/i.test(h)) {
+      result = { type: 'printer', icon: '🖨️' };
+    } else if (/\bap-|-ap\d|access-?point|wifi|wlan|switch|router|\bfw-|firewall/i.test(h)) {
+      result = { type: 'network', icon: '🔌' };
+    }
+  }
+
+  // ── 2. Vendor (OUI) driven classification ──────────────────────────────────
+  if (!result) {
+    if (v.includes('apple')) {
+      result = { type: 'workstation', os: 'macOS', icon: '💻' };
+    } else if (
+      ouiType === 'network' ||
+      /cisco|juniper|aruba|arista|fortinet|palo alto|ubiquiti|meraki|netgear|tp-?link|d-?link|mikrotik|ruckus|extreme network|zyxel|brocade|\bh3c\b|sonicwall|watchguard|hewlett packard enterprise|ruijie|cambium|aerohive/.test(v)
+    ) {
+      result = { type: 'network', icon: '🔌' };
+    } else if (
+      ouiType === 'voip' ||
+      /polycom|yealink|grandstream|avaya|mitel|\bsnom\b|audiocodes|sangoma|spectralink|gigaset/.test(v)
+    ) {
+      result = { type: 'voip', icon: '📞' };
+    } else if (
+      ouiType === 'printer' ||
+      /canon|epson|xerox|ricoh|konica|brother|lexmark|kyocera|\bsharp\b|\boki\b|zebra|honeywell|datalogic|intermec/.test(v)
+    ) {
+      result = { type: 'printer', icon: '🖨️' };
+    } else if (
+      ouiType === 'computer' ||
+      /dell|lenovo|hewlett-packard|\bhp inc\b|asustek|\bacer\b|micro-star|\bmsi\b|gigabyte|super ?micro|vmware|intel corp|microsoft corp|fujitsu|toshiba|pegatron|wistron|compal|quanta|clevo|hon hai|framework computer/.test(v)
+    ) {
+      result = { type: 'workstation', os: 'Windows', icon: '🖥️' };
+    } else if (
+      ouiType === 'mobile' ||
+      /samsung|huawei|xiaomi|oppo|vivo mobile|oneplus|\bgoogle\b|motorola|lg electronics|sony mobile|\bhtc\b|nokia|realme|\btcl\b/.test(v)
+    ) {
+      result = { type: 'mobile', os: 'Android', icon: '📱' };
+    } else if (ouiType === 'iot') {
+      result = { type: 'iot', icon: '📟' };
+    } else {
+      result = { type: 'unknown', icon: '❓' };
+    }
   }
 
   result.vendor = vendor;
 
+  // ── Risk level — known vendor + known hostname is lowest risk ───────────────
   const ouiKnown = vendor !== 'Unknown';
-  const hasHostname = h.trim().length > 0;
+  const hasHostname = h.length > 0;
   let risk_level;
   if (ouiKnown && hasHostname) {
     risk_level = 'low';

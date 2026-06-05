@@ -284,7 +284,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
   ] : [];
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="Operations Center" subtitle="Live DDI health — scope exhaustion, recent activity, and utilization trends. Refreshes every 30s." />
 
       {/* Real-time status strip */}
@@ -372,25 +372,30 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
                 message="No DHCP scope is above 80% utilization."
               />
             ) : (
-              <div style={{ maxHeight: 320, overflow: 'auto' }}>
+              <div>
                 <table className="data-table">
                   <thead><tr><th>Scope</th><th>Used / Total</th><th style={{ minWidth: 150 }}>Utilization</th></tr></thead>
                   <tbody>
-                    {attention.map(s => (
+                    {attention.slice(0, 3).map(s => (
                       <tr key={s.id} className="clickable" onClick={() => onFocusScope(s.scope_id)}>
-                        <td style={{ padding: '8px 12px' }}>
+                        <td style={{ padding: '6px 10px' }}>
                           <div style={{ fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>{s.scope_id}</div>
                           <div style={{ ...MUTED, marginTop: 1 }}>{s.name || s.server_hostname || '—'}</div>
                         </td>
-                        <td className="mono" style={{ padding: '8px 12px', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+                        <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5, whiteSpace: 'nowrap' }}>
                           {s.in_use} / {s.total_ips}
                           {s.free < 10 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {s.free} left</span>}
                         </td>
-                        <td style={{ padding: '8px 12px' }}><UtilBar pct={s.pct} /></td>
+                        <td style={{ padding: '6px 10px' }}><UtilBar pct={s.pct} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                {attention.length > 3 && (
+                  <div style={{ padding: '8px 10px', textAlign: 'center', borderTop: '1px solid var(--border-light)' }}>
+                    <button onClick={() => onNavigate('scopes')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12.5 }}>+{attention.length - 3} more · View all →</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -400,8 +405,8 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
               <div style={TITLE}>Active Lease Trend</div>
               <span style={MUTED}>last 7 days</span>
             </div>
-            <div style={{ padding: '16px 20px' }}>
-              {loading ? <Skeleton height={180} /> : <LineChart points={leaseTrend.map(d => d.leases)} height={180} />}
+            <div style={{ padding: '12px 16px' }}>
+              {loading ? <Skeleton height={140} /> : <LineChart points={leaseTrend.map(d => d.leases)} height={140} />}
             </div>
           </div>
         </div>
@@ -419,16 +424,16 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
           {loading ? <TableSkeleton rows={8} cols={4} /> : events.length === 0 ? (
             <EmptyState title="No recent activity" message="DHCP log events will appear here as they are collected." />
           ) : (
-            <div style={{ maxHeight: 340, overflow: 'auto' }}>
+            <div style={{ maxHeight: 200, overflow: 'auto' }}>
               <table className="data-table">
                 <thead><tr><th>Type</th><th>IP Address</th><th>Hostname</th><th>Time</th></tr></thead>
                 <tbody>
                   {events.map(e => (
                     <tr key={e.id}>
-                      <td style={{ padding: '8px 12px' }}><EventTypeBadge type={e.event_type} /></td>
-                      <td className="mono" style={{ padding: '8px 12px', fontSize: 12.5 }}>{e.ip_address || '—'}</td>
-                      <td style={{ padding: '8px 12px', fontSize: 12.5, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.hostname || '—'}</td>
-                      <td className="mono" style={{ ...MUTED, padding: '8px 12px', whiteSpace: 'nowrap' }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
+                      <td style={{ padding: '6px 10px' }}><EventTypeBadge type={e.event_type} /></td>
+                      <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5 }}>{e.ip_address || '—'}</td>
+                      <td style={{ padding: '6px 10px', fontSize: 12.5, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.hostname || '—'}</td>
+                      <td className="mono" style={{ ...MUTED, padding: '6px 10px', whiteSpace: 'nowrap' }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -436,14 +441,14 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
             </div>
           )}
         </div>
-        <CapacityForecast />
+        <CapacityForecast onViewAll={() => onNavigate('scopes')} />
       </div>
 
       {/* Row 5 — Intelligence & Security */}
       <div>
         <SectionHeader>Intelligence &amp; Security</SectionHeader>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <SecurityOverview />
+          <SecurityOverview onViewAll={() => onNavigate('intelligence')} />
           <SiteHealth />
         </div>
       </div>
@@ -454,7 +459,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16 }}>
           <div style={CARD}>
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
-            <div style={{ padding: '16px 20px' }}>
+            <div style={{ padding: '12px 16px' }}>
               {loading ? <Skeleton height={110} /> : (
                 <Donut dim={110} data={[
                   { label: 'Available', value: ipDist?.available ?? 0, color: 'var(--green)' },
@@ -476,21 +481,21 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
           <div style={TITLE}>Utilization Trends</div>
           <span style={MUTED}>Top 6 scopes · last 7 days</span>
         </div>
-        <div style={{ padding: '16px 20px' }}>
+        <div style={{ padding: '12px 16px' }}>
           {loading ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={70} />)}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={56} />)}
             </div>
           ) : topByUtil.length === 0 ? (
             <EmptyState title="No trend data yet" message="Utilization history accumulates as scopes are polled over time." />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
               {topByUtil.map(sh => {
                 const latest = sh.history[sh.history.length - 1].percent_used;
                 const first = sh.history[0].percent_used;
                 const color = pctColor(latest);
                 return (
-                  <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
+                  <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
                       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600 }}>{sh.scope_id}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -520,11 +525,11 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
           ) : (
             <table className="data-table">
               <tbody>
-                {alerts.slice(0, 5).map(a => (
+                {alerts.slice(0, 3).map(a => (
                   <tr key={a.id}>
-                    <td style={{ padding: '8px 12px', width: 70 }}><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
-                    <td style={{ padding: '8px 12px', fontSize: 12.5 }}>{a.message}</td>
-                    <td style={{ padding: '8px 12px', width: 50 }}><button onClick={() => ackAlert(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button></td>
+                    <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
+                    <td style={{ padding: '6px 10px', fontSize: 12.5 }}>{a.message}</td>
+                    <td style={{ padding: '6px 10px', width: 50 }}><button onClick={() => ackAlert(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -541,11 +546,11 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
           ) : (
             <table className="data-table">
               <tbody>
-                {audit.map((a: any) => (
+                {audit.slice(0, 3).map((a: any) => (
                   <tr key={a.id}>
-                    <td style={{ padding: '8px 12px', width: 70 }}><span className={`badge ${a.action === 'create' ? 'badge-green' : a.action === 'delete' ? 'badge-red' : a.action === 'modify' ? 'badge-yellow' : 'badge-gray'}`}>{(a.action || '').toUpperCase()}</span></td>
-                    <td style={{ padding: '8px 12px', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{a.change_summary || `${a.action} ${a.entity_type}`}<div style={MUTED}>{a.username}</div></td>
-                    <td style={{ ...MUTED, padding: '8px 12px', whiteSpace: 'nowrap', width: 90 }}>{a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}</td>
+                    <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.action === 'create' ? 'badge-green' : a.action === 'delete' ? 'badge-red' : a.action === 'modify' ? 'badge-yellow' : 'badge-gray'}`}>{(a.action || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '6px 10px', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{a.change_summary || `${a.action} ${a.entity_type}`}<div style={MUTED}>{a.username}</div></td>
+                    <td style={{ ...MUTED, padding: '6px 10px', whiteSpace: 'nowrap', width: 90 }}>{a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}</td>
                   </tr>
                 ))}
               </tbody>
