@@ -166,7 +166,7 @@ async function scoreDns(db, siteId) {
   let score = 100;
 
   const servers = await db.query(
-    `SELECT id, poll_status, query_ms
+    `SELECT id, query_ms, winrm_test_ok, health_score
        FROM ddi_servers
       WHERE site_id = $1
         AND role IN ('dns', 'both')`,
@@ -186,7 +186,12 @@ async function scoreDns(db, siteId) {
   let maxQueryMs = 0;
   let anyUnreachable = false;
   for (const s of servers.rows) {
-    if (s.poll_status === 'error') anyUnreachable = true;
+    // A DNS server is "unreachable" only when WinRM actually failed or its health
+    // score is below 50 — not merely because the DNS monitor hasn't polled yet
+    // (a responding, healthy server must not read unreachable).
+    const winrmFailed = s.winrm_test_ok === false;
+    const lowHealth = s.health_score != null && Number(s.health_score) < 50;
+    if (winrmFailed || lowHealth) anyUnreachable = true;
     const q = s.query_ms == null ? 0 : Number(s.query_ms);
     if (q > maxQueryMs) maxQueryMs = q;
   }

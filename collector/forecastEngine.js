@@ -110,10 +110,16 @@ async function runForecasts(db) {
       // 4. Percentages and time-to-target.
       const currentPct = Math.round((current / total) * 100 * 100) / 100;
 
+      // Cap forecast days so a near-zero (but positive) slope can't produce an
+      // astronomical value that overflows the INTEGER columns. 9999 days ≈ 27y.
+      const safeDays = (days) => {
+        if (days == null || !isFinite(days) || days < 0) return null;
+        return Math.min(Math.round(days), 9999);
+      };
       function daysTo(target) {
         if (slope <= 0) return null;          // not growing
         if (current >= target) return 0;       // already there
-        return Math.max(0, Math.ceil((target - current) / slope));
+        return safeDays(Math.ceil((target - current) / slope));
       }
       const daysTo80 = daysTo(0.8 * total);
       const daysTo90 = daysTo(0.9 * total);
