@@ -17,6 +17,9 @@
 const { execSync } = require('child_process');
 
 const PS_TIMEOUT = parseInt(process.env.PS_TIMEOUT_MS || '30000');
+// DNS zone collection on servers with many zones (100+) takes far longer than a
+// standard DHCP query, so DNS reads use a dedicated, larger timeout (60s default).
+const DNS_PS_TIMEOUT = parseInt(process.env.PS_DNS_TIMEOUT_MS || '60000');
 
 // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
@@ -36,7 +39,7 @@ const DEFAULT_PASSWORD  = process.env.PS_PASSWORD  || '';
  * @param {boolean} returnRaw  - if true, return stdout as-is; if false, parse JSON
  * @returns {string|object|null}
  */
-function runPS(serverIp, script, auth, returnRaw) {
+function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
   // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which
   // Invoke-Command -ComputerName rejects. Strip it before any remote use.
   const cleanIp = (serverIp || '').replace(/\/\d+$/, '').trim();
@@ -91,7 +94,7 @@ function runPS(serverIp, script, auth, returnRaw) {
   }
 
   try {
-    const raw = execSync(psCmd, { encoding: 'utf8', timeout: PS_TIMEOUT }).trim();
+    const raw = execSync(psCmd, { encoding: 'utf8', timeout: timeoutMs || PS_TIMEOUT }).trim();
     if (!raw) return returnRaw ? '' : null;
     if (returnRaw) return raw;
     return JSON.parse(raw);
@@ -276,7 +279,7 @@ function addDhcpExclusion(serverIp, auth, scopeId, startRange, endRange) {
 // ════════════════════════════════════════════════════════════
 
 function getDnsZones(serverIp, auth) {
-  const r = runPS(serverIp, `Get-DnsServerZone | Select-Object ZoneName,ZoneType,IsAutoCreated,IsDsIntegrated,IsReverseLookupZone,IsReadOnly | ConvertTo-Json -Depth 5 -Compress`, auth);
+  const r = runPS(serverIp, `Get-DnsServerZone | Select-Object ZoneName,ZoneType,IsAutoCreated,IsDsIntegrated,IsReverseLookupZone,IsReadOnly | ConvertTo-Json -Depth 5 -Compress`, auth, false, DNS_PS_TIMEOUT);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }
@@ -284,7 +287,7 @@ function getDnsZones(serverIp, auth) {
 function getDnsRecords(serverIp, zoneName, auth) {
   // Single line — cmd.exe truncates -Command strings at newlines.
   const script = `Get-DnsServerResourceRecord -ZoneName '${zoneName}' | ForEach-Object { $r = $_; $data = ''; try { if ($r.RecordData.IPv4Address) { $data = $r.RecordData.IPv4Address.IPAddressToString } elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString } elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias } elseif ($r.RecordData.MailExchange) { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference } elseif ($r.RecordData.NameServer) { $data = $r.RecordData.NameServer } elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText } else { $data = '' } } catch {}; [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data } } | ConvertTo-Json -Depth 5 -Compress`;
-  const r = runPS(serverIp, script, auth);
+  const r = runPS(serverIp, script, auth, false, DNS_PS_TIMEOUT);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }
@@ -292,40 +295,40 @@ function getDnsRecords(serverIp, zoneName, auth) {
 function getDnsServerStats(serverIp, auth) {
   // Single line — cmd.exe truncates -Command strings at newlines.
   const script = `$s = Get-DnsServerStatistics -ErrorAction SilentlyContinue; if ($s) { [PSCustomObject]@{ TotalQueries=$s.Query2Statistics.TotalReceived; TotalResponses=$s.Query2Statistics.TotalResponseSent; TotalFailures=$s.Query2Statistics.TotalFailure } | ConvertTo-Json -Compress }`;
-  return runPS(serverIp, script, auth);
+  return runPS(serverIp, script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get DNS server role and AD info
 function getDnsServerRole(serverIp, auth) {
   const script = `$role = @{}; try { $pdc = (Get-ADDomain -ErrorAction SilentlyContinue).PDCEmulator; $role.isPDC = ($pdc -split '\\.')[0] -eq $env:COMPUTERNAME } catch {}; try { $fwd = Get-DnsServerForwarder -ErrorAction SilentlyContinue; $role.forwarders = ($fwd.IPAddress | ForEach-Object { $_.IPAddressToString }) -join ',' } catch { $role.forwarders = '' }; try { $role.domain = (Get-WmiObject Win32_ComputerSystem).Domain } catch {}; $role | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get SOA record detail for a zone
 function getDnsZoneSoaDetail(serverIp, auth, zoneName) {
   const z = String(zoneName).replace(/'/g, "''");
   const script = `Get-DnsServerResourceRecord -ZoneName '${z}' -RRType Soa -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $soa = $_.RecordData; [PSCustomObject]@{ Serial=$soa.SerialNumber; PrimaryServer=$soa.PrimaryServer; AdminEmail=$soa.ResponsiblePerson; Refresh=$soa.RefreshInterval.TotalSeconds; Retry=$soa.RetryDelay.TotalSeconds; Expire=$soa.ExpireLimit.TotalSeconds; MinTTL=$soa.TimeToLive.TotalSeconds } } | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get record counts by type per zone
 function getDnsZoneRecordCounts(serverIp, auth, zoneName) {
   const z = String(zoneName).replace(/'/g, "''");
   const script = `$recs = Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue; [PSCustomObject]@{ Total=$recs.Count; A=($recs | Where-Object RecordType -eq 'A').Count; PTR=($recs | Where-Object RecordType -eq 'PTR').Count; CNAME=($recs | Where-Object RecordType -eq 'CNAME').Count; MX=($recs | Where-Object RecordType -eq 'MX').Count; TXT=($recs | Where-Object RecordType -eq 'TXT').Count; SRV=($recs | Where-Object RecordType -eq 'SRV').Count; AAAA=($recs | Where-Object RecordType -eq 'AAAA').Count } | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get DNS forwarders
 function getDnsForwarders(serverIp, auth) {
   const script = `Get-DnsServerForwarder -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress | ForEach-Object { $_.IPAddressToString } | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get scavenging/aging settings per zone
 function getDnsZoneScavenging(serverIp, auth, zoneName) {
   const z = String(zoneName).replace(/'/g, "''");
   const script = `Get-DnsServerZoneAging -ZoneName '${z}' -ErrorAction SilentlyContinue | Select-Object AgingEnabled,ScavengeServers,NoRefreshInterval,RefreshInterval | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get stale records (not updated in X days)
@@ -333,20 +336,20 @@ function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
   const z = String(zoneName).replace(/'/g, "''");
   const cutoff = staleDays || 90;
   const script = `$cutoff = (Get-Date).AddDays(-${cutoff}); Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Test forwarder reachability (resolves a name via the forwarder, measures ms)
 function testDnsForwarder(serverIp, auth, forwarderIp) {
   const f = String(forwarderIp).replace(/'/g, "''");
   const script = `$start = Get-Date; $result = Resolve-DnsName -Name 'google.com' -Server '${f}' -ErrorAction SilentlyContinue; $ms = [int](((Get-Date) - $start).TotalMilliseconds); [PSCustomObject]@{ Reachable=($result -ne $null); ResponseMs=$ms; Forwarder='${f}' } | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get DNS query statistics from performance counters
 function getDnsQueryStats(serverIp, auth) {
   const script = `$counters = Get-Counter -Counter '\\DNS\\Total Query Received/sec','\\DNS\\Total Response Sent/sec','\\DNS\\Total Query Received','\\DNS\\Recursive Queries/sec' -ErrorAction SilentlyContinue; $vals = @{}; if ($counters) { $counters.CounterSamples | ForEach-Object { $vals[$_.Path.Split('\\')[-1]] = [math]::Round($_.CookedValue,2) } }; $vals | ConvertTo-Json -Compress`;
-  return runPS(cleanIp(serverIp), script, auth);
+  return runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // ════════════════════════════════════════════════════════════

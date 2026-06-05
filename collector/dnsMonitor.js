@@ -180,6 +180,12 @@ async function runDnsMonitor(db, ps, servers, serverAuth) {
     let auth;
     try { auth = serverAuth(server); } catch { continue; }
 
+    // Confirm credentials are resolved correctly for this server (mirrors the
+    // pattern collector.js uses for DHCP polling). For credential mode this
+    // surfaces whether ps_username/ps_password actually made it through.
+    log(`Polling ${server.hostname} (id=${server.id}, mode=${auth.auth_mode}, ` +
+        `user=${auth.ps_username || 'none'}, hasPass=${auth.ps_password ? 'yes' : 'no'})`);
+
     // Forward zones for this server, fetched once and shared by the checks.
     let zones = [];
     try {

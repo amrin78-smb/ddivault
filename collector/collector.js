@@ -28,9 +28,9 @@ const db = new Pool({
   database: process.env.DDI_DB_NAME || 'ddivault',
   user:     process.env.DDI_DB_USER || 'ddivault_user',
   password: process.env.DDI_DB_PASS || '',
-  max: 5,
+  max: 10,                          // increased from 5 — DNS monitor + DHCP polling overlap
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 10000,   // increased from 5000 — avoid "connection terminated due to connection timeout"
 });
 
 db.on('error', (err) => console.error('[DB] Pool error:', err.message));
@@ -530,11 +530,26 @@ async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serve
 async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
 async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
 async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
+// Re-entrancy guard — the DNS monitor runs every 15m and can take minutes on
+// servers with many zones. If a previous run is still in flight, skip this tick
+// so DNS monitoring never runs concurrently with itself and exhausts the DB pool
+// while DHCP polling (every 5m) is also active.
+let _dnsMonitorRunning = false;
 async function runDnsMonitor() {
-  const servers = await getActiveServers().catch(() => []);
-  if (!servers.length) return;
-  try { await dnsMonitor.runDnsMonitor(db, ps, servers, serverAuth); }
-  catch (e) { console.error('[DNS-Monitor] error:', e.message); }
+  if (_dnsMonitorRunning) {
+    log('[DNS-Monitor] previous run still in progress — skipping this tick');
+    return;
+  }
+  _dnsMonitorRunning = true;
+  try {
+    const servers = await getActiveServers().catch(() => []);
+    if (!servers.length) return;
+    await dnsMonitor.runDnsMonitor(db, ps, servers, serverAuth);
+  } catch (e) {
+    console.error('[DNS-Monitor] error:', e.message);
+  } finally {
+    _dnsMonitorRunning = false;
+  }
 }
 async function runDnsStale() {
   const servers = await getActiveServers().catch(() => []);
