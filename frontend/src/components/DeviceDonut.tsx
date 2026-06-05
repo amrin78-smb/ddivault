@@ -297,7 +297,7 @@ export default function DeviceDonut() {
       ) : total === 0 ? (
         <EmptyState icon="📡" title="No leases found" message="No DHCP leases available to categorize." />
       ) : (
-        <div style={{ padding: '12px 16px', maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {slices.map(s => (
             <div
               key={s.category}
@@ -306,19 +306,19 @@ export default function DeviceDonut() {
               onMouseLeave={() => setHovered(null)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-                padding: '3px 6px', margin: '0 -6px', borderRadius: 6,
+                padding: '4px 0', borderRadius: 6,
                 background: hovered === s.category ? 'var(--bg-primary)' : 'transparent',
               }}
             >
-              <span style={{ fontSize: 12, color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
-              <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
+              <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{
                   width: `${maxPct > 0 ? (s.pct / maxPct) * 100 : 0}%`,
                   height: '100%', background: s.color, borderRadius: 4,
                 }} />
               </div>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', width: 46, textAlign: 'right', flexShrink: 0 }}>{s.pct.toFixed(1)}%</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', width: 46, textAlign: 'right', flexShrink: 0 }}>{s.pct.toFixed(1)}%</span>
               <span style={{ fontSize: 15, color: 'var(--text-muted)', width: 12, textAlign: 'center', flexShrink: 0, lineHeight: 1 }}>›</span>
             </div>
           ))}
