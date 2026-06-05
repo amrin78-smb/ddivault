@@ -74,28 +74,51 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
 }
 
 // ── Site tile (module scope) ─────────────────────────────────
-function SiteTile({ site, expanded, onToggle }: {
-  site: SiteHealthRow; expanded: boolean; onToggle: () => void;
+function SiteTile({ site, expanded, onToggle, onNavigate }: {
+  site: SiteHealthRow; expanded: boolean; onToggle: () => void; onNavigate?: () => void;
 }) {
   const overall = num(site.overall_score);
   const color = scoreColor(overall);
   return (
     <div
-      onClick={onToggle}
+      onClick={() => onNavigate?.()}
       style={{
         background: 'var(--bg-card)', border: '1px solid var(--border)',
         borderRadius: 'var(--radius-sm)', padding: 8, cursor: 'pointer',
-        transition: 'border-color 0.12s',
+        transition: 'border-color 0.12s, transform 0.12s, box-shadow 0.12s',
       }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = color)}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+      onMouseEnter={e => {
+        e.currentTarget.style.borderColor = color;
+        e.currentTarget.style.transform = 'translateY(-2px)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.borderColor = 'var(--border)';
+        e.currentTarget.style.transform = 'none';
+        e.currentTarget.style.boxShadow = 'none';
+      }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {site.site_name || `Site ${site.site_id}`}
         </div>
-        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1, flexShrink: 0 }}>
-          {overall != null ? Math.round(overall) : '—'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>
+            {overall != null ? Math.round(overall) : '—'}
+          </div>
+          <button
+            type="button"
+            aria-label={expanded ? 'Collapse details' : 'Expand details'}
+            onClick={e => { e.stopPropagation(); onToggle(); }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+              color: 'var(--text-muted)', fontSize: 12, lineHeight: 1,
+              display: 'flex', alignItems: 'center',
+              transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.12s',
+            }}
+          >
+            ▾
+          </button>
         </div>
       </div>
       <div style={{ marginTop: 8, height: 5, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
@@ -116,7 +139,7 @@ function SiteTile({ site, expanded, onToggle }: {
 // ════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════
-export default function SiteHealth() {
+export default function SiteHealth({ onSiteClick }: { onSiteClick?: () => void }) {
   const [rows, setRows] = useState<SiteHealthRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +205,7 @@ export default function SiteHealth() {
             {rows.map(site => {
               const id = String(site.site_id);
               return (
-                <SiteTile key={id} site={site} expanded={expanded.has(id)} onToggle={() => toggle(id)} />
+                <SiteTile key={id} site={site} expanded={expanded.has(id)} onToggle={() => toggle(id)} onNavigate={onSiteClick} />
               );
             })}
           </div>

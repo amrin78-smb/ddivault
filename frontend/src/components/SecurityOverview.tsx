@@ -57,7 +57,7 @@ function severityColor(severity: string | null): string {
 // ════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════
-export default function SecurityOverview({ onViewAll }: { onViewAll?: () => void }) {
+export default function SecurityOverview({ onViewAll, onTypeClick }: { onViewAll?: () => void; onTypeClick?: (anomalyType: string) => void }) {
   const [summary, setSummary] = useState<AnomalySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,13 +130,20 @@ export default function SecurityOverview({ onViewAll }: { onViewAll?: () => void
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Top types</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {topTypes.map((t, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div
+                    key={i}
+                    onClick={onTypeClick ? () => onTypeClick(t.anomaly_type) : undefined}
+                    onMouseEnter={onTypeClick ? (e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-primary)'; } : undefined}
+                    onMouseLeave={onTypeClick ? (e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; } : undefined}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 4px', margin: '0 -4px', borderRadius: 'var(--radius-sm)', background: 'transparent', cursor: onTypeClick ? 'pointer' : 'default' }}
+                  >
                     <span className={`badge ${severityBadge(t.severity)}`}>{t.severity || 'unknown'}</span>
                     <span style={{ fontSize: 11.5, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{t.anomaly_type}</span>
                     <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 24 }}>
                       <div style={{ width: `${((Number(t.count) || 0) / maxCount) * 100}%`, height: '100%', background: severityColor(t.severity), borderRadius: 4 }} />
                     </div>
                     <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600 }}>{Number(t.count) || 0}</span>
+                    {onTypeClick && <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 700, lineHeight: 1 }}>›</span>}
                   </div>
                 ))}
               </div>

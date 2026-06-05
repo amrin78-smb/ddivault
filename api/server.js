@@ -534,6 +534,7 @@ app.get('/api/leases', async (req, res) => {
     const search  = (req.query.search || '').trim();
     const scopeId = (req.query.scope  || '').trim();
     const state   = (req.query.state  || '').trim();
+    const deviceType = (req.query.device_type || '').trim();
 
     const params  = [];
     const where   = [];
@@ -549,6 +550,15 @@ app.get('/api/leases', async (req, res) => {
     if (state) {
       params.push(state);
       where.push(`l.address_state = $${params.length}`);
+    }
+    if (deviceType) {
+      // 'unknown' also covers leases with no classification (NULL / empty).
+      if (deviceType.toLowerCase() === 'unknown') {
+        where.push(`(l.device_type IS NULL OR l.device_type = '' OR LOWER(l.device_type) = 'unknown')`);
+      } else {
+        params.push(deviceType);
+        where.push(`LOWER(l.device_type) = LOWER($${params.length})`);
+      }
     }
 
     const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';

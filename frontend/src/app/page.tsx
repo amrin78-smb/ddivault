@@ -112,49 +112,93 @@ function EventTypeBadge({ type }: { type: string }) {
   return <span className={`badge ${EVENT_BADGE[type] || 'badge-gray'}`}>{type || '—'}</span>;
 }
 
-// ── Sparkline (inline SVG, 7-day trend) ───────────────────────
+// ── Sparkline (inline SVG, 7-day trend, hover tooltip) ─────────
 function Sparkline({ data, color, width = 220, height = 44 }: {
-  data: { percent_used: number }[]; color: string; width?: number; height?: number;
+  data: { percent_used: number; recorded_at?: string }[]; color: string; width?: number; height?: number;
 }) {
+  const [hi, setHi] = useState<number | null>(null);
   if (data.length < 2) return <div style={{ height, ...MUTED, display: 'flex', alignItems: 'center' }}>Not enough history</div>;
   const max = Math.max(100, ...data.map(d => d.percent_used));
-  const pts = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * width;
-    const y = height - (d.percent_used / max) * height;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const area = `0,${height} ${pts.join(' ')} ${width},${height}`;
+  const pts = data.map((d, i) => ({
+    x: (i / (data.length - 1)) * width,
+    y: height - (d.percent_used / max) * height,
+  }));
+  const ptsStr = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const area = `0,${height} ${ptsStr} ${width},${height}`;
   const lastX = width, lastY = height - (data[data.length - 1].percent_used / max) * height;
   const gid = `spark-${color.replace(/[^a-z0-9]/gi, '')}`;
+
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rx = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
+    setHi(Math.min(data.length - 1, Math.max(0, Math.round(rx * (data.length - 1)))));
+  };
+  const fmtDate = (s?: string) => {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+  const hp = hi != null ? data[hi] : null;
+
   return (
-    <svg width={width} height={height} style={{ display: 'block', width: '100%' }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={area} fill={`url(#${gid})`} />
-      <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={lastX} cy={lastY} r="2.5" fill={color} />
-    </svg>
+    <div style={{ position: 'relative' }} onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
+      <svg width={width} height={height} style={{ display: 'block', width: '100%' }} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <polygon points={area} fill={`url(#${gid})`} />
+        <polyline points={ptsStr} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={lastX} cy={lastY} r="2.5" fill={color} />
+        {hi != null && (
+          <>
+            <line x1={pts[hi].x} y1={0} x2={pts[hi].x} y2={height} stroke={color} strokeWidth="1" strokeDasharray="2 2" opacity="0.5" vectorEffect="non-scaling-stroke" />
+            <circle cx={pts[hi].x} cy={pts[hi].y} r="2.6" fill="#fff" stroke={color} strokeWidth="1.5" />
+          </>
+        )}
+      </svg>
+      {hp && (
+        <div style={{
+          position: 'absolute', left: `${(hi! / (data.length - 1)) * 100}%`, top: -2,
+          transform: 'translate(-50%, -100%)', background: 'var(--navy)', color: '#fff',
+          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap',
+          pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
+        }}>
+          {fmtDate(hp.recorded_at)}{hp.recorded_at ? ' · ' : ''}{Number(hp.percent_used).toFixed(1)}%
+        </div>
+      )}
+    </div>
   );
 }
 
-// ── Donut chart (IP status distribution) ──────────────────────
-function Donut({ data, dim = 110 }: { data: { label: string; value: number; color: string }[]; dim?: number }) {
+// ── Donut chart (IP status distribution, clickable segments) ───
+function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; value: number; color: string }[]; dim?: number; onSegmentClick?: (label: string) => void }) {
+  const [hi, setHi] = useState<number | null>(null);
   const total = data.reduce((a, b) => a + b.value, 0);
   if (total === 0) return <div style={{ ...MUTED, padding: 20, textAlign: 'center' }}>No address data yet</div>;
   const R = 52, SW = 18, C = 2 * Math.PI * R;
+  const segs = data.filter(d => d.value > 0);
   let offset = 0;
+  const clickable = !!onSegmentClick;
+  const tip = hi != null ? segs[hi] : null;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 20 }}>
       <svg width={dim} height={dim} viewBox="0 0 140 140" style={{ flexShrink: 0 }}>
         <g transform="rotate(-90 70 70)">
-          {data.filter(d => d.value > 0).map((d, i) => {
+          {segs.map((d, i) => {
             const frac = d.value / total;
             const dash = frac * C;
-            const seg = <circle key={i} cx="70" cy="70" r={R} fill="none" stroke={d.color} strokeWidth={SW} strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={-offset} />;
+            const active = hi === i;
+            const seg = (
+              <circle key={i} cx="70" cy="70" r={R} fill="none" stroke={d.color}
+                strokeWidth={active ? SW + 4 : SW} strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={-offset}
+                opacity={hi == null || active ? 1 : 0.5}
+                style={{ cursor: clickable ? 'pointer' : 'default', transition: 'stroke-width 0.12s, opacity 0.12s' }}
+                onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)}
+                onClick={() => onSegmentClick?.(d.label)} />
+            );
             offset += dash;
             return seg;
           })}
@@ -163,41 +207,123 @@ function Donut({ data, dim = 110 }: { data: { label: string; value: number; colo
         <text x="70" y="84" textAnchor="middle" fontSize="10" fill="var(--text-muted)">addresses</text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {data.map(d => (
-          <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
-            <span style={{ color: 'var(--text-secondary)', minWidth: 76 }}>{d.label}</span>
-            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{d.value}</span>
-          </div>
-        ))}
+        {data.map(d => {
+          const idx = segs.findIndex(s => s.label === d.label);
+          return (
+            <div key={d.label}
+              onMouseEnter={() => idx >= 0 && setHi(idx)} onMouseLeave={() => setHi(null)}
+              onClick={() => clickable && onSegmentClick?.(d.label)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: clickable ? 'pointer' : 'default', borderRadius: 6, padding: '1px 4px', background: hi != null && segs[hi]?.label === d.label ? 'var(--bg-primary)' : 'transparent' }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+              <span style={{ color: 'var(--text-secondary)', minWidth: 76 }}>{d.label}</span>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{d.value}</span>
+            </div>
+          );
+        })}
       </div>
+      {tip && (
+        <div style={{
+          position: 'absolute', left: dim / 2, top: dim / 2, transform: 'translate(-50%, -50%)',
+          background: 'var(--navy)', color: '#fff', padding: '5px 9px', borderRadius: 8, fontSize: 11,
+          whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', fontWeight: 700 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: tip.color }} />{tip.label}
+          </div>
+          <div style={{ opacity: 0.85, marginTop: 1 }}>{tip.value} addresses · {((tip.value / total) * 100).toFixed(1)}%</div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Simple line chart (lease trend) ───────────────────────────
-function LineChart({ points, color = 'var(--blue)', height = 120 }: { points: number[]; color?: string; height?: number }) {
+// ── Simple line chart (lease trend, hover tooltip + indicator) ─
+function LineChart({ points, color = 'var(--blue)', height = 120, labels }: { points: number[]; color?: string; height?: number; labels?: string[] }) {
+  const [hi, setHi] = useState<number | null>(null);
   if (points.length < 2) return <div style={{ ...MUTED, height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Not enough history yet</div>;
   const W = 480, H = height, pad = 8;
   const max = Math.max(1, ...points), min = Math.min(...points);
   const span = Math.max(1, max - min);
-  const xy = points.map((p, i) => {
-    const x = pad + (i / (points.length - 1)) * (W - pad * 2);
-    const y = pad + (1 - (p - min) / span) * (H - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
+  const xs = points.map((_, i) => pad + (i / (points.length - 1)) * (W - pad * 2));
+  const ys = points.map(p => pad + (1 - (p - min) / span) * (H - pad * 2));
+  const xy = points.map((_, i) => `${xs[i].toFixed(1)},${ys[i].toFixed(1)}`);
+
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rx = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
+    setHi(Math.min(points.length - 1, Math.max(0, Math.round(rx * (points.length - 1)))));
+  };
+  const fmtLabel = (s?: string) => {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? s : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
   return (
-    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <polygon points={`${pad},${H - pad} ${xy.join(' ')} ${W - pad},${H - pad}`} fill={color} opacity="0.08" />
-      <polyline points={xy.join(' ')} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div style={{ position: 'relative' }} onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        <polygon points={`${pad},${H - pad} ${xy.join(' ')} ${W - pad},${H - pad}`} fill={color} opacity="0.08" />
+        <polyline points={xy.join(' ')} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {hi != null && (
+          <>
+            <line x1={xs[hi]} y1={pad} x2={xs[hi]} y2={H - pad} stroke={color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6" vectorEffect="non-scaling-stroke" />
+            <circle cx={xs[hi]} cy={ys[hi]} r="3.5" fill="#fff" stroke={color} strokeWidth="2" />
+          </>
+        )}
+      </svg>
+      {hi != null && (
+        <div style={{
+          position: 'absolute', left: `${(hi / (points.length - 1)) * 100}%`, top: 2,
+          transform: 'translate(-50%, 0)', background: 'var(--navy)', color: '#fff',
+          padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+          pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
+        }}>
+          {labels?.[hi] ? `${fmtLabel(labels[hi])} · ` : ''}{points[hi].toLocaleString()} leases
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Scopes-requiring-attention row (hover detail tooltip) ──────
+function AttentionRow({ s, onClick }: { s: any; onClick: () => void }) {
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  return (
+    <tr className="clickable" onClick={onClick}
+      onMouseMove={e => setTip({ x: e.clientX, y: e.clientY })}
+      onMouseLeave={() => setTip(null)}>
+      <td style={{ padding: '6px 10px' }}>
+        <div style={{ fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>{s.scope_id}</div>
+        <div style={{ ...MUTED, marginTop: 1 }}>{s.name || s.server_hostname || '—'}</div>
+        {tip && (
+          <div style={{
+            position: 'fixed', left: Math.min(tip.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 230), top: tip.y + 14,
+            width: 210, background: 'var(--navy)', color: '#fff', padding: '8px 10px', borderRadius: 8,
+            fontSize: 11.5, lineHeight: 1.5, pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 100,
+          }}>
+            <div style={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{s.scope_id}</div>
+            <div style={{ opacity: 0.85 }}>{s.name || s.server_hostname || '—'}</div>
+            <div style={{ marginTop: 4, display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>Utilization</span><span style={{ fontWeight: 700 }}>{Number(s.pct).toFixed(1)}%</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>In use / total</span><span>{s.in_use} / {s.total_ips}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>Free</span><span>{s.free}</span></div>
+            {s.server_hostname && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>Server</span><span style={{ maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.server_hostname}</span></div>}
+            <div style={{ opacity: 0.7, marginTop: 4 }}>Click to open in DHCP →</div>
+          </div>
+        )}
+      </td>
+      <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+        {s.in_use} / {s.total_ips}
+        {s.free < 10 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {s.free} left</span>}
+      </td>
+      <td style={{ padding: '6px 10px' }}><UtilBar pct={s.pct} /></td>
+    </tr>
   );
 }
 
 // ════════════════════════════════════════════════════════════
 // TAB: DASHBOARD — operations center
 // ════════════════════════════════════════════════════════════
-function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => void; onFocusScope: (scopeId: string) => void }) {
+function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opts?: { anomalyType?: string }) => void; onFocusScope: (scopeId: string) => void }) {
   const [stats, setStats]   = useState<any>(null);
   const [scopes, setScopes] = useState<Scope[]>([]);
   const [scopeHistory, setScopeHistory] = useState<ScopeHistory[]>([]);
@@ -275,12 +401,12 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
   }, [scopeHistory]);
 
   const kpis = stats ? [
-    { label: 'Managed IPs',     value: stats.ips?.total ?? 0,       sub: 'across all scopes',         color: 'var(--navy)',  delta: 0,            invert: false },
-    { label: 'Active Leases',   value: stats.active_leases ?? 0,    sub: 'live DHCP clients',         color: 'var(--blue)',  delta: trends.used,  invert: true },
-    { label: 'DNS Zones',       value: stats.dns_zones ?? 0,        sub: 'forward & reverse',         color: 'var(--teal)',  delta: 0,            invert: false },
-    { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false },
-    { label: 'Unknown Devices', value: ipDist?.unknown ?? 0,        sub: 'rogue / unmanaged',         color: (ipDist?.unknown ?? 0) > 0 ? 'var(--yellow)' : 'var(--green)', delta: 0, invert: false },
-    { label: 'Open Alerts',     value: stats.unacked_alerts ?? 0,   sub: 'unacknowledged',            color: (stats.unacked_alerts ?? 0) > 0 ? 'var(--red)' : 'var(--green)',  delta: 0, invert: false },
+    { label: 'Managed IPs',     value: stats.ips?.total ?? 0,       sub: 'across all scopes',         color: 'var(--navy)',  delta: 0,            invert: false, onClick: () => onNavigate('ipam') },
+    { label: 'Active Leases',   value: stats.active_leases ?? 0,    sub: 'live DHCP clients',         color: 'var(--blue)',  delta: trends.used,  invert: true,  onClick: () => onNavigate('scopes') },
+    { label: 'DNS Zones',       value: stats.dns_zones ?? 0,        sub: 'forward & reverse',         color: 'var(--teal)',  delta: 0,            invert: false, onClick: () => onNavigate('dns') },
+    { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false, onClick: () => onNavigate('scopes') },
+    { label: 'Unknown Devices', value: ipDist?.unknown ?? 0,        sub: 'rogue / unmanaged',         color: (ipDist?.unknown ?? 0) > 0 ? 'var(--yellow)' : 'var(--green)', delta: 0, invert: false, onClick: () => onNavigate('ipam') },
+    { label: 'Open Alerts',     value: stats.unacked_alerts ?? 0,   sub: 'unacknowledged',            color: (stats.unacked_alerts ?? 0) > 0 ? 'var(--red)' : 'var(--green)',  delta: 0, invert: false, onClick: () => onNavigate('events') },
   ] : [];
 
   return (
@@ -345,7 +471,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
               </div>
             ))
           : kpis.map((k, i) => (
-              <div key={i} className="kpi-card" style={{ borderLeftColor: k.color, padding: '14px 16px' }}>
+              <div key={i} className="kpi-card" onClick={k.onClick}
+                style={{ borderLeftColor: k.color, padding: '14px 16px', cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ fontSize: 28, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
                   <Trend delta={k.delta} invert={k.invert} />
@@ -377,17 +506,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
                   <thead><tr><th>Scope</th><th>Used / Total</th><th style={{ minWidth: 150 }}>Utilization</th></tr></thead>
                   <tbody>
                     {attention.slice(0, 3).map(s => (
-                      <tr key={s.id} className="clickable" onClick={() => onFocusScope(s.scope_id)}>
-                        <td style={{ padding: '6px 10px' }}>
-                          <div style={{ fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>{s.scope_id}</div>
-                          <div style={{ ...MUTED, marginTop: 1 }}>{s.name || s.server_hostname || '—'}</div>
-                        </td>
-                        <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5, whiteSpace: 'nowrap' }}>
-                          {s.in_use} / {s.total_ips}
-                          {s.free < 10 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {s.free} left</span>}
-                        </td>
-                        <td style={{ padding: '6px 10px' }}><UtilBar pct={s.pct} /></td>
-                      </tr>
+                      <AttentionRow key={s.id} s={s} onClick={() => onFocusScope(s.scope_id)} />
                     ))}
                   </tbody>
                 </table>
@@ -406,7 +525,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
               <span style={MUTED}>last 7 days</span>
             </div>
             <div style={{ padding: '12px 16px' }}>
-              {loading ? <Skeleton height={140} /> : <LineChart points={leaseTrend.map(d => d.leases)} height={140} />}
+              {loading ? <Skeleton height={140} /> : <LineChart points={leaseTrend.map(d => d.leases)} labels={leaseTrend.map(d => d.day)} height={140} />}
             </div>
           </div>
         </div>
@@ -441,15 +560,15 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
             </div>
           )}
         </div>
-        <CapacityForecast onViewAll={() => onNavigate('scopes')} />
+        <CapacityForecast onViewAll={() => onNavigate('scopes')} onRowClick={(id) => onFocusScope(id)} />
       </div>
 
       {/* Row 5 — Intelligence & Security */}
       <div>
         <SectionHeader>Intelligence &amp; Security</SectionHeader>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <SecurityOverview onViewAll={() => onNavigate('intelligence')} />
-          <SiteHealth />
+          <SecurityOverview onViewAll={() => onNavigate('intelligence')} onTypeClick={(t) => onNavigate('intelligence', { anomalyType: t })} />
+          <SiteHealth onSiteClick={() => onNavigate('infra')} />
         </div>
       </div>
 
@@ -461,7 +580,9 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
             <div style={{ padding: '12px 16px' }}>
               {loading ? <Skeleton height={110} /> : (
-                <Donut dim={110} data={[
+                <Donut dim={110}
+                  onSegmentClick={(label) => onNavigate(label === 'DHCP' ? 'scopes' : 'ipam')}
+                  data={[
                   { label: 'Available', value: ipDist?.available ?? 0, color: 'var(--green)' },
                   { label: 'DHCP', value: ipDist?.dhcp ?? 0, color: 'var(--blue)' },
                   { label: 'Reserved', value: ipDist?.reserved ?? 0, color: 'var(--teal)' },
@@ -495,7 +616,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
                 const first = sh.history[0].percent_used;
                 const color = pctColor(latest);
                 return (
-                  <div key={sh.scope_id} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
+                  <div key={sh.scope_id} onClick={() => onFocusScope(sh.scope_id)}
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 0 0 2px ${color}55, var(--shadow-md)`; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = 'none'; }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
                       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600 }}>{sh.scope_id}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -547,7 +671,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab) => 
             <table className="data-table">
               <tbody>
                 {audit.slice(0, 3).map((a: any) => (
-                  <tr key={a.id}>
+                  <tr key={a.id} className="clickable" onClick={() => onNavigate('audit')}>
                     <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.action === 'create' ? 'badge-green' : a.action === 'delete' ? 'badge-red' : a.action === 'modify' ? 'badge-yellow' : 'badge-gray'}`}>{(a.action || '').toUpperCase()}</span></td>
                     <td style={{ padding: '6px 10px', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{a.change_summary || `${a.action} ${a.entity_type}`}<div style={MUTED}>{a.username}</div></td>
                     <td style={{ ...MUTED, padding: '6px 10px', whiteSpace: 'nowrap', width: 90 }}>{a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}</td>
@@ -846,6 +970,7 @@ export default function DDIVaultApp() {
   const [collectorOnline, setCollectorOnline] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
+  const [anomalyType, setAnomalyType] = useState('');
   const { canManageSystem, isViewer, isSiteAdmin } = useRBAC();
   const { state: licenseState, loading: licenseLoading } = useLicense();
 
@@ -884,7 +1009,10 @@ export default function DDIVaultApp() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const navigate = useCallback((t: Tab) => { setTab(t); }, []);
+  const navigate = useCallback((t: Tab, opts?: { anomalyType?: string }) => {
+    if (t === 'intelligence') setAnomalyType(opts?.anomalyType || '');
+    setTab(t);
+  }, []);
   const focusScopeNav = useCallback((scopeId: string) => { setFocusScope(scopeId); setTab('scopes'); }, []);
 
   const sidebarWidth = collapsed ? 64 : 240;
@@ -971,7 +1099,7 @@ export default function DDIVaultApp() {
             {tab === 'ipam'      && <IPAMTab />}
             {tab === 'dns'       && <DNSTab />}
             {tab === 'events'    && <EventsTab />}
-            {tab === 'intelligence' && <IntelligenceTab />}
+            {tab === 'intelligence' && <IntelligenceTab initialType={anomalyType} />}
             {tab === 'servers'   && <ServersTab />}
             {tab === 'infra'     && <InfraHealthTab />}
             {tab === 'reports'   && <ReportsTab />}

@@ -97,7 +97,7 @@ function SeverityBadge({ severity }: { severity: string }) {
 // ════════════════════════════════════════════════════════════
 // Main component
 // ════════════════════════════════════════════════════════════
-export default function IntelligenceTab() {
+export default function IntelligenceTab({ initialType }: { initialType?: string } = {}) {
   const { toast } = useToast();
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
@@ -112,8 +112,11 @@ export default function IntelligenceTab() {
 
   // filters
   const [severity, setSeverity] = useState('');
-  const [type, setType] = useState('');
+  const [type, setType] = useState(initialType || '');
   const [range, setRange] = useState('7 days');
+
+  // Seed the type filter from initialType (e.g. opened pre-filtered from the dashboard)
+  useEffect(() => { if (initialType) setType(initialType); }, [initialType]);
 
   // since maps 'today' → '1 day' for the API window
   const since = range === 'today' ? '1 day' : range;

@@ -72,7 +72,7 @@ function fmtDays(days: number | null): string {
 // ════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════
-export default function CapacityForecast({ onViewAll }: { onViewAll?: () => void }) {
+export default function CapacityForecast({ onViewAll, onRowClick }: { onViewAll?: () => void; onRowClick?: (scopeId: string) => void }) {
   const [rows, setRows] = useState<ScopeForecast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -149,7 +149,12 @@ export default function CapacityForecast({ onViewAll }: { onViewAll?: () => void
                 const growth = num(r.growth_rate_per_day);
                 const cur = num(r.current_pct);
                 return (
-                  <tr key={r.scope_id}>
+                  <tr
+                    key={r.scope_id}
+                    className={onRowClick ? 'clickable' : undefined}
+                    style={onRowClick ? { cursor: 'pointer' } : undefined}
+                    onClick={onRowClick ? () => onRowClick(r.scope_id) : undefined}
+                  >
                     <td style={TD}>
                       <div style={{ ...MONO, fontWeight: 600 }}>{r.scope_cidr || '—'}</div>
                       {r.scope_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.scope_name}</div>}
