@@ -13,6 +13,18 @@ function log(m) {
   console.log('[' + new Date().toISOString() + '] [Anomaly] ' + m);
 }
 
+/** Human-readable duration from seconds (e.g. 90 -> "2m", 7200 -> "2h"). */
+function formatDuration(seconds) {
+  seconds = Math.round(seconds);
+  if (seconds < 60) return seconds + 's';
+  const m = Math.round(seconds / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.round(h / 24);
+  return d + 'd';
+}
+
 /**
  * recordAnomaly — dedup + insert + best-effort dispatch.
  * Dedup: skip if an un-acknowledged anomaly_events row of the same
@@ -512,6 +524,29 @@ async function detectDnsAnomalies(db) {
 
       for (const r of rows) {
         const lag = Number(r.serial_lag) || 0;
+
+        // Estimate how far behind in wall-clock time using the zone's recent
+        // average serial-change rate from dns_zone_sync snapshots (best-effort).
+        let estStr = '';
+        let estSeconds = null;
+        try {
+          const rate = await db.query(
+            `SELECT (MAX(soa_serial) - MIN(soa_serial)) AS dser,
+                    EXTRACT(EPOCH FROM (MAX(checked_at) - MIN(checked_at))) AS dsec
+               FROM dns_zone_sync
+              WHERE zone_name = $1 AND checked_at > NOW() - INTERVAL '7 days'`,
+            [r.zone_name]
+          );
+          const dser = Number(rate.rows[0] && rate.rows[0].dser) || 0;
+          const dsec = Number(rate.rows[0] && rate.rows[0].dsec) || 0;
+          if (dser > 0 && dsec > 0 && lag > 0) {
+            estSeconds = lag * (dsec / dser);
+            estStr = ', ~' + formatDuration(estSeconds) + ' behind';
+          }
+        } catch (_) {
+          /* ignore rate estimate failures */
+        }
+
         const res = await recordAnomaly(db, {
           type: 'dns_replication_lag',
           severity: lag >= 3 ? 'critical' : 'warning',
@@ -522,13 +557,21 @@ async function detectDnsAnomalies(db) {
             r.zone_name +
             ': SOA serials diverge by ' +
             lag +
-            ' across ' +
+            ' (' +
+            lag +
+            ' revision' +
+            (lag === 1 ? '' : 's') +
+            ' behind' +
+            estStr +
+            ') across ' +
             r.serial_count +
             ' distinct serial(s)',
           details: {
             zone_name: r.zone_name,
             serial_count: Number(r.serial_count),
             serial_lag: lag,
+            revisions_behind: lag,
+            estimated_seconds_behind: estSeconds,
           },
         });
         if (res) summary.dns_replication_lag++;

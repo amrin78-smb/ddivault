@@ -14,6 +14,18 @@
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`); }
 
+/** Human-readable duration from seconds (e.g. 90 -> "2m", 7200 -> "2h"). */
+function formatDuration(seconds) {
+  seconds = Math.round(seconds);
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.round(h / 24);
+  return `${d}d`;
+}
+
 // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
@@ -102,8 +114,27 @@ async function pollDnsSoa(db, ps, server, auth) {
       [z.id, serial, lag]).catch(() => {});
 
     if (lag) {
+      const behind = peerMax - serial;
+      // Estimate how far behind in wall-clock time using the zone's recent
+      // average serial-change rate from dns_zone_sync snapshots (best-effort).
+      let estStr = '';
+      try {
+        const rate = await db.query(
+          `SELECT (MAX(soa_serial) - MIN(soa_serial)) AS dser,
+                  EXTRACT(EPOCH FROM (MAX(checked_at) - MIN(checked_at))) AS dsec
+             FROM dns_zone_sync
+            WHERE zone_name = $1 AND checked_at > NOW() - INTERVAL '7 days'`,
+          [z.zone_name]).catch(() => ({ rows: [{}] }));
+        const dser = Number(rate.rows[0] && rate.rows[0].dser) || 0;
+        const dsec = Number(rate.rows[0] && rate.rows[0].dsec) || 0;
+        if (dser > 0 && dsec > 0 && behind > 0) {
+          estStr = `, ~${formatDuration(behind * (dsec / dser))} behind`;
+        }
+      } catch { /* ignore rate estimate failures */ }
+
       await fireAlertDeduped(db, {
-        serverId: server.id, message: `DNS zone "${z.zone_name}" on ${server.hostname} is behind (serial ${serial} < ${peerMax})`,
+        serverId: server.id,
+        message: `DNS zone "${z.zone_name}" on ${server.hostname} is behind (serial ${serial} < ${peerMax}) — ${behind} revision${behind === 1 ? '' : 's'} behind${estStr}`,
         severity: 'warning',
       });
     }
@@ -158,6 +189,18 @@ async function pollHealth(db, ps, server, auth) {
     [server.id]).catch(() => ({ rows: [{}] }));
   const c = counts.rows[0];
 
+  // Forwarder reachability (only relevant for DNS servers that have forwarders).
+  let fwdTotal = 0, fwdDown = 0;
+  if (isDns) {
+    const fwd = await db.query(
+      `SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE is_reachable = FALSE) AS down
+         FROM dns_forwarder_health
+        WHERE server_id = $1 AND last_checked > NOW() - INTERVAL '1 hour'`,
+      [server.id]).catch(() => ({ rows: [{ total: 0, down: 0 }] }));
+    fwdTotal = parseInt(fwd.rows[0].total) || 0;
+    fwdDown = parseInt(fwd.rows[0].down) || 0;
+  }
+
   await db.query(`UPDATE ddi_servers SET health_score=$2, health_checked_at=NOW(), query_ms=$3 WHERE id=$1`,
     [server.id, score, queryMs]).catch(() => {});
   await db.query(
@@ -166,8 +209,27 @@ async function pollHealth(db, ps, server, auth) {
     [server.id, score, winrmOk, c.scopes || 0, c.leases || 0, c.zones || 0, c.records || 0, queryMs, soaInSync]).catch(() => {});
 
   if (score < 80) {
+    // Build a human-readable breakdown of the factors that drove the score down.
+    const factors = [];
+    factors.push(`WinRM: ${winrmOk ? 'OK' : 'Failed'}`);
+    if (isDns) {
+      if (queryMs != null) {
+        const qual = queryMs > 1000 ? ' (critical)' : queryMs > 500 ? ' (slow)' : '';
+        factors.push(`Query response: ${queryMs}ms${qual}`);
+      } else if (winrmOk) {
+        factors.push('Query response: no answer');
+      }
+      factors.push(`Zones: ${c.zones || 0}`);
+      if (fwdTotal > 0) factors.push(`Forwarders: ${fwdDown > 0 ? 'unreachable' : 'OK'}`);
+      if (soaInSync === false) factors.push('Replication: behind');
+    }
+    if (server.poll_status === 'error') factors.push('Poll status: error');
+    if (worst >= 90) factors.push(`Scope utilization: ${Math.round(worst)}% (high)`);
+
+    const breakdown = factors.length ? ` — ${factors.join(', ')}` : '';
     await fireAlertDeduped(db, {
-      serverId: server.id, message: `Server "${server.hostname}" health score dropped to ${score}/100`,
+      serverId: server.id,
+      message: `Server "${server.hostname}" health score dropped to ${score}/100${breakdown}`,
       severity: score < 70 ? 'critical' : 'warning',
     });
   }

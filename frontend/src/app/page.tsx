@@ -63,6 +63,10 @@ interface AlertEvent {
   acknowledged: boolean;
   fired_at: string;
   rule_name: string;
+  explanation?: string | null;
+  occurrence_count?: number;
+  first_fired_at?: string;
+  server_hostname?: string;
 }
 
 interface ScopeHistory {
@@ -701,7 +705,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 {alerts.slice(0, 3).map(a => (
                   <tr key={a.id}>
                     <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
-                    <td style={{ padding: '6px 10px', fontSize: 12.5 }}>{a.message}</td>
+                    <td style={{ padding: '6px 10px', fontSize: 12.5 }}>
+                      <div>{a.message}{a.occurrence_count && a.occurrence_count > 1 ? <span className="badge badge-gray" style={{ fontSize: 10, marginLeft: 6 }}>fired {a.occurrence_count}×</span> : null}</div>
+                      {a.explanation && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.35 }}>{a.explanation}</div>}
+                    </td>
                     <td style={{ padding: '6px 10px', width: 50 }}><button onClick={() => ackAlert(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button></td>
                   </tr>
                 ))}
@@ -750,7 +757,17 @@ function AlertRows({ alerts, muted, onAck }: { alerts: AlertEvent[]; muted?: boo
       {alerts.map(a => (
         <tr key={a.id} style={rowStyle}>
           <td><span className={`badge ${muted ? 'badge-gray' : a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
-          <td>{a.message}</td>
+          <td>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>{a.message}</span>
+              {a.occurrence_count && a.occurrence_count > 1 ? (
+                <span className="badge badge-gray" style={{ fontSize: 10 }}>fired {a.occurrence_count}×</span>
+              ) : null}
+            </div>
+            {a.explanation && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.4 }}>{a.explanation}</div>
+            )}
+          </td>
           <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
           <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
           <td><span className={`badge ${a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.acknowledged ? 'ACK' : 'Open'}</span></td>

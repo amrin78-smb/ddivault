@@ -868,6 +868,50 @@ app.get('/api/dns/record-type-breakdown', async (req, res) => {
 });
 
 // ── Alerts ────────────────────────────────────────────────────
+
+/**
+ * buildAlertExplanation — plain-English summary of why an alert fired, parsed
+ * from the alert message and enriched with the server's current health data.
+ * Returns null when no specific explanation applies (the message stands alone).
+ */
+function buildAlertExplanation(a) {
+  const msg = a.message || '';
+  const host = a.server_hostname || 'the server';
+
+  // Health score drop — "...health score dropped to 75/100 — ..."
+  let m = msg.match(/health score dropped to (\d+)\/100/i);
+  if (m) {
+    const score = parseInt(m[1], 10);
+    const parts = [`${host} is at ${score}/100, below the healthy threshold of 80.`];
+    if (a.cur_winrm === false) {
+      parts.push('WinRM is currently unreachable, so the server cannot be fully polled.');
+    }
+    if (a.cur_query_ms != null) {
+      const q = Number(a.cur_query_ms);
+      if (q > 1000) parts.push(`DNS query latency is ${q}ms (critical).`);
+      else if (q > 500) parts.push(`DNS query latency is ${q}ms (slow).`);
+    }
+    if (a.cur_health != null && Number(a.cur_health) >= 80) {
+      parts.push(`It has since recovered to ${Number(a.cur_health)}/100.`);
+    }
+    return parts.join(' ');
+  }
+
+  // DNS replication lag — "...is behind (serial X < Y)..." or "SOA serials diverge by N"
+  if (/is behind \(serial/i.test(msg) || /SOA serials diverge by/i.test(msg)) {
+    const rev = msg.match(/(\d+)\s+revisions?\s+behind/i);
+    const revTxt = rev ? `${rev[1]} revision${rev[1] === '1' ? '' : 's'} ` : '';
+    return `Changes on the primary DNS server have not yet replicated to ${host}; this zone is ${revTxt}out of date. Sustained lag usually means a replication or connectivity problem between the domain controllers.`;
+  }
+
+  // DHCP failover state change
+  if (/failover/i.test(msg) && /changed state/i.test(msg)) {
+    return `The DHCP failover relationship is no longer in its normal state. While degraded, lease redundancy is reduced and the partner server may be down or unreachable.`;
+  }
+
+  return null;
+}
+
 app.get('/api/alerts', async (req, res) => {
   try {
     const page   = safePage(req.query.page);
@@ -877,19 +921,52 @@ app.get('/api/alerts', async (req, res) => {
 
     const where = unackedOnly ? 'WHERE acknowledged = FALSE' : '';
 
-    const count = await db.query(`SELECT COUNT(*) as total FROM alert_events ${where}`);
-    const rows  = await db.query(
-      `SELECT ae.*, ar.name as rule_name, s.hostname as server_hostname
-       FROM alert_events ae
-       LEFT JOIN alert_rules ar ON ar.id = ae.rule_id
-       LEFT JOIN ddi_servers s ON s.id = ae.server_id
-       ${where}
-       ORDER BY ae.fired_at DESC
-       LIMIT $1 OFFSET $2`,
+    // Group identical alerts (same server + same alert shape) within the same
+    // hour into one representative row so a storm of 384 near-identical fires
+    // collapses to a single entry annotated with its occurrence count. The
+    // "alert shape" is the message with all digits normalised away.
+    const count = await db.query(
+      `SELECT COUNT(*) AS total FROM (
+         SELECT 1 FROM alert_events ae ${where}
+         GROUP BY regexp_replace(ae.message, '[0-9]+', '#', 'g'),
+                  ae.server_id, ae.acknowledged, date_trunc('hour', ae.fired_at)
+       ) g`
+    );
+
+    const rows = await db.query(
+      `WITH grouped AS (
+         SELECT regexp_replace(ae.message, '[0-9]+', '#', 'g') AS norm,
+                ae.server_id, ae.acknowledged,
+                date_trunc('hour', ae.fired_at) AS hr,
+                COUNT(*)::int        AS occurrence_count,
+                MIN(ae.fired_at)     AS first_fired_at,
+                MAX(ae.fired_at)     AS fired_at,
+                MAX(ae.id)           AS rep_id
+           FROM alert_events ae
+           ${where}
+           GROUP BY 1, 2, 3, 4
+       )
+       SELECT ae.*, g.occurrence_count, g.first_fired_at,
+              ar.name AS rule_name, s.hostname AS server_hostname,
+              s.health_score AS cur_health, s.query_ms AS cur_query_ms,
+              s.winrm_test_ok AS cur_winrm
+         FROM grouped g
+         JOIN alert_events ae ON ae.id = g.rep_id
+         LEFT JOIN alert_rules ar ON ar.id = ae.rule_id
+         LEFT JOIN ddi_servers s ON s.id = g.server_id
+        ORDER BY g.fired_at DESC
+        LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
-    res.json({ data: rows.rows, total: parseInt(count.rows[0].total), page, limit });
+    const data = rows.rows.map((a) => {
+      const explanation = buildAlertExplanation(a);
+      // Strip the internal enrichment columns from the response payload.
+      const { cur_health, cur_query_ms, cur_winrm, ...rest } = a;
+      return { ...rest, explanation };
+    });
+
+    res.json({ data, total: parseInt(count.rows[0].total), page, limit });
   } catch (err) {
     console.error('[API] alerts error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -900,9 +977,19 @@ app.post('/api/alerts/:id/acknowledge', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const user = req.body.user || 'admin';
+    // Acknowledge the entire group this alert represents (same server + same
+    // normalised message within the same hour), so acking a grouped "fired N×"
+    // row clears all of its underlying members — not just the representative.
     await db.query(
-      `UPDATE alert_events SET acknowledged = TRUE, acknowledged_by = $2, acknowledged_at = NOW()
-       WHERE id = $1`,
+      `UPDATE alert_events tgt
+          SET acknowledged = TRUE, acknowledged_by = $2, acknowledged_at = NOW()
+         FROM alert_events rep
+        WHERE rep.id = $1
+          AND tgt.acknowledged = FALSE
+          AND COALESCE(tgt.server_id, -1) = COALESCE(rep.server_id, -1)
+          AND date_trunc('hour', tgt.fired_at) = date_trunc('hour', rep.fired_at)
+          AND regexp_replace(tgt.message, '[0-9]+', '#', 'g')
+              = regexp_replace(rep.message, '[0-9]+', '#', 'g')`,
       [id, user]
     );
     res.json({ success: true });
