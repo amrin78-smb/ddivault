@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
@@ -1421,11 +1421,12 @@ function IntelligencePanel() {
 
   // stale records
   const [minDays, setMinDays] = useState(90);
-  const [zoneIdFilter, setZoneIdFilter] = useState('');
+  const [zoneNameFilter, setZoneNameFilter] = useState('');
   const [stale, setStale] = useState<StaleRecord[]>([]);
-  const [staleTotal, setStaleTotal] = useState(0);
   const [staleLoading, setStaleLoading] = useState(true);
   const [selected, setSelected] = useState<Record<number, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [pendingDelete, setPendingDelete] = useState<StaleRecord[] | null>(null);
   const [cleaning, setCleaning] = useState(false);
 
   // forwarders
@@ -1446,13 +1447,12 @@ function IntelligencePanel() {
   const loadStale = useCallback(async () => {
     setStaleLoading(true);
     const params = new URLSearchParams({ min_days: String(minDays) });
-    if (zoneIdFilter) params.set('zone_id', zoneIdFilter);
     const d = await api(`/dns/stale-records?${params}`).catch(() => null);
     setStale((d?.data as StaleRecord[]) || []);
-    setStaleTotal(d?.total ?? (d?.data?.length || 0));
     setSelected({});
+    setExpanded({});
     setStaleLoading(false);
-  }, [minDays, zoneIdFilter]);
+  }, [minDays]);
 
   const loadForwarders = useCallback(async () => {
     setFwdLoading(true);
@@ -1472,28 +1472,100 @@ function IntelligencePanel() {
   useEffect(() => { loadStale(); }, [loadStale]);
   useRefreshKey(() => { loadZones(); loadStale(); loadForwarders(); loadScav(); });
 
-  // server lookup for a zone by name
-  const serverForZone = useCallback((zoneName: string): number | null => {
-    const z = zones.find(z => z.zone_name === zoneName);
-    return z ? z.server_id : null;
+  // per-record server lookup via zone_id (a stale record belongs to one server's zone copy)
+  const zoneById = useMemo(() => {
+    const m = new Map<number, DnsZone>();
+    zones.forEach(z => m.set(z.id, z));
+    return m;
   }, [zones]);
+  const serverIdForRecord = useCallback((r: StaleRecord): number | null => {
+    const z = zoneById.get(r.zone_id);
+    if (z) return z.server_id;
+    // fallback: any zone with the same name
+    const byName = zones.find(z => z.zone_name === r.zone_name);
+    return byName ? byName.server_id : null;
+  }, [zoneById, zones]);
+  const serverHostnameForRecord = useCallback((r: StaleRecord): string => {
+    const z = zoneById.get(r.zone_id);
+    return z?.server_hostname || (z ? `Server ${z.server_id}` : `Server ${r.zone_id}`);
+  }, [zoneById]);
 
-  const staleZoneNames = useMemo(() => Array.from(new Set(stale.map(s => s.zone_name))), [stale]);
-  const selectedRows = stale.filter(s => selected[s.id]);
+  // per-zone counts (aggregated by zone name) for the filter dropdown
+  const zoneCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    stale.forEach(r => { m[r.zone_name] = (m[r.zone_name] || 0) + 1; });
+    return m;
+  }, [stale]);
+  const zoneNamesSorted = useMemo(
+    () => Object.keys(zoneCounts).sort((a, b) => zoneCounts[b] - zoneCounts[a] || a.localeCompare(b)),
+    [zoneCounts]
+  );
 
-  const cleanupSelected = async () => {
-    if (selectedRows.length === 0) { toast('No records selected', 'error'); return; }
-    if (!confirm(`Delete ${selectedRows.length} stale record(s) from the DNS server(s)?`)) return;
-    const recs = selectedRows
+  // records visible under the current zone-name filter
+  const visibleStale = useMemo(
+    () => (zoneNameFilter ? stale.filter(r => r.zone_name === zoneNameFilter) : stale),
+    [stale, zoneNameFilter]
+  );
+  const staleZoneNames = useMemo(() => Array.from(new Set(visibleStale.map(s => s.zone_name))), [visibleStale]);
+
+  // collapse duplicate hostnames — one group per zone+hostname+type, across servers
+  interface StaleGroup {
+    key: string; zone_name: string; hostname: string; record_type: string;
+    records: StaleRecord[]; maxDays: number; oldest: string | null;
+  }
+  const staleGroups = useMemo<StaleGroup[]>(() => {
+    const m = new Map<string, StaleGroup>();
+    for (const r of visibleStale) {
+      const key = `${r.zone_name}||${r.hostname}||${r.record_type}`;
+      let g = m.get(key);
+      if (!g) { g = { key, zone_name: r.zone_name, hostname: r.hostname, record_type: r.record_type, records: [], maxDays: 0, oldest: null }; m.set(key, g); }
+      g.records.push(r);
+      if (r.days_stale > g.maxDays) g.maxDays = r.days_stale;
+      if (r.last_updated && (!g.oldest || r.last_updated < g.oldest)) g.oldest = r.last_updated;
+    }
+    return Array.from(m.values()).sort((a, b) => b.maxDays - a.maxDays);
+  }, [visibleStale]);
+
+  const selectedRows = useMemo(() => visibleStale.filter(s => selected[s.id]), [visibleStale, selected]);
+  const allSelected = visibleStale.length > 0 && visibleStale.every(r => selected[r.id]);
+  const someSelected = visibleStale.some(r => selected[r.id]);
+
+  const toggleSelectAll = (checked: boolean) => {
+    setSelected(prev => {
+      const next = { ...prev };
+      visibleStale.forEach(r => { if (checked) next[r.id] = true; else delete next[r.id]; });
+      return next;
+    });
+  };
+  const toggleGroup = (g: StaleGroup, checked: boolean) => {
+    setSelected(prev => {
+      const next = { ...prev };
+      g.records.forEach(r => { if (checked) next[r.id] = true; else delete next[r.id]; });
+      return next;
+    });
+  };
+  const toggleRecord = (id: number, checked: boolean) => {
+    setSelected(prev => {
+      const next = { ...prev };
+      if (checked) next[id] = true; else delete next[id];
+      return next;
+    });
+  };
+  const groupAllSelected = (g: StaleGroup) => g.records.every(r => selected[r.id]);
+  const groupSomeSelected = (g: StaleGroup) => g.records.some(r => selected[r.id]);
+
+  // run cleanup for an explicit set of records (server resolved per-record)
+  const runCleanup = async (rows: StaleRecord[]) => {
+    const recs = rows
       .map(r => {
-        const server_id = serverForZone(r.zone_name);
+        const server_id = serverIdForRecord(r);
         return server_id == null ? null : {
           server_id, zone_name: r.zone_name, hostname: r.hostname,
           record_type: r.record_type, record_data: r.record_data,
         };
       })
       .filter((x): x is { server_id: number; zone_name: string; hostname: string; record_type: string; record_data: string } => x !== null);
-    if (recs.length === 0) { toast('Could not resolve server for selected zones', 'error'); return; }
+    if (recs.length === 0) { toast('Could not resolve server for selected records', 'error'); return; }
     setCleaning(true);
     try {
       const d = await api('/dns/stale-records/cleanup', {
@@ -1506,18 +1578,15 @@ function IntelligencePanel() {
     finally { setCleaning(false); }
   };
 
-  const deleteStaleRow = async (r: StaleRecord) => {
-    const server_id = serverForZone(r.zone_name);
-    if (server_id == null) { toast('Could not resolve server for zone', 'error'); return; }
-    if (!confirm(`Delete ${r.record_type} ${r.hostname} in ${r.zone_name}?`)) return;
-    try {
-      const d = await api('/dns/stale-records/cleanup', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records: [{ server_id, zone_name: r.zone_name, hostname: r.hostname, record_type: r.record_type, record_data: r.record_data }] }),
-      });
-      toast(`${d.deleted ?? 0} deleted, ${d.failed ?? 0} failed`, (d.failed ?? 0) > 0 ? 'info' : 'success');
-      loadStale();
-    } catch (e: any) { toast(e.message, 'error'); }
+  // all delete paths funnel through the confirmation modal
+  const requestDelete = (rows: StaleRecord[]) => {
+    if (rows.length === 0) { toast('No records selected', 'error'); return; }
+    setPendingDelete(rows);
+  };
+  const confirmDelete = async () => {
+    const rows = pendingDelete || [];
+    setPendingDelete(null);
+    await runCleanup(rows);
   };
 
   const testForwarder = async (f: Forwarder) => {
@@ -1555,6 +1624,8 @@ function IntelligencePanel() {
     return 'var(--red)';
   };
 
+  useEscape(() => { if (pendingDelete) setPendingDelete(null); });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Stale Records */}
@@ -1566,30 +1637,38 @@ function IntelligencePanel() {
               <input type="number" value={minDays} min={1}
                 onChange={e => setMinDays(Math.max(1, parseInt(e.target.value) || 1))}
                 style={{ ...INPUT, width: 80 }} />
-              <select value={zoneIdFilter} onChange={e => setZoneIdFilter(e.target.value)} style={{ ...INPUT, width: 200 }}>
-                <option value="">All zones</option>
-                {zones.map(z => <option key={z.id} value={z.id}>{z.zone_name}</option>)}
+              <select value={zoneNameFilter} onChange={e => setZoneNameFilter(e.target.value)} style={{ ...INPUT, width: 260 }}>
+                <option value="">All zones ({stale.length.toLocaleString()})</option>
+                {zoneNamesSorted.map(zn => (
+                  <option key={zn} value={zn}>{zn} ({zoneCounts[zn].toLocaleString()})</option>
+                ))}
               </select>
               {canWrite && (
                 <button className="btn btn-primary" disabled={cleaning || selectedRows.length === 0}
                   style={{ opacity: cleaning || selectedRows.length === 0 ? 0.5 : 1 }}
-                  onClick={cleanupSelected}>
-                  {cleaning ? <Spinner size={12} color="#fff" /> : `Clean up selected (${selectedRows.length})`}
+                  onClick={() => requestDelete(selectedRows)}>
+                  {cleaning ? <Spinner size={12} color="#fff" /> : `Delete selected (${selectedRows.length})`}
                 </button>
               )}
             </div>
           } />
         <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-light)' }}>
-          {staleTotal.toLocaleString()} stale record{staleTotal === 1 ? '' : 's'} across {staleZoneNames.length} zone{staleZoneNames.length === 1 ? '' : 's'}
+          {visibleStale.length.toLocaleString()} stale record{visibleStale.length === 1 ? '' : 's'} in {staleGroups.length.toLocaleString()} unique entr{staleGroups.length === 1 ? 'y' : 'ies'} across {staleZoneNames.length} zone{staleZoneNames.length === 1 ? '' : 's'}
         </div>
-        {staleLoading ? <TableSkeleton rows={6} cols={6} /> : stale.length === 0 ? (
-          <EmptyState icon="✓" title="No stale records" message={`No records older than ${minDays} days.`} />
+        {staleLoading ? <TableSkeleton rows={6} cols={8} /> : visibleStale.length === 0 ? (
+          <EmptyState icon="✓" title="No stale records" message={`No records older than ${minDays} days${zoneNameFilter ? ` in ${zoneNameFilter}` : ''}.`} />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
               <thead>
                 <tr>
-                  <th style={{ width: 30 }}></th>
+                  <th style={{ width: 34 }}>
+                    <input type="checkbox" checked={allSelected}
+                      ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                      onChange={e => toggleSelectAll(e.target.checked)}
+                      title="Select all visible records" />
+                  </th>
+                  <th style={{ width: 24 }}></th>
                   <th>Zone</th>
                   <th>Hostname</th>
                   <th>Type</th>
@@ -1599,23 +1678,72 @@ function IntelligencePanel() {
                 </tr>
               </thead>
               <tbody>
-                {stale.map(r => (
-                  <tr key={r.id}>
-                    <td><input type="checkbox" checked={!!selected[r.id]}
-                      onChange={e => setSelected(p => ({ ...p, [r.id]: e.target.checked }))} /></td>
-                    <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{r.zone_name}</td>
-                    <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.hostname}</td>
-                    <td><TypeBadge type={r.record_type} small /></td>
-                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(r.last_updated)}</td>
-                    <td style={{ fontWeight: 700, color: r.days_stale > 180 ? 'var(--red)' : 'var(--orange)' }}>{r.days_stale}d</td>
-                    {canWrite && (
-                      <td style={{ textAlign: 'right' }}>
-                        <button onClick={() => deleteStaleRow(r)}
-                          style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
+                {staleGroups.map(g => {
+                  const multi = g.records.length > 1;
+                  const isOpen = !!expanded[g.key];
+                  return (
+                    <Fragment key={g.key}>
+                      <tr>
+                        <td>
+                          <input type="checkbox" checked={groupAllSelected(g)}
+                            ref={el => { if (el) el.indeterminate = !groupAllSelected(g) && groupSomeSelected(g); }}
+                            onChange={e => toggleGroup(g, e.target.checked)} />
+                        </td>
+                        <td>
+                          {multi && (
+                            <button onClick={() => setExpanded(p => ({ ...p, [g.key]: !p[g.key] }))}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, width: 18 }}
+                              title={isOpen ? 'Collapse' : 'Expand'}>{isOpen ? '▾' : '▸'}</button>
+                          )}
+                        </td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{g.zone_name}</td>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                          {g.hostname}
+                          {multi && (
+                            <span style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                              color: 'var(--text-muted)', background: 'var(--bg-primary)', border: '1px solid var(--border)',
+                              borderRadius: 10, padding: '1px 8px' }}>
+                              × {g.records.length} server{g.records.length === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </td>
+                        <td><TypeBadge type={g.record_type} small /></td>
+                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{multi ? '—' : shortTime(g.oldest)}</td>
+                        <td style={{ fontWeight: 700, color: g.maxDays > 180 ? 'var(--red)' : 'var(--orange)' }}>{g.maxDays}d</td>
+                        {canWrite && (
+                          <td style={{ textAlign: 'right' }}>
+                            <button onClick={() => requestDelete(g.records)}
+                              style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                              {multi ? `Delete all (${g.records.length})` : 'Delete'}
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                      {multi && isOpen && g.records.map(r => (
+                        <tr key={r.id} style={{ background: 'var(--bg-primary)' }}>
+                          <td>
+                            <input type="checkbox" checked={!!selected[r.id]}
+                              onChange={e => toggleRecord(r.id, e.target.checked)} />
+                          </td>
+                          <td></td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)', paddingLeft: 12 }}>
+                            ↳ {serverHostnameForRecord(r)}
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{r.record_data || '—'}</td>
+                          <td><TypeBadge type={r.record_type} small /></td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(r.last_updated)}</td>
+                          <td style={{ fontWeight: 700, color: r.days_stale > 180 ? 'var(--red)' : 'var(--orange)' }}>{r.days_stale}d</td>
+                          {canWrite && (
+                            <td style={{ textAlign: 'right' }}>
+                              <button onClick={() => requestDelete([r])}
+                                style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1719,6 +1847,30 @@ function IntelligencePanel() {
           </div>
         )}
       </div>
+
+      {/* Bulk-delete confirmation */}
+      {pendingDelete && (
+        <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) setPendingDelete(null); }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', padding: 24, width: 440, maxWidth: '94vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>⚠️ Delete stale records</div>
+              <button onClick={() => setPendingDelete(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>×</button>
+            </div>
+            <div style={PS_WARNING}>
+              ⚡ Removes the record(s) from the DNS server(s) via WinRM. Requires DNS Server role and admin rights.
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5, margin: '0 0 18px' }}>
+              You are about to delete <strong>{pendingDelete.length.toLocaleString()}</strong> stale DNS record{pendingDelete.length === 1 ? '' : 's'}. This cannot be undone. Are you sure?
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setPendingDelete(null)} className="btn">Cancel</button>
+              <button onClick={confirmDelete} disabled={cleaning} className="btn btn-primary" style={{ opacity: cleaning ? 0.7 : 1 }}>
+                {cleaning ? <Spinner size={12} color="#fff" /> : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
