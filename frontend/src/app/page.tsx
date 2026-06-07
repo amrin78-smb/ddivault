@@ -6,6 +6,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
 import { useLicense, LicenseDisabledScreen } from '@/components/LicenseGuard';
+import { useTheme } from '@/components/ThemeContext';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -1173,8 +1174,128 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, o
   );
 }
 
+// ── Settings sub-tab pill (mirrors the DNS tab pill style) ─────
+function SettingsPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '8px 16px', borderRadius: 22, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+      border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+      background: active ? 'var(--primary-light)' : 'var(--bg-card)',
+      color: active ? 'var(--primary)' : 'var(--text-primary)', fontFamily: 'inherit',
+      whiteSpace: 'nowrap',
+    }}>{label}</button>
+  );
+}
+
+// ── Appearance (theme) card — General tab ─────────────────────
+function AppearanceCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
+  const { theme, toggle } = useTheme();
+  return (
+    <div style={{ ...CARD, padding: 20 }}>
+      <div style={titleStyle}>Appearance</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Theme</div>
+          <div style={{ ...MUTED, marginTop: 2 }}>Switch between light and dark appearance. Saved on this device.</div>
+        </div>
+        <button className="btn" onClick={toggle} style={{ whiteSpace: 'nowrap' }}>
+          {theme === 'dark' ? '☀ Switch to Light' : '🌙 Switch to Dark'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Access control (RBAC) info — Security tab ─────────────────
+const ROLE_LABEL: Record<string, string> = {
+  super_admin: 'Super Admin', admin: 'Admin', site_admin: 'Site Admin', viewer: 'Viewer',
+};
+const ROLE_DESC: Record<string, string> = {
+  super_admin: 'Full access to all sites, plus system settings, SMTP, alert rules, API keys, and updates.',
+  admin: 'Manage DHCP, DNS, and IPAM across all sites. No system-level settings.',
+  site_admin: 'Manage resources for assigned sites only.',
+  viewer: 'Read-only access to dashboards and records.',
+};
+function SecurityInfoCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
+  const { role, canWrite } = useRBAC();
+  const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  return (
+    <div style={{ ...CARD, padding: 20 }}>
+      <div style={titleStyle}>Access Control</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={MUTED}>Your role</span>
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>{ROLE_LABEL[role] || role}</span>
+          <span className={`badge ${canWrite ? 'badge-green' : 'badge-gray'}`}>{canWrite ? 'Read / Write' : 'Read only'}</span>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{ROLE_DESC[role] || ''}</div>
+        <div style={{ ...MUTED, lineHeight: 1.6 }}>
+          User accounts, roles, and site assignments are managed centrally in the NocVault hub. Sessions use single sign-on (SSO) and inherit the role assigned there.
+        </div>
+        <div>
+          <a href={`${hub}/users`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Manage users in NocVault →</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── NocVault hub integration card — Integrations tab ──────────
+function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
+  const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  return (
+    <div style={{ ...CARD, padding: 20 }}>
+      <div style={titleStyle}>NocVault Hub</div>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+        <div>DDIVault authenticates through the NocVault hub (SSO) and shares its sites directory.</div>
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={MUTED}>Hub URL</span>
+          <code style={{ fontSize: 12.5 }}>{hub}</code>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <a href={`${hub}/launcher`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Open NocVault Hub →</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── System information card — System tab ──────────────────────
+function SystemInfoCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
+  const [health, setHealth] = useState<{ status?: string; db?: string; version?: string } | null>(null);
+  const [healthErr, setHealthErr] = useState(false);
+  useEffect(() => {
+    fetch('/api/health', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('unreachable'))))
+      .then(d => setHealth(d))
+      .catch(() => setHealthErr(true));
+  }, []);
+  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
+  const dbOk = health?.db === 'connected';
+  return (
+    <div style={{ ...CARD, padding: 20 }}>
+      <div style={titleStyle}>System Information</div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={row}><span style={MUTED}>Application</span><span style={{ fontWeight: 600 }}>DDIVault v{health?.version || '1.0.0'}</span></div>
+        <div style={row}>
+          <span style={MUTED}>API status</span>
+          <span className={`badge ${healthErr ? 'badge-red' : health ? 'badge-green' : 'badge-gray'}`}>{healthErr ? 'Unreachable' : health ? 'Online' : 'Checking…'}</span>
+        </div>
+        <div style={row}>
+          <span style={MUTED}>Database</span>
+          <span className={`badge ${healthErr ? 'badge-gray' : dbOk ? 'badge-green' : health ? 'badge-yellow' : 'badge-gray'}`}>{healthErr ? '—' : dbOk ? 'Connected' : health ? 'Disconnected' : 'Checking…'}</span>
+        </div>
+        <div style={{ ...row, borderBottom: 'none' }}><span style={MUTED}>Suite</span><span style={{ color: 'var(--text-secondary)' }}>NocVault network intelligence</span></div>
+      </div>
+    </div>
+  );
+}
+
+type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'security' | 'system';
+
 function SettingsTab() {
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [subTab, setSubTab] = useState<SettingsSubTab>('general');
   const { toast } = useToast();
 
   useEffect(() => { api('/settings').then(d => setSettings(d.data || {})).catch(() => {}); }, []);
@@ -1186,56 +1307,91 @@ function SettingsTab() {
   }, [toast]);
 
   const sectionTitle: React.CSSProperties = { fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' };
+  const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
+
+  const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
+    { id: 'general',       label: 'General',       subtitle: 'Branding, appearance, and IPAM scan preferences' },
+    { id: 'notifications', label: 'Notifications', subtitle: 'Email delivery, alert recipients, and alert rules' },
+    { id: 'integrations',  label: 'Integrations',  subtitle: 'NocVault hub connection and REST API keys' },
+    { id: 'security',      label: 'Security',      subtitle: 'Roles, access, and session information' },
+    { id: 'system',        label: 'System',        subtitle: 'Updates, data retention, and system status' },
+  ];
+  const activeSubtitle = TABS.find(t => t.id === subTab)?.subtitle || '';
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <PageHeader title="Settings" subtitle="Configure DDIVault thresholds, scanning, and data retention" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div style={{ ...CARD, padding: 20 }}>
-          <div style={sectionTitle}>Branding</div>
-          <SettingField label="App Name" value={settings.app_name || ''} settingKey="app_name" placeholder="DDIVault" onSave={save} />
-          <SettingField label="Company Name" value={settings.company_name || ''} settingKey="company_name" placeholder="Your Company" onSave={save} />
-        </div>
-        <div style={{ ...CARD, padding: 20 }}>
-          <div style={sectionTitle}>IPAM Scan Settings</div>
-          <SettingField label="DNS Server for Scans" value={settings.scan_dns_server || ''} settingKey="scan_dns_server" placeholder="e.g. 192.168.1.10 (leave blank for system default)" helpText="Used for PTR / reverse DNS lookups during IPAM subnet scans." onSave={save} />
-          <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
-          <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
-        </div>
-        <div style={{ ...CARD, padding: 20 }}>
-          <div style={sectionTitle}>Data Retention</div>
-          <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
-        </div>
-        <div style={{ ...CARD, padding: 20 }}>
-          <div style={sectionTitle}>About</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 2 }}>
-            <div><strong>DDIVault</strong> <span style={MUTED}>v1.0.0</span></div>
-            <div style={MUTED}>Part of the NocVault network intelligence suite</div>
-            <div style={{ marginTop: 12 }}>
-              <a href={`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>← NocVault Hub</a>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16, height: '100%', boxSizing: 'border-box' }}>
+      <PageHeader title="Settings" subtitle={activeSubtitle} />
+
+      {/* Sub-tab pill bar */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {TABS.map(t => (
+          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} />
+        ))}
+      </div>
+
+      {/* Independently-scrolling content region */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {subTab === 'general' && (
+          <div style={grid}>
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>Branding</div>
+              <SettingField label="App Name" value={settings.app_name || ''} settingKey="app_name" placeholder="DDIVault" onSave={save} />
+              <SettingField label="Company Name" value={settings.company_name || ''} settingKey="company_name" placeholder="Your Company" onSave={save} />
+            </div>
+            <AppearanceCard titleStyle={sectionTitle} />
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>IPAM Scan Settings</div>
+              <SettingField label="DNS Server for Scans" value={settings.scan_dns_server || ''} settingKey="scan_dns_server" placeholder="e.g. 192.168.1.10 (leave blank for system default)" helpText="Used for PTR / reverse DNS lookups during IPAM subnet scans." onSave={save} />
+              <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
+              <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
             </div>
           </div>
-        </div>
+        )}
 
-        {/* API key management spans the full grid width */}
-        <ApiKeysSection />
+        {subTab === 'notifications' && (
+          <>
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>Email / SMTP</div>
+              <SmtpSettings />
+            </div>
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>Alert Recipients</div>
+              <AlertRecipients />
+            </div>
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>Alert Rules</div>
+              <AlertRules />
+            </div>
+          </>
+        )}
 
-        <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
-          <div style={sectionTitle}>Email / SMTP</div>
-          <SmtpSettings />
-        </div>
-        <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
-          <div style={sectionTitle}>Alert Recipients</div>
-          <AlertRecipients />
-        </div>
-        <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
-          <div style={sectionTitle}>Alert Rules</div>
-          <AlertRules />
-        </div>
-        <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
-          <div style={sectionTitle}>System Updates</div>
-          <SystemUpdates />
-        </div>
+        {subTab === 'integrations' && (
+          <>
+            <IntegrationsHubCard titleStyle={sectionTitle} />
+            {/* API key management (REST API v1) */}
+            <ApiKeysSection />
+          </>
+        )}
+
+        {subTab === 'security' && (
+          <SecurityInfoCard titleStyle={sectionTitle} />
+        )}
+
+        {subTab === 'system' && (
+          <>
+            <div style={grid}>
+              <div style={{ ...CARD, padding: 20 }}>
+                <div style={sectionTitle}>Data Retention</div>
+                <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
+              </div>
+              <SystemInfoCard titleStyle={sectionTitle} />
+            </div>
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>System Updates</div>
+              <SystemUpdates />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
