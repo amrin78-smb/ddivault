@@ -1,3 +1,8 @@
+# NOTE: This script is designed to run via Windows Task Scheduler (SYSTEM account)
+# when triggered from the web UI. Running directly from a remote PowerShell session
+# will disconnect the session when services restart — this is expected behavior.
+# To run manually: schtasks /run /tn "DDIVaultUpdate"
+
 param(
     [string]$InstallDir = "C:\Apps\ddivault",
     [string]$ServerIp
@@ -97,24 +102,26 @@ if (Test-Path $frontendEnvPath) {
 }
 
 # STEP 3 - Pull latest
+# git writes fetch/reset progress + summary to stderr. With $ErrorActionPreference
+# = 'Stop' that stderr becomes a terminating NativeCommandError; even with a local
+# 'Continue', piping the 2>&1-merged stream through ForEach-Object | Write-Host
+# still surfaces those error records over a remote (WinRM) session and aborts the
+# update. Mirror the SpanVault installer: run git with --quiet, assign each merged
+# invocation to $null to fully consume it, and gate on $LASTEXITCODE.
 Write-Step "Pulling latest from GitHub..."
 Set-Location $AppDir
-# git writes its fetch/reset summary to stderr; with $ErrorActionPreference = 'Stop'
-# the 2>&1-merged stderr becomes a terminating NativeCommandError and aborts the
-# update even though git exits 0. Drop to 'Continue' for the git section and gate
-# on $LASTEXITCODE instead (same reason as the psql migration step below).
 $prevEAPgit = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-git fetch origin 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; exit 1 }
+$null = git fetch origin --quiet 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; $ErrorActionPreference = $prevEAPgit; exit 1 }
 
-git reset --hard origin/main 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; exit 1 }
+$null = git reset --hard origin/main --quiet 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; $ErrorActionPreference = $prevEAPgit; exit 1 }
 
-git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$null = git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1
 
-$commitHash = git rev-parse --short HEAD
-$commitMsg  = git log -1 --pretty=format:"%s"
+$commitHash = git rev-parse --short HEAD 2>$null
+$commitMsg  = git log -1 --pretty=format:"%s" 2>$null
 $ErrorActionPreference = $prevEAPgit
 Write-OK "Now at commit $commitHash - $commitMsg"
 
