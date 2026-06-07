@@ -170,13 +170,13 @@ app.post('/api/system/update', async (_req, res) => {
   try {
     try { execSync('schtasks /delete /tn "DDIVaultUpdate" /f', { stdio: 'ignore' }); } catch (_e) { /* none */ }
 
-    execSync(
+    const taskCmd =
       `schtasks /create /tn "DDIVaultUpdate" ` +
       `/tr "powershell.exe -NonInteractive -ExecutionPolicy Bypass ` +
       `-File \\"${scriptPath}\\" -ServerIp \\"${serverIp}\\"" ` +
-      `/sc once /st 00:00 /f /ru SYSTEM`,
-      { stdio: 'pipe' }
-    );
+      `/sc once /st 00:00 /f /ru SYSTEM`;
+    console.log('[Update] Running:', taskCmd);
+    execSync(taskCmd, { stdio: 'pipe' });
 
     execSync('schtasks /run /tn "DDIVaultUpdate"', { stdio: 'pipe' });
 

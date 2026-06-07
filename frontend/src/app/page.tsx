@@ -1062,6 +1062,7 @@ function SystemUpdates() {
   const [checkErr, setCheckErr] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [updateErr, setUpdateErr] = useState<string | null>(null);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -1080,11 +1081,22 @@ function SystemUpdates() {
 
   const startUpdate = useCallback(async () => {
     setConfirming(false);
-    setUpdating(true);
+    setUpdateErr(null);
     try {
-      await api('/system/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-    } catch {
-      // Even if the response is cut off by the restart, proceed to the overlay.
+      // The API returns { started: true } BEFORE services stop (the installer
+      // waits 5s first), so a clean response is expected on success. Only show
+      // the overlay once the server confirms the task was scheduled — otherwise
+      // the overlay would hang forever on a failure such as SERVER_IP not being
+      // configured (HTTP 400), a service account that cannot create a SYSTEM
+      // task (HTTP 500), or a read-only license (HTTP 402).
+      const r = await api('/system/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      if (r && r.started) {
+        setUpdating(true);
+      } else {
+        setUpdateErr((r && r.error) || 'Update did not start. Check the API logs.');
+      }
+    } catch (e: any) {
+      setUpdateErr(e?.message || 'Failed to start update.');
     }
   }, []);
 
@@ -1130,6 +1142,7 @@ function SystemUpdates() {
             <button className="btn btn-primary" onClick={() => setConfirming(true)}>Update Now</button>
             <button className="btn" onClick={check}>Re-check</button>
           </div>
+          {updateErr && <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>⚠ {updateErr}</div>}
         </div>
       ) : (
         <button className="btn" onClick={check}>Check for Updates</button>

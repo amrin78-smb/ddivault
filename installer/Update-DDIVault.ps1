@@ -3,6 +3,8 @@ param(
     [string]$ServerIp
 )
 
+$ErrorActionPreference = 'Stop'
+
 $AppDir      = "$InstallDir"
 $FrontendDir = "$AppDir\frontend"
 $LogDir      = "$InstallDir\logs"
