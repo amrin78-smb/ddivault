@@ -13,6 +13,8 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.loc
 const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
+const { execSync } = require('child_process');
+const path = require('path');
 
 // ── Crash resilience ─────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -129,6 +131,60 @@ app.get('/api/health', async (req, res) => {
     res.json({ status: 'ok', db: 'connected', time: result.rows[0].ts, version: '1.0.0' });
   } catch (err) {
     res.status(500).json({ status: 'error', db: 'disconnected' });
+  }
+});
+
+// ── System Updates (self-update via Windows Task Scheduler) ───
+// SYSTEM scheduled task is mandatory: spawning the updater directly from this
+// Node process would kill it when NSSM stops the service mid-update. The task
+// scheduler runs independently and survives the service restart.
+app.get('/api/system/update-status', async (_req, res) => {
+  const repoRoot = path.join(__dirname, '..');
+  const git = (cmd) => execSync(cmd, { cwd: repoRoot, encoding: 'utf8', timeout: 30000 }).trim();
+  try {
+    git('git fetch origin main');
+    const current = git('git rev-parse HEAD').slice(0, 7);
+    const latest  = git('git rev-parse origin/main').slice(0, 7);
+    const behind  = parseInt(git('git rev-list HEAD..origin/main --count'), 10) || 0;
+    const log     = git('git log HEAD..origin/main --pretty=format:"%h %s"');
+    const changes = log ? log.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+    res.json({
+      current_version: current,
+      latest_version: latest,
+      commits_behind: behind,
+      up_to_date: behind === 0,
+      changes,
+    });
+  } catch (e) {
+    console.error('[update-status] git check failed:', e.message);
+    res.json({ error: 'Could not check for updates', up_to_date: true });
+  }
+});
+
+app.post('/api/system/update', async (_req, res) => {
+  const serverIp = process.env.SERVER_IP || '';
+  if (!serverIp) {
+    return res.status(400).json({ error: 'SERVER_IP not configured in .env.local' });
+  }
+  const scriptPath = path.join(__dirname, '..', 'installer', 'Update-DDIVault.ps1').replace(/\//g, '\\');
+  try {
+    try { execSync('schtasks /delete /tn "DDIVaultUpdate" /f', { stdio: 'ignore' }); } catch (_e) { /* none */ }
+
+    execSync(
+      `schtasks /create /tn "DDIVaultUpdate" ` +
+      `/tr "powershell.exe -NonInteractive -ExecutionPolicy Bypass ` +
+      `-File \\"${scriptPath}\\" -ServerIp \\"${serverIp}\\"" ` +
+      `/sc once /st 00:00 /f /ru SYSTEM`,
+      { stdio: 'pipe' }
+    );
+
+    execSync('schtasks /run /tn "DDIVaultUpdate"', { stdio: 'pipe' });
+
+    console.log('[Update] Task scheduled under SYSTEM, ServerIp:', serverIp);
+    res.json({ started: true });
+  } catch (err) {
+    console.error('[Update] schtasks error:', err.message);
+    res.status(500).json({ error: 'Failed to schedule update: ' + err.message });
   }
 });
 

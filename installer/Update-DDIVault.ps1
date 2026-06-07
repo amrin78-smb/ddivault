@@ -1,5 +1,6 @@
 param(
-    [string]$InstallDir = "C:\Apps\ddivault"
+    [string]$InstallDir = "C:\Apps\ddivault",
+    [string]$ServerIp
 )
 
 $AppDir      = "$InstallDir"
@@ -22,6 +23,11 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Write-Fail "This script must be run as Administrator."
     exit 1
 }
+
+# Give the API a moment to return its { started: true } response to the in-app
+# updater before we start stopping services.
+Write-Host "=== Update starting in 5 seconds ===" -ForegroundColor Cyan
+Start-Sleep -Seconds 5
 
 Write-Host ""
 Write-Host "  DDIVault Update Script" -ForegroundColor White
@@ -114,6 +120,26 @@ if ($rootEnvContent) {
 if ($frontendEnvContent) {
     Set-Content -LiteralPath $frontendEnvPath -Value $frontendEnvContent -NoNewline -Encoding UTF8
     Write-OK "Restored frontend .env.local"
+}
+
+# Ensure SERVER_IP is recorded in .env.local so the in-app updater
+# (Settings -> Updates) can read it via dotenv to re-run this installer.
+# Runs on every update so existing installs get it once; a real value is preserved.
+if ($ServerIp -and (Test-Path $rootEnvPath)) {
+    $envText = Get-Content -LiteralPath $rootEnvPath -Raw
+    if ($envText -match '(?m)^\s*SERVER_IP\s*=\s*(your_server_ip\s*)?$') {
+        $envText = $envText -replace '(?m)^\s*SERVER_IP\s*=.*$', "SERVER_IP=$ServerIp"
+        Set-Content -LiteralPath $rootEnvPath -Value $envText -NoNewline -Encoding UTF8
+        Write-OK "Set SERVER_IP=$ServerIp in .env.local"
+    } elseif ($envText -notmatch '(?m)^\s*SERVER_IP\s*=') {
+        Add-Content -LiteralPath $rootEnvPath -Value "SERVER_IP=$ServerIp"
+        Write-OK "Added SERVER_IP=$ServerIp to .env.local"
+    } else {
+        Write-OK "Preserving existing SERVER_IP in .env.local"
+    }
+    if (Test-Path $frontendEnvPath) {
+        Copy-Item -LiteralPath $rootEnvPath -Destination $frontendEnvPath -Force
+    }
 }
 
 # STEP 4.5 - Run schema migrations

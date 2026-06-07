@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
@@ -372,6 +372,32 @@ function DnsHealthCard({ data, onClick }: { data?: DnsHealth; onClick: () => voi
   );
 }
 
+// Dashboard success banner shown once after a self-update completes (?updated=true).
+function UpdatedNotice() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('updated') === 'true') {
+      setShow(true);
+      window.history.replaceState({}, '', window.location.pathname);
+      const t = setTimeout(() => setShow(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, []);
+  if (!show) return null;
+  return (
+    <div onClick={() => setShow(false)} style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+      borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
+      color: '#166534', background: 'rgba(22,163,74,0.10)', border: '1px solid rgba(22,163,74,0.30)',
+    }}>
+      <span aria-hidden>✓</span>
+      <span style={{ flex: 1 }}>DDIVault updated successfully</span>
+      <span aria-hidden style={{ opacity: 0.6 }}>×</span>
+    </div>
+  );
+}
+
 // ════════════════════════════════════════════════════════════
 // TAB: DASHBOARD — operations center
 // ════════════════════════════════════════════════════════════
@@ -463,6 +489,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <UpdatedNotice />
       <PageHeader title="Operations Center" subtitle="Live DDI health — scope exhaustion, recent activity, and utilization trends. Refreshes every 30s." />
 
       {/* Real-time status strip */}
@@ -918,6 +945,203 @@ function EventsTab() {
 }
 
 // ════════════════════════════════════════════════════════════
+// SYSTEM UPDATES (Check for Updates)
+// ════════════════════════════════════════════════════════════
+type UpdateStatus = {
+  current_version?: string;
+  latest_version?: string;
+  commits_behind?: number;
+  up_to_date?: boolean;
+  changes?: string[];
+  error?: string;
+};
+
+function changeSubject(line: string): string {
+  const m = line.match(/^([0-9a-f]{7,40})\s+(.*)$/i);
+  return m ? m[2] : line;
+}
+
+const UPDATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+
+function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="modal-overlay" onMouseDown={onCancel}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+          Start update? Services will restart and you will lose connection for 30-60 seconds.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" onClick={onConfirm}>Start Update</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UpdatingOverlay() {
+  const [phase, setPhase] = useState<'starting' | 'down' | 'back_up' | 'timeout'>('starting');
+  const wentDown = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    const startedAt = Date.now();
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    let reloadId: ReturnType<typeof setTimeout> | null = null;
+
+    const stopPolling = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
+
+    const tick = async () => {
+      if (!active) return;
+      if (Date.now() - startedAt > UPDATE_TIMEOUT_MS) {
+        stopPolling();
+        if (active) setPhase('timeout');
+        return;
+      }
+      const ctrl = new AbortController();
+      const abortId = setTimeout(() => ctrl.abort(), 1800);
+      let ok = false;
+      try {
+        const res = await fetch('/api/health', { cache: 'no-store', signal: ctrl.signal });
+        ok = res.ok;
+      } catch {
+        ok = false;
+      } finally {
+        clearTimeout(abortId);
+      }
+      if (!active) return;
+      if (!ok) {
+        wentDown.current = true;
+        setPhase('down');
+        return;
+      }
+      if (wentDown.current) {
+        setPhase('back_up');
+        stopPolling();
+        reloadId = setTimeout(() => { window.location.href = '/?updated=true'; }, 2000);
+      }
+    };
+
+    pollId = setInterval(tick, 2000);
+    tick();
+
+    return () => {
+      active = false;
+      stopPolling();
+      if (reloadId !== null) clearTimeout(reloadId);
+    };
+  }, []);
+
+  let statusLine = 'Starting update…';
+  if (phase === 'down') statusLine = 'Services restarting… ⟳';
+  else if (phase === 'back_up') statusLine = '✓ Update complete! Redirecting…';
+  else if (phase === 'timeout') statusLine = 'Update is taking longer than expected. Try refreshing the page manually.';
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.78)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.35)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
+        {phase !== 'back_up' && phase !== 'timeout' && (
+          <div style={{ fontSize: 44, lineHeight: 1, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
+        )}
+        {phase === 'back_up' && <div style={{ fontSize: 44, lineHeight: 1 }}>✓</div>}
+        {phase === 'timeout' && <div style={{ fontSize: 44, lineHeight: 1 }}>⚠</div>}
+        <div style={{ fontSize: 18, fontWeight: 700, marginTop: 14 }}>Updating DDIVault…</div>
+        <p style={{ ...MUTED, marginTop: 6 }}>Pulling latest code and restarting services. Do not close this window.</p>
+        <p style={{ fontWeight: 600, margin: '14px 0' }}>{statusLine}</p>
+        <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 30-60 seconds)</p>
+        <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={() => window.location.reload()}>Reload Now</button>
+      </div>
+    </div>
+  );
+}
+
+function SystemUpdates() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkErr, setCheckErr] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    setCheckErr(null);
+    try {
+      const s = await api('/system/update-status');
+      setStatus(s);
+    } catch (e: any) {
+      setCheckErr(e?.message || 'Could not check for updates');
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { check(); }, [check]);
+
+  const startUpdate = useCallback(async () => {
+    setConfirming(false);
+    setUpdating(true);
+    try {
+      await api('/system/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    } catch {
+      // Even if the response is cut off by the restart, proceed to the overlay.
+    }
+  }, []);
+
+  const hasError = !!(status?.error) || !!checkErr;
+  const errText = status?.error || checkErr;
+  const upToDate = !hasError && !!status?.up_to_date;
+  const commitsBehind = status?.commits_behind ?? 0;
+  const updatesAvailable = !hasError && !upToDate && commitsBehind > 0;
+
+  return (
+    <>
+      {checking ? (
+        <div style={MUTED}>Checking for updates…</div>
+      ) : hasError ? (
+        <div>
+          <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 10 }}>{errText}</div>
+          <button className="btn" onClick={check}>Re-check</button>
+        </div>
+      ) : upToDate ? (
+        <div>
+          <div style={{ color: 'var(--green)', fontWeight: 600 }}>✓ DDIVault is up to date</div>
+          <div style={{ ...MUTED, margin: '6px 0 12px' }}>Current version: <code>{status?.current_version}</code></div>
+          <button className="btn" onClick={check}>Re-check</button>
+        </div>
+      ) : updatesAvailable ? (
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>🔄 {commitsBehind} update{commitsBehind === 1 ? '' : 's'} available</div>
+          <div style={{ ...MUTED, margin: '6px 0' }}>
+            Current: <code>{status?.current_version}</code> → Latest: <code>{status?.latest_version}</code>
+          </div>
+          {status?.changes && status.changes.length > 0 && (
+            <div style={{ margin: '12px 0' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Changes</div>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
+                {status.changes.map((c, i) => <li key={i} style={{ marginBottom: 2 }}>{changeSubject(c)}</li>)}
+              </ul>
+            </div>
+          )}
+          <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 13, margin: '12px 0' }}>
+            ⚠ Services will restart during update. You may lose connection briefly (30-60 seconds).
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-primary" onClick={() => setConfirming(true)}>Update Now</button>
+            <button className="btn" onClick={check}>Re-check</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" onClick={check}>Check for Updates</button>
+      )}
+
+      {confirming && <UpdateConfirmModal onCancel={() => setConfirming(false)} onConfirm={startUpdate} />}
+      {updating && <UpdatingOverlay />}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 // TAB: SETTINGS
 // ════════════════════════════════════════════════════════════
 function SettingField({ label, value, settingKey, placeholder, helpText, type, onSave }: {
@@ -994,6 +1218,10 @@ function SettingsTab() {
         <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
           <div style={sectionTitle}>Alert Rules</div>
           <AlertRules />
+        </div>
+        <div style={{ ...CARD, padding: 20, gridColumn: '1 / -1' }}>
+          <div style={sectionTitle}>System Updates</div>
+          <SystemUpdates />
         </div>
       </div>
     </div>
