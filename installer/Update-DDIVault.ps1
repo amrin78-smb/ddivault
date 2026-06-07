@@ -1,8 +1,3 @@
-# NOTE: This script is designed to run via Windows Task Scheduler (SYSTEM account)
-# when triggered from the web UI. Running directly from a remote PowerShell session
-# will disconnect the session when services restart — this is expected behavior.
-# To run manually: schtasks /run /tn "DDIVaultUpdate"
-
 param(
     [string]$InstallDir = "C:\Apps\ddivault",
     [string]$ServerIp
@@ -102,27 +97,18 @@ if (Test-Path $frontendEnvPath) {
 }
 
 # STEP 3 - Pull latest
-# git writes fetch/reset progress + summary to stderr. With $ErrorActionPreference
-# = 'Stop' that stderr becomes a terminating NativeCommandError; even with a local
-# 'Continue', piping the 2>&1-merged stream through ForEach-Object | Write-Host
-# still surfaces those error records over a remote (WinRM) session and aborts the
-# update. Mirror the SpanVault installer: run git with --quiet, assign each merged
-# invocation to $null to fully consume it, and gate on $LASTEXITCODE.
 Write-Step "Pulling latest from GitHub..."
 Set-Location $AppDir
-$prevEAPgit = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-$null = git fetch origin --quiet 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; $ErrorActionPreference = $prevEAPgit; exit 1 }
+git fetch origin 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; exit 1 }
 
-$null = git reset --hard origin/main --quiet 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; $ErrorActionPreference = $prevEAPgit; exit 1 }
+git reset --hard origin/main 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; exit 1 }
 
-$null = git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1
+git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
 
-$commitHash = git rev-parse --short HEAD 2>$null
-$commitMsg  = git log -1 --pretty=format:"%s" 2>$null
-$ErrorActionPreference = $prevEAPgit
+$commitHash = git rev-parse --short HEAD
+$commitMsg  = git log -1 --pretty=format:"%s"
 Write-OK "Now at commit $commitHash - $commitMsg"
 
 # STEP 4 - Restore .env.local
@@ -167,31 +153,13 @@ if (Test-Path $psql) {
     $dbName = (Get-Content $rootEnvPath | Select-String "DDI_DB_NAME=").ToString().Split("=",2)[1].Trim()
     $env:PGPASSWORD = $dbPass
     $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
-    # psql writes NOTICE/WARNING lines to stderr (the IF NOT EXISTS schema files emit
-    # many). With $ErrorActionPreference = 'Stop', PowerShell turns native-command
-    # stderr captured via 2>&1 into terminating NativeCommandErrors and aborts the
-    # update. Drop to 'Continue' for this section, run psql with --quiet, filter the
-    # noise out of the log, and gate success on $LASTEXITCODE (exit -1 is benign over
-    # WinRM). Mirrors the SpanVault installer's psql handling.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
     foreach ($schema in $schemas) {
         $schemaPath = "$AppDir\scripts\$schema"
         if (Test-Path $schemaPath) {
-            try {
-                & $psql --quiet -U $dbUser -d $dbName -f $schemaPath 2>&1 |
-                    Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
-                    Out-File -FilePath "$LogDir\schema-migration.log" -Append -Encoding UTF8
-            } catch {}
-            $psqlExit = $LASTEXITCODE
-            if ($psqlExit -eq 0 -or $psqlExit -eq -1 -or $null -eq $psqlExit) {
-                Write-OK "Applied $schema"
-            } else {
-                Write-Warn "psql exit $psqlExit on $schema - see $LogDir\schema-migration.log"
-            }
+            & $psql -U $dbUser -d $dbName -f $schemaPath >> "$LogDir\schema-migration.log" 2>&1
+            Write-OK "Applied $schema"
         }
     }
-    $ErrorActionPreference = $prevEAP
     $env:PGPASSWORD = ""
 } else {
     Write-Warn "psql not found - skipping schema migration. Run manually if needed."
