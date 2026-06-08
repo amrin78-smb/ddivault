@@ -951,15 +951,27 @@ function EventsTab() {
 type UpdateStatus = {
   current_version?: string;
   latest_version?: string;
-  commits_behind?: number;
   up_to_date?: boolean;
-  changes?: string[];
+  update_available?: boolean;
+  changelog?: string;
+  release_date?: string;
   error?: string;
 };
 
-function changeSubject(line: string): string {
-  const m = line.match(/^([0-9a-f]{7,40})\s+(.*)$/i);
-  return m ? m[2] : line;
+const UPDATE_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+// Format an ISO date "2026-06-09" → "June 9, 2026" (no timezone shifting).
+function fmtReleaseDate(d?: string): string {
+  if (!d) return '';
+  const [y, m, day] = d.split('-').map(Number);
+  if (!y || !m || !day) return d;
+  return `${UPDATE_MONTHS[m - 1]} ${day}, ${y}`;
+}
+// Drop the leading "## v1.1.0 — date" header from a changelog section so the box
+// shows just the body (version + date are rendered separately above it).
+function changelogBody(md?: string): string {
+  if (!md) return '';
+  return md.replace(/^##\s+.*$/m, '').trim();
 }
 
 const UPDATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
@@ -1122,8 +1134,7 @@ function SystemUpdates() {
   const hasError = !!(status?.error) || !!checkErr;
   const errText = status?.error || checkErr;
   const upToDate = !hasError && !!status?.up_to_date;
-  const commitsBehind = status?.commits_behind ?? 0;
-  const updatesAvailable = !hasError && !upToDate && commitsBehind > 0;
+  const updatesAvailable = !hasError && !!status?.update_available;
 
   return (
     <>
@@ -1142,20 +1153,31 @@ function SystemUpdates() {
         </div>
       ) : updatesAvailable ? (
         <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>🔄 {commitsBehind} update{commitsBehind === 1 ? '' : 's'} available</div>
-          <div style={{ ...MUTED, margin: '6px 0' }}>
-            Current: <code>{status?.current_version}</code> → Latest: <code>{status?.latest_version}</code>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>
+            🔄 Update available: v{status?.current_version} → v{status?.latest_version}
           </div>
-          {status?.changes && status.changes.length > 0 && (
+          {changelogBody(status?.changelog) && (
             <div style={{ margin: '12px 0' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Changes</div>
-              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
-                {status.changes.map((c, i) => <li key={i} style={{ marginBottom: 2 }}>{changeSubject(c)}</li>)}
-              </ul>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                What&apos;s new in v{status?.latest_version}:
+              </div>
+              <div style={{
+                maxHeight: 200, overflowY: 'auto',
+                border: '1px solid var(--border)', borderRadius: 8,
+                padding: '10px 14px', background: 'var(--bg-primary)',
+                fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+              }}>
+                {changelogBody(status?.changelog)}
+              </div>
+            </div>
+          )}
+          {status?.release_date && (
+            <div style={{ ...MUTED, fontSize: 13, margin: '6px 0' }}>
+              Released: {fmtReleaseDate(status.release_date)}
             </div>
           )}
           <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 13, margin: '12px 0' }}>
-            ⚠ Services will restart during update. You may lose connection briefly (30-60 seconds).
+            ⚠ Services will restart (30-60 seconds)
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-primary" onClick={() => setConfirming(true)}>Update Now</button>
@@ -1201,15 +1223,23 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, o
 }
 
 // ── Settings sub-tab pill (mirrors the DNS tab pill style) ─────
-function SettingsPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function SettingsPill({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: boolean }) {
   return (
     <button onClick={onClick} style={{
       padding: '8px 16px', borderRadius: 22, cursor: 'pointer', fontSize: 13, fontWeight: 600,
       border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
       color: active ? 'var(--primary)' : 'var(--text-primary)', fontFamily: 'inherit',
-      whiteSpace: 'nowrap',
-    }}>{label}</button>
+      whiteSpace: 'nowrap', position: 'relative',
+    }}>
+      {label}
+      {badge && (
+        <span title="Update available" style={{
+          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+          background: '#dc2626', marginLeft: 6, verticalAlign: 'middle',
+        }} />
+      )}
+    </button>
   );
 }
 
@@ -1317,14 +1347,53 @@ function SystemInfoCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   );
 }
 
+// ── About card — General tab ──────────────────────────────────
+function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
+  const [ver, setVer] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/health', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d) setVer(d.version || null); })
+      .catch(() => {});
+  }, []);
+  return (
+    <div style={{ ...CARD, padding: 20 }}>
+      <div style={titleStyle}>About</div>
+      <div style={{ lineHeight: 1.8, fontSize: 13 }}>
+        <div style={{ fontWeight: 700 }}>DDIVault</div>
+        <div style={MUTED}>Version: <code>v{ver || '1.0.0'}</code></div>
+        <div style={MUTED}>Part of the NocVault Intelligence Suite</div>
+        <div style={MUTED}>© 2026 NocVault</div>
+      </div>
+    </div>
+  );
+}
+
 type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'security' | 'system';
 
 function SettingsTab() {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [subTab, setSubTab] = useState<SettingsSubTab>('general');
+  const [updateAvail, setUpdateAvail] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => { api('/settings').then(d => setSettings(d.data || {})).catch(() => {}); }, []);
+
+  // Red dot on the System pill when an update is available (matches the banner).
+  useEffect(() => {
+    fetch('/api/system/update-available')
+      .then(r => r.json())
+      .then(d => setUpdateAvail(!!d.available))
+      .catch(() => {});
+  }, []);
+
+  // Deep-link from the update-notifier banner: /?settingsTab=system.
+  useEffect(() => {
+    const st = new URLSearchParams(window.location.search).get('settingsTab');
+    if (st && ['general', 'notifications', 'integrations', 'security', 'system'].includes(st)) {
+      setSubTab(st as SettingsSubTab);
+    }
+  }, []);
 
   const save = useCallback(async (key: string, value: string) => {
     await api('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
@@ -1351,7 +1420,7 @@ function SettingsTab() {
       {/* Sub-tab pill bar */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {TABS.map(t => (
-          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} />
+          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
         ))}
       </div>
 
@@ -1371,6 +1440,7 @@ function SettingsTab() {
               <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
               <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
             </div>
+            <AboutCard titleStyle={sectionTitle} />
           </div>
         )}
 
@@ -1457,6 +1527,7 @@ const SIDEBAR_ITEMS: { id: Tab; label: string }[] = [
 export default function DDIVaultApp() {
   const [tab, setTab] = useState<Tab>('dashboard');
   const [collectorOnline, setCollectorOnline] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
   const [anomalyType, setAnomalyType] = useState('');
@@ -1476,10 +1547,19 @@ export default function DDIVaultApp() {
   }, [visibleItems, tab]);
 
   useEffect(() => {
-    const check = () => fetch('/api/health').then(r => setCollectorOnline(r.ok)).catch(() => setCollectorOnline(false));
+    const check = () => fetch('/api/health').then(async r => {
+      setCollectorOnline(r.ok);
+      if (r.ok) { try { const j = await r.json(); setAppVersion(j.version || null); } catch { /* ignore */ } }
+    }).catch(() => setCollectorOnline(false));
     check();
     const t = setInterval(check, 30000);
     return () => clearInterval(t);
+  }, []);
+
+  // Deep-link from the update-notifier banner: /?tab=settings opens that tab.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t) setTab(t as Tab);
   }, []);
 
   // Global keyboard shortcut: "R" refreshes the current tab (broadcast event)
@@ -1577,7 +1657,7 @@ export default function DDIVaultApp() {
             {!collapsed && <span>Collapse</span>}
           </button>
 
-          {!collapsed && <div style={{ padding: '6px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>DDIVault v1.0</div>}
+          {!collapsed && <div style={{ padding: '6px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>DDIVault{appVersion ? ` v${appVersion}` : ''}</div>}
         </nav>
 
         {/* Content area */}

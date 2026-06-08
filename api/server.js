@@ -16,6 +16,11 @@ const { Pool } = require('pg');
 const { execSync } = require('child_process');
 const path = require('path');
 
+// App version — single source of truth is the root package.json.
+const { version } = require('../package.json');
+// Raw GitHub base for remote version/changelog checks (no auth, public repo).
+const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
+
 // ── Crash resilience ─────────────────────────────────────────
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err.message, err.stack);
@@ -106,7 +111,10 @@ async function enforceLicense(req, res, next) {
   }
 
   // Block all access when fully disabled (health + license-status always allowed)
-  if (state.disabled && !req.path.startsWith('/api/health') && !req.path.startsWith('/api/license-status')) {
+  if (state.disabled
+      && !req.path.startsWith('/api/health')
+      && !req.path.startsWith('/api/license-status')
+      && !req.path.startsWith('/api/system/update-available')) {
     return res.status(402).json({
       error: 'DDIVault license has expired. Please renew your NocVault license.',
       license_status: license?.status,
@@ -140,7 +148,7 @@ app.use(enforceLicense);
 app.get('/api/health', async (req, res) => {
   try {
     const result = await db.query('SELECT NOW() as ts');
-    res.json({ status: 'ok', db: 'connected', time: result.rows[0].ts, version: '1.0.0' });
+    res.json({ status: 'ok', db: 'connected', time: result.rows[0].ts, version });
   } catch (err) {
     res.status(500).json({ status: 'error', db: 'disconnected' });
   }
@@ -150,28 +158,95 @@ app.get('/api/health', async (req, res) => {
 // SYSTEM scheduled task is mandatory: spawning the updater directly from this
 // Node process would kill it when NSSM stops the service mid-update. The task
 // scheduler runs independently and survives the service restart.
+// Semver compare: is `remote` newer than `local` ("1.2.0" style strings)?
+function isNewer(remote, local) {
+  const [rM, rm, rp] = String(remote).split('.').map(Number);
+  const [lM, lm, lp] = String(local).split('.').map(Number);
+  if (rM !== lM) return rM > lM;
+  if (rm !== lm) return rm > lm;
+  return rp > lp;
+}
+
+// Pull the latest version's section out of CHANGELOG.md — everything from the
+// first "## " header up to the next one. HTML comments (the release-process
+// block, which itself contains indented "## v..." example lines) are stripped
+// first so they cannot be mistaken for the first real section header.
+function extractLatestChangelog(md) {
+  const clean = String(md).replace(/<!--[\s\S]*?-->/g, '');
+  const header = clean.match(/^##\s+.*$/m);
+  if (!header) return { changelog: '', release_date: null };
+  const start = header.index;
+  const afterHeader = start + header[0].length;
+  const nextRel = clean.slice(afterHeader).search(/^##\s+/m);
+  const end = nextRel === -1 ? clean.length : afterHeader + nextRel;
+  const section = clean.slice(start, end).trim();
+  const date = header[0].match(/(\d{4}-\d{2}-\d{2})/);
+  return { changelog: section, release_date: date ? date[1] : null };
+}
+
+// Compares the local package.json version against the version published on
+// GitHub's main branch. Never 500s the Settings page — a fetch failure degrades
+// to "up to date" with an error string.
 app.get('/api/system/update-status', async (_req, res) => {
-  const repoRoot = path.join(__dirname, '..');
-  const git = (cmd) => execSync(cmd, { cwd: repoRoot, encoding: 'utf8', timeout: 30000 }).trim();
+  const local = version;
   try {
-    git('git fetch origin main');
-    const current = git('git rev-parse HEAD').slice(0, 7);
-    const latest  = git('git rev-parse origin/main').slice(0, 7);
-    const behind  = parseInt(git('git rev-list HEAD..origin/main --count'), 10) || 0;
-    const log     = git('git log HEAD..origin/main --pretty=format:"%h %s"');
-    const changes = log ? log.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+    const [pkgRes, clRes] = await Promise.all([
+      fetch(`${GH_RAW}/package.json`, { cache: 'no-store' }),
+      fetch(`${GH_RAW}/CHANGELOG.md`, { cache: 'no-store' }),
+    ]);
+    const remotePkg = await pkgRes.json();
+    const remote = remotePkg.version;
+
+    let changelog = '';
+    let release_date = null;
+    try {
+      const parsed = extractLatestChangelog(await clRes.text());
+      changelog = parsed.changelog;
+      release_date = parsed.release_date;
+    } catch (_e) { /* changelog is best-effort */ }
+
+    const updateAvail = isNewer(remote, local);
     res.json({
-      current_version: current,
-      latest_version: latest,
-      commits_behind: behind,
-      up_to_date: behind === 0,
-      changes,
+      current_version: local,
+      latest_version: remote,
+      up_to_date: !updateAvail,
+      update_available: updateAvail,
+      changelog,
+      release_date,
     });
   } catch (e) {
-    console.error('[update-status] git check failed:', e.message);
-    res.json({ error: 'Could not check for updates', up_to_date: true });
+    console.error('[update-status] version check failed:', e.message);
+    res.json({ up_to_date: true, error: 'Could not check for updates' });
   }
 });
+
+// Background update check: cached so the notifier banner can poll cheaply
+// without each page hitting GitHub. Refreshed on startup + every 24h.
+let updateAvailable = null; // { current, latest } when an update exists, else null
+
+async function checkForUpdates() {
+  try {
+    const res = await fetch(`${GH_RAW}/package.json`, { cache: 'no-store' });
+    const remote = await res.json();
+    updateAvailable = isNewer(remote.version, version)
+      ? { current: version, latest: remote.version }
+      : null;
+  } catch {
+    // never block on network failure — keep the last known state
+  }
+}
+
+// Cached update availability for the notifier banner (no auth required).
+app.get('/api/system/update-available', (_req, res) => {
+  if (updateAvailable) {
+    res.json({ available: true, current: updateAvailable.current, latest: updateAvailable.latest });
+  } else {
+    res.json({ available: false });
+  }
+});
+
+checkForUpdates();
+setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
 
 app.post('/api/system/update', async (_req, res) => {
   // Check license before allowing update
