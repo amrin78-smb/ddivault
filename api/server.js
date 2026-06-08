@@ -211,6 +211,7 @@ app.get('/api/system/update-status', async (_req, res) => {
     } catch (_e) { /* changelog is best-effort */ }
 
     const updateAvail = isNewer(remote, local);
+    console.log('[UpdateStatus] local:', local, 'remote:', remote, 'newer:', updateAvail);
     res.json({
       current_version: local,
       latest_version: remote,
