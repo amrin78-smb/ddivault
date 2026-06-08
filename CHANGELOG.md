@@ -14,6 +14,19 @@ RELEASE PROCESS:
 
 # DDIVault Changelog
 
+
+## v1.0.1 — 2026-06-08
+### What's New
+- License check required before system updates
+- CORS fix for NetVault hub requests through backend proxy
+- Settings page reorganized into tabbed layout
+- Health score alerts now include breakdown explanation
+- DNS forwarder health fixed — all 4 forwarders showing correctly
+- IDCDC01 correctly detected as PRIMARY DNS server
+- Parallel DNS server polling — no longer blocks on slow servers
+- After-hours anomaly detection fixed for Bangkok timezone (UTC+7)
+- DHCP scope total now excludes reservations (true dynamic pool)
+- Self-updating from web UI via Windows Task Scheduler
 ## v1.0.0 â€” 2026-06-08
 ### Initial Release
 - DNS, DHCP & IPAM monitoring across multiple servers
@@ -30,3 +43,4 @@ RELEASE PROCESS:
 - Audit trail, reports (6 types PDF/CSV), REST API v1
 - Email alerting with SMTP, cooldown, and HMAC acknowledge links
 - Self-updating from web UI via Windows Task Scheduler
+
