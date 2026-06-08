@@ -156,7 +156,12 @@ if (Test-Path $psql) {
     foreach ($schema in $schemas) {
         $schemaPath = "$AppDir\scripts\$schema"
         if (Test-Path $schemaPath) {
-            & $psql -U $dbUser -d $dbName -f $schemaPath >> "$LogDir\schema-migration.log" 2>&1
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $output = & $psql -U $dbUser -d $dbName -f $schemaPath 2>&1
+            $ErrorActionPreference = $prev
+            $output | Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
+                Out-File -FilePath "$LogDir\schema-migration.log" -Append
             Write-OK "Applied $schema"
         }
     }
