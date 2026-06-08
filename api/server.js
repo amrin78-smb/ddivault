@@ -158,14 +158,6 @@ app.get('/api/health', async (req, res) => {
 // SYSTEM scheduled task is mandatory: spawning the updater directly from this
 // Node process would kill it when NSSM stops the service mid-update. The task
 // scheduler runs independently and survives the service restart.
-// Semver compare: is `remote` newer than `local` ("1.2.0" style strings)?
-function isNewer(remote, local) {
-  const [rM, rm, rp] = String(remote).split('.').map(Number);
-  const [lM, lm, lp] = String(local).split('.').map(Number);
-  if (rM !== lM) return rM > lM;
-  if (rm !== lm) return rm > lm;
-  return rp > lp;
-}
 
 // Pull the latest version's section out of CHANGELOG.md — everything from the
 // first "## " header up to the next one. HTML comments (the release-process
@@ -184,23 +176,44 @@ function extractLatestChangelog(md) {
   return { changelog: section, release_date: date ? date[1] : null };
 }
 
-// Compares the local package.json version against the version published on
-// GitHub's main branch. Never 500s the Settings page — a fetch failure degrades
-// to "up to date" with an error string.
+// Short (7-char) hash of the local HEAD commit in the app root, or null if git
+// is unavailable. The repo root is one level up from this api/ directory.
+const APP_ROOT = path.join(__dirname, '..');
+function localCommitHash() {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: APP_ROOT })
+      .toString().trim().slice(0, 7);
+  } catch {
+    return null;
+  }
+}
+
+// Compares the local HEAD commit against the latest commit on GitHub's main
+// branch. Any new commit — even one without a version bump — counts as an
+// update available, so pushes that ship fixes without bumping package.json are
+// never missed. Never 500s the Settings page — a fetch failure degrades to
+// "up to date" with an error string.
 app.get('/api/system/update-status', async (_req, res) => {
-  const local = version;
+  const localVersion = version;
+  const localHash = localCommitHash();
   try {
     // Cache-bust: raw.githubusercontent.com is fronted by a CDN that edge-caches
     // files for ~5min regardless of request headers (`cache: 'no-store'` only
     // touches the local HTTP cache). A unique query param forces a fresh origin
     // fetch on every call so a just-pushed version is reflected immediately.
-    const bust = `?t=${Date.now()}`;
-    const [pkgRes, clRes] = await Promise.all([
-      fetch(`${GH_RAW}/package.json${bust}`, { cache: 'no-store' }),
-      fetch(`${GH_RAW}/CHANGELOG.md${bust}`, { cache: 'no-store' }),
+    const bust = Date.now();
+    const [commitRes, pkgRes, clRes] = await Promise.all([
+      fetch('https://api.github.com/repos/amrin78-smb/ddivault/commits/main', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' },
+        cache: 'no-store',
+      }),
+      fetch(`${GH_RAW}/package.json?cb=${bust}`, { cache: 'no-store' }),
+      fetch(`${GH_RAW}/CHANGELOG.md?cb=${bust}`, { cache: 'no-store' }),
     ]);
+    const commit = await commitRes.json();
+    const remoteHash = commit && commit.sha ? String(commit.sha).slice(0, 7) : null;
     const remotePkg = await pkgRes.json();
-    const remote = remotePkg.version;
+    const remoteVersion = remotePkg.version;
 
     let changelog = '';
     let release_date = null;
@@ -210,11 +223,15 @@ app.get('/api/system/update-status', async (_req, res) => {
       release_date = parsed.release_date;
     } catch (_e) { /* changelog is best-effort */ }
 
-    const updateAvail = isNewer(remote, local);
-    console.log('[UpdateStatus] local:', local, 'remote:', remote, 'newer:', updateAvail);
+    // Any new commit = update available. If either hash is unavailable, degrade
+    // to "up to date" so we never show a false update-available state.
+    const updateAvail = !!remoteHash && !!localHash && remoteHash !== localHash;
+    console.log('[UpdateStatus] local:', localVersion, localHash, 'remote:', remoteVersion, remoteHash, 'update:', updateAvail);
     res.json({
-      current_version: local,
-      latest_version: remote,
+      current_version: localVersion,
+      latest_version: remoteVersion,
+      current_commit: localHash,
+      latest_commit: remoteHash,
       up_to_date: !updateAvail,
       update_available: updateAvail,
       changelog,
@@ -232,10 +249,21 @@ let updateAvailable = null; // { current, latest } when an update exists, else n
 
 async function checkForUpdates() {
   try {
-    const res = await fetch(`${GH_RAW}/package.json?t=${Date.now()}`, { cache: 'no-store' });
-    const remote = await res.json();
-    updateAvailable = isNewer(remote.version, version)
-      ? { current: version, latest: remote.version }
+    const localHash = localCommitHash();
+    const [commitRes, pkgRes] = await Promise.all([
+      fetch('https://api.github.com/repos/amrin78-smb/ddivault/commits/main', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' },
+        cache: 'no-store',
+      }),
+      fetch(`${GH_RAW}/package.json?cb=${Date.now()}`, { cache: 'no-store' }),
+    ]);
+    const commit = await commitRes.json();
+    const remoteHash = commit && commit.sha ? String(commit.sha).slice(0, 7) : null;
+    const remotePkg = await pkgRes.json();
+    const remoteVersion = remotePkg.version;
+
+    updateAvailable = (localHash && remoteHash && remoteHash !== localHash)
+      ? { current: version, latest: remoteVersion }
       : null;
   } catch {
     // never block on network failure — keep the last known state

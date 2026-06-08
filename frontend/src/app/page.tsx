@@ -951,6 +951,8 @@ function EventsTab() {
 type UpdateStatus = {
   current_version?: string;
   latest_version?: string;
+  current_commit?: string;
+  latest_commit?: string;
   up_to_date?: boolean;
   update_available?: boolean;
   changelog?: string;
@@ -1154,8 +1156,19 @@ function SystemUpdates() {
       ) : updatesAvailable ? (
         <div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>
-            🔄 Update available: v{status?.current_version} → v{status?.latest_version}
+            {status?.current_version === status?.latest_version
+              ? <>🔄 Patches available since v{status?.current_version}</>
+              : <>🔄 Update available: v{status?.current_version} → v{status?.latest_version}</>}
           </div>
+          {(status?.current_commit || status?.latest_commit) && (
+            <div style={{ ...MUTED, fontSize: 13, margin: '6px 0 0' }}>
+              Current: v{status?.current_version}
+              {status?.current_commit && <> (<code>{status.current_commit}</code>)</>}
+              {'  →  '}
+              Latest: v{status?.latest_version}
+              {status?.latest_commit && <> (<code>{status.latest_commit}</code>)</>}
+            </div>
+          )}
           {changelogBody(status?.changelog) && (
             <div style={{ margin: '12px 0' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
