@@ -15,6 +15,10 @@ RELEASE PROCESS:
 # DDIVault Changelog
 
 
+
+## v1.0.2 — 2026-06-08
+### What's New
+- Test release to verify update detection
 ## v1.0.1 — 2026-06-08
 ### What's New
 - License check required before system updates
@@ -43,4 +47,5 @@ RELEASE PROCESS:
 - Audit trail, reports (6 types PDF/CSV), REST API v1
 - Email alerting with SMTP, cooldown, and HMAC acknowledge links
 - Self-updating from web UI via Windows Task Scheduler
+
 
