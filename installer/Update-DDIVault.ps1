@@ -99,13 +99,13 @@ if (Test-Path $frontendEnvPath) {
 # STEP 3 - Pull latest
 Write-Step "Pulling latest from GitHub..."
 Set-Location $AppDir
-git fetch origin 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$null = git fetch origin --quiet 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; exit 1 }
 
-git reset --hard origin/main 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$null = git reset --hard origin/main 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; exit 1 }
 
-git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+$null = git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1
 
 $commitHash = git rev-parse --short HEAD
 $commitMsg  = git log -1 --pretty=format:"%s"
