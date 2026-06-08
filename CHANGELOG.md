@@ -16,6 +16,10 @@ RELEASE PROCESS:
 
 
 
+
+## v1.0.3 — 2026-06-08
+### What's New
+- Fix: update installer git fetch stderr suppression
 ## v1.0.2 — 2026-06-08
 ### What's New
 - Test release to verify update detection
@@ -47,5 +51,6 @@ RELEASE PROCESS:
 - Audit trail, reports (6 types PDF/CSV), REST API v1
 - Email alerting with SMTP, cooldown, and HMAC acknowledge links
 - Self-updating from web UI via Windows Task Scheduler
+
 
 
