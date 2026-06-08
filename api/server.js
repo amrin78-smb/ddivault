@@ -174,6 +174,33 @@ app.get('/api/system/update-status', async (_req, res) => {
 });
 
 app.post('/api/system/update', async (_req, res) => {
+  // Check license before allowing update
+  const license = await getLicense();
+  const licenseState = getLicenseState(license);
+
+  if (licenseState.disabled) {
+    return res.status(402).json({
+      error: 'License expired — updates disabled. Please renew your NocVault license.',
+      license_status: license?.status
+    });
+  }
+
+  if (!license) {
+    return res.status(402).json({
+      error: 'Cannot verify license — updates disabled. Ensure NetVault hub is reachable.',
+      license_status: 'unreachable'
+    });
+  }
+
+  // Only allow update for active, trial, or grace period licenses
+  const allowedStates = ['active', 'trial', 'grace'];
+  if (!allowedStates.includes(licenseState.mode)) {
+    return res.status(402).json({
+      error: `License status "${licenseState.mode}" — updates not permitted.`,
+      license_status: license?.status
+    });
+  }
+
   const serverIp = process.env.SERVER_IP || '';
   if (!serverIp) {
     return res.status(400).json({ error: 'SERVER_IP not configured in .env.local' });

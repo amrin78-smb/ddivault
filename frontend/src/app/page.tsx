@@ -1064,6 +1064,7 @@ function SystemUpdates() {
   const [confirming, setConfirming] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateErr, setUpdateErr] = useState<string | null>(null);
+  const [licenseBlocked, setLicenseBlocked] = useState<string | null>(null);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -1083,6 +1084,7 @@ function SystemUpdates() {
   const startUpdate = useCallback(async () => {
     setConfirming(false);
     setUpdateErr(null);
+    setLicenseBlocked(null);
     try {
       // The API returns { started: true } BEFORE services stop (the installer
       // waits 5s first), so a clean response is expected on success. Only show
@@ -1090,7 +1092,21 @@ function SystemUpdates() {
       // the overlay would hang forever on a failure such as SERVER_IP not being
       // configured (HTTP 400), a service account that cannot create a SYSTEM
       // task (HTTP 500), or a read-only license (HTTP 402).
-      const r = await api('/system/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const res = await fetch('/api/system/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const r = await res.json().catch(() => ({}));
+      // 402 Payment Required → license expired/unverifiable, updates disabled.
+      if (res.status === 402) {
+        setLicenseBlocked(r?.error || 'License expired — updates disabled. Please renew your NocVault license.');
+        return;
+      }
+      if (!res.ok) {
+        setUpdateErr(r?.error || `HTTP ${res.status}`);
+        return;
+      }
       if (r && r.started) {
         setUpdating(true);
       } else {
@@ -1100,6 +1116,8 @@ function SystemUpdates() {
       setUpdateErr(e?.message || 'Failed to start update.');
     }
   }, []);
+
+  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
   const hasError = !!(status?.error) || !!checkErr;
   const errText = status?.error || checkErr;
@@ -1143,6 +1161,14 @@ function SystemUpdates() {
             <button className="btn btn-primary" onClick={() => setConfirming(true)}>Update Now</button>
             <button className="btn" onClick={check}>Re-check</button>
           </div>
+          {licenseBlocked && (
+            <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>
+              ⚠ {licenseBlocked}{' '}
+              <a href={`${hubUrl}/settings/license`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'underline' }}>
+                NetVault Hub →
+              </a>
+            </div>
+          )}
           {updateErr && <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>⚠ {updateErr}</div>}
         </div>
       ) : (
