@@ -43,6 +43,7 @@ const nextConfig = {
       { source: '/api/site-health/:path*',     destination: 'http://127.0.0.1:3007/api/site-health/:path*' },
       { source: '/api/site-health',            destination: 'http://127.0.0.1:3007/api/site-health' },
       { source: '/api/license-status',         destination: 'http://127.0.0.1:3007/api/license-status' },
+      { source: '/api/hub/:path*',             destination: 'http://127.0.0.1:3007/api/hub/:path*' },
       { source: '/api/system/:path*',          destination: 'http://127.0.0.1:3007/api/system/:path*' },
     ];
   },

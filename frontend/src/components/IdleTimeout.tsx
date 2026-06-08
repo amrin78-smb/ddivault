@@ -126,7 +126,7 @@ export function IdleTimeout() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${HUB_URL}/api/settings`);
+        const res = await fetch('/api/hub/settings');
         if (!res.ok) return;
         const settings = await res.json();
         const raw = settings?.['idle_timeout_minutes'];

@@ -122,6 +122,18 @@ app.get('/api/license-status', async (req, res) => {
   res.json({ license, state });
 });
 
+// ── NocVault hub proxy (avoids browser CORS to the hub) ───────
+app.get('/api/hub/settings', async (_req, res) => {
+  const hub = (process.env.NOCVAULT_HUB_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  try {
+    const r = await fetch(`${hub}/api/settings`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) return res.status(502).json({ error: `Hub returned ${r.status}` });
+    res.json(await r.json());
+  } catch (e) {
+    res.status(502).json({ error: e && e.message ? e.message : 'Hub unreachable' });
+  }
+});
+
 app.use(enforceLicense);
 
 // ── Health ────────────────────────────────────────────────────
