@@ -1,10 +1,23 @@
 'use client';
-import Image from 'next/image';
 import GlobalSearch from './GlobalSearch';
 import { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
 import { useRBAC } from '@/components/RBACContext';
+
+function DDIVaultLogo({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 46" className={className}>
+      <circle cx="19" cy="22" r="15" fill="none" stroke="#d97706" strokeWidth="2"/>
+      <ellipse cx="19" cy="22" rx="7" ry="15" fill="none" stroke="#d97706" strokeWidth="1.5"/>
+      <line x1="4" y1="22" x2="34" y2="22" stroke="#d97706" strokeWidth="1.5"/>
+      <text x="50" y="30" fontSize="26" fontWeight="700" letterSpacing="-0.3" fontFamily="'Rubik','Helvetica Neue',Helvetica,Arial,sans-serif">
+        <tspan fill="#ffffff">DDI</tspan>
+        <tspan fill="#d97706">Vault</tspan>
+      </text>
+    </svg>
+  );
+}
 
 interface HeaderProps {
   onNavigate?: (tab: any) => void;
@@ -84,14 +97,7 @@ export function Header(props: HeaderProps) {
 
       {/* Logo */}
       <div style={{ display: 'flex', alignItems: 'center', height: '100%', padding: '8px 0' }}>
-        <Image
-          src="/logo.png"
-          alt="DDIVault"
-          width={260}
-          height={56}
-          style={{ objectFit: 'contain', objectPosition: 'left center' }}
-          priority
-        />
+        <DDIVaultLogo className="ddivault-logo" />
       </div>
 
       {/* Divider */}

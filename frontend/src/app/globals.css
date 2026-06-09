@@ -2,6 +2,12 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
+.ddivault-logo {
+  height: 44px;
+  width: auto;
+  display: block;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
