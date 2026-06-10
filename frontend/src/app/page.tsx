@@ -977,6 +977,10 @@ function changelogBody(md?: string): string {
 }
 
 const UPDATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+// After the API is confirmed stably back up, wait this long before reloading so
+// the Next.js frontend (which starts AFTER the API) has time to finish booting —
+// otherwise the reload lands on "page cannot be reached" for 20-30 seconds.
+const RELOAD_COUNTDOWN_SECONDS = 15;
 
 function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   return (
@@ -995,15 +999,24 @@ function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onC
   );
 }
 
+// Full-screen overlay shown during an update; polls /api/health for recovery.
+// State machine: 'starting' → 'down' → 'back_up'. A healthy response only counts
+// as recovery once the API has actually been seen down first, so we never declare
+// "complete" against the still-running pre-restart service.
 function UpdatingOverlay() {
   const [phase, setPhase] = useState<'starting' | 'down' | 'back_up' | 'timeout'>('starting');
+  const [countdown, setCountdown] = useState(RELOAD_COUNTDOWN_SECONDS);
   const wentDown = useRef(false);
+  const consecutiveUp = useRef(0);
+
+  // Navigate to the dashboard with a success banner. Used by both the countdown
+  // and the "Reload Now" button (which skips the remaining countdown).
+  const reloadToDashboard = () => { window.location.href = '/?updated=true'; };
 
   useEffect(() => {
     let active = true;
     const startedAt = Date.now();
     let pollId: ReturnType<typeof setInterval> | null = null;
-    let reloadId: ReturnType<typeof setTimeout> | null = null;
 
     const stopPolling = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
 
@@ -1014,12 +1027,15 @@ function UpdatingOverlay() {
         if (active) setPhase('timeout');
         return;
       }
+      // Per-poll timeout via AbortController so a hung connection during the
+      // restart still resolves as "down" within the polling cadence. Kept under
+      // the 2s poll interval so probes don't pile up.
       const ctrl = new AbortController();
       const abortId = setTimeout(() => ctrl.abort(), 1800);
       let ok = false;
       try {
         const res = await fetch('/api/health', { cache: 'no-store', signal: ctrl.signal });
-        ok = res.ok;
+        ok = res.ok; // non-200 counts as down
       } catch {
         ok = false;
       } finally {
@@ -1027,15 +1043,29 @@ function UpdatingOverlay() {
       }
       if (!active) return;
       if (!ok) {
+        // API is down (restarting). Reset the consecutive-success counter: during
+        // startup the API can answer one probe then drop again, so any failure
+        // restarts the stability window.
+        consecutiveUp.current = 0;
         wentDown.current = true;
         setPhase('down');
         return;
       }
+      // Healthy response. Only a recovery if we previously saw it go down.
       if (wentDown.current) {
-        setPhase('back_up');
-        stopPolling();
-        reloadId = setTimeout(() => { window.location.href = '/?updated=true'; }, 2000);
+        // Require 3 consecutive healthy probes (≈6s at the 2s cadence) before
+        // declaring the API stably back up. A single success after going down
+        // isn't enough — services may respond once then briefly drop again
+        // mid-startup, which would trigger a premature reload.
+        consecutiveUp.current += 1;
+        if (consecutiveUp.current >= 3) {
+          setPhase('back_up');
+          stopPolling();
+          // The reload itself is driven by the countdown effect below — the API
+          // is up, but Next.js needs a little longer before it can serve pages.
+        }
       }
+      // else: still the pre-restart API — keep waiting for it to go down.
     };
 
     pollId = setInterval(tick, 2000);
@@ -1044,13 +1074,21 @@ function UpdatingOverlay() {
     return () => {
       active = false;
       stopPolling();
-      if (reloadId !== null) clearTimeout(reloadId);
     };
   }, []);
 
+  // Once the API is confirmed stably back up, count down (15…14…13…) before
+  // reloading so the Next.js frontend has time to finish starting after the API.
+  useEffect(() => {
+    if (phase !== 'back_up') return;
+    if (countdown <= 0) { reloadToDashboard(); return; }
+    const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [phase, countdown]);
+
   let statusLine = 'Starting update…';
   if (phase === 'down') statusLine = 'Services restarting… ⟳';
-  else if (phase === 'back_up') statusLine = '✓ Update complete! Redirecting…';
+  else if (phase === 'back_up') statusLine = `✓ Services are back online. Reloading in ${countdown} second${countdown === 1 ? '' : 's'}…`;
   else if (phase === 'timeout') statusLine = 'Update is taking longer than expected. Try refreshing the page manually.';
 
   return (
@@ -1064,8 +1102,21 @@ function UpdatingOverlay() {
         <div style={{ fontSize: 18, fontWeight: 700, marginTop: 14 }}>Updating DDIVault…</div>
         <p style={{ ...MUTED, marginTop: 6 }}>Pulling latest code and restarting services. Do not close this window.</p>
         <p style={{ fontWeight: 600, margin: '14px 0' }}>{statusLine}</p>
-        <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 30-60 seconds)</p>
-        <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={() => window.location.reload()}>Reload Now</button>
+        {phase === 'back_up' && (
+          <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1, margin: '4px 0 10px', color: 'var(--primary)' }}>
+            {countdown}
+          </div>
+        )}
+        {phase !== 'back_up' && (
+          <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 30-60 seconds)</p>
+        )}
+        <button
+          className="btn btn-primary"
+          style={{ marginTop: 10 }}
+          onClick={phase === 'back_up' ? reloadToDashboard : () => window.location.reload()}
+        >
+          Reload Now
+        </button>
       </div>
     </div>
   );
