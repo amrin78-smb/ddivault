@@ -4,6 +4,7 @@ const nextConfig = {
   async rewrites() {
     return [
       { source: '/api/health',             destination: 'http://127.0.0.1:3007/api/health' },
+      { source: '/api/stats',              destination: 'http://127.0.0.1:3007/api/stats' },
       { source: '/api/dashboard/:path*',   destination: 'http://127.0.0.1:3007/api/dashboard/:path*' },
       { source: '/api/scopes/:path*',      destination: 'http://127.0.0.1:3007/api/scopes/:path*' },
       { source: '/api/leases/:path*',      destination: 'http://127.0.0.1:3007/api/leases/:path*' },

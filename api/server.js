@@ -113,6 +113,7 @@ async function enforceLicense(req, res, next) {
   // Block all access when fully disabled (health + license-status always allowed)
   if (state.disabled
       && !req.path.startsWith('/api/health')
+      && !req.path.startsWith('/api/stats')
       && !req.path.startsWith('/api/license-status')
       && !req.path.startsWith('/api/system/update-available')) {
     return res.status(402).json({
@@ -151,6 +152,34 @@ app.get('/api/health', async (req, res) => {
     res.json({ status: 'ok', db: 'connected', time: result.rows[0].ts, version });
   } catch (err) {
     res.status(500).json({ status: 'error', db: 'disconnected' });
+  }
+});
+
+// ── Public Stats ──────────────────────────────────────────────
+// Read-only, no-auth summary counts for external dashboards (e.g. NocVault hub
+// tiles). Same public access level as /api/health: exempt from license gating
+// and CORS-open to any origin. Never 500s — on any error it returns zeros with
+// HTTP 200 so a polling consumer is never broken by a transient DB hiccup.
+//   dns_servers   = monitored DNS servers (ddi_servers, role dns/both, active)
+//   dhcp_clusters = DHCP scopes (dhcp_scopes)
+//   ip_utilized   = sum of in-use IPs across all scopes (dhcp_scopes.in_use)
+app.get('/api/stats', async (req, res) => {
+  // Permissive CORS — this endpoint is intentionally public.
+  res.set('Access-Control-Allow-Origin', '*');
+  try {
+    const [dnsServers, dhcpClusters, ipUtilized] = await Promise.all([
+      db.query("SELECT COUNT(*)::int AS n FROM ddi_servers WHERE role IN ('dns','both') AND is_active = TRUE"),
+      db.query('SELECT COUNT(*)::int AS n FROM dhcp_scopes'),
+      db.query('SELECT COALESCE(SUM(in_use), 0)::int AS n FROM dhcp_scopes'),
+    ]);
+    res.json({
+      dns_servers:   dnsServers.rows[0].n   || 0,
+      dhcp_clusters: dhcpClusters.rows[0].n || 0,
+      ip_utilized:   ipUtilized.rows[0].n   || 0,
+    });
+  } catch (err) {
+    console.error('[API] stats error:', err.message);
+    res.json({ dns_servers: 0, dhcp_clusters: 0, ip_utilized: 0 });
   }
 });
 
