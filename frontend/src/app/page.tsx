@@ -953,9 +953,11 @@ type UpdateStatus = {
   latest_version?: string;
   current_commit?: string;
   latest_commit?: string;
+  current_hash?: string;
+  latest_hash?: string;
   up_to_date?: boolean;
   update_available?: boolean;
-  changelog?: string;
+  release_notes?: string[];
   release_date?: string;
   error?: string;
 };
@@ -969,13 +971,6 @@ function fmtReleaseDate(d?: string): string {
   if (!y || !m || !day) return d;
   return `${UPDATE_MONTHS[m - 1]} ${day}, ${y}`;
 }
-// Drop the leading "## v1.1.0 — date" header from a changelog section so the box
-// shows just the body (version + date are rendered separately above it).
-function changelogBody(md?: string): string {
-  if (!md) return '';
-  return md.replace(/^##\s+.*$/m, '').trim();
-}
-
 const UPDATE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — covers slow npm install + Next.js build before services are back
 // After the API is confirmed stably back up, wait this long before reloading so
 // the Next.js frontend (which starts AFTER the API) has time to finish booting —
@@ -1220,19 +1215,24 @@ function SystemUpdates() {
               {status?.latest_commit && <> (<code>{status.latest_commit}</code>)</>}
             </div>
           )}
-          {changelogBody(status?.changelog) && (
+          {!!status?.release_notes?.length && (
             <div style={{ margin: '12px 0' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                What&apos;s new in v{status?.latest_version}:
+                What&apos;s new in v{status?.latest_version}
               </div>
-              <div style={{
-                maxHeight: 200, overflowY: 'auto',
+              <ul style={{
+                margin: 0, padding: 0, listStyle: 'none',
                 border: '1px solid var(--border)', borderRadius: 8,
-                padding: '10px 14px', background: 'var(--bg-primary)',
-                fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+                background: 'var(--bg-primary)',
+                fontSize: 13, lineHeight: 1.5,
               }}>
-                {changelogBody(status?.changelog)}
-              </div>
+                {status.release_notes.map((note, i) => (
+                  <li key={i} style={{ display: 'flex', gap: 8, padding: '6px 14px', color: 'var(--text-primary)' }}>
+                    <span style={{ color: 'var(--primary)', flexShrink: 0 }}>&bull;</span>
+                    <span>{note}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {status?.release_date && (

@@ -18,8 +18,23 @@ const path = require('path');
 
 // App version — single source of truth is the root package.json.
 const { version } = require('../package.json');
-// Raw GitHub base for remote version/changelog checks (no auth, public repo).
+// Raw GitHub base for remote version checks (no auth, public repo).
 const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
+
+// Structured release notes keyed by version. When bumping the version, add a new
+// entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
+// release notes live here and are surfaced by the update-status endpoint.
+const releaseNotes = {
+  '1.2.0': [
+    'Enterprise dashboard with health score and charts',
+    'Animated login page redesign',
+    'Server status monitoring',
+    'Automatic versioning across suite',
+  ],
+  'default': [
+    'Bug fixes and performance improvements',
+  ],
+};
 
 // ── Crash resilience ─────────────────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -188,23 +203,6 @@ app.get('/api/stats', async (req, res) => {
 // Node process would kill it when NSSM stops the service mid-update. The task
 // scheduler runs independently and survives the service restart.
 
-// Pull the latest version's section out of CHANGELOG.md — everything from the
-// first "## " header up to the next one. HTML comments (the release-process
-// block, which itself contains indented "## v..." example lines) are stripped
-// first so they cannot be mistaken for the first real section header.
-function extractLatestChangelog(md) {
-  const clean = String(md).replace(/<!--[\s\S]*?-->/g, '');
-  const header = clean.match(/^##\s+.*$/m);
-  if (!header) return { changelog: '', release_date: null };
-  const start = header.index;
-  const afterHeader = start + header[0].length;
-  const nextRel = clean.slice(afterHeader).search(/^##\s+/m);
-  const end = nextRel === -1 ? clean.length : afterHeader + nextRel;
-  const section = clean.slice(start, end).trim();
-  const date = header[0].match(/(\d{4}-\d{2}-\d{2})/);
-  return { changelog: section, release_date: date ? date[1] : null };
-}
-
 // Short (7-char) hash of the local HEAD commit in the app root, or null if git
 // is unavailable. The repo root is one level up from this api/ directory.
 const APP_ROOT = path.join(__dirname, '..');
@@ -231,26 +229,21 @@ app.get('/api/system/update-status', async (_req, res) => {
     // touches the local HTTP cache). A unique query param forces a fresh origin
     // fetch on every call so a just-pushed version is reflected immediately.
     const bust = Date.now();
-    const [commitRes, pkgRes, clRes] = await Promise.all([
+    const [commitRes, pkgRes] = await Promise.all([
       fetch('https://api.github.com/repos/amrin78-smb/ddivault/commits/main', {
         headers: { 'Accept': 'application/vnd.github.v3+json' },
         cache: 'no-store',
       }),
       fetch(`${GH_RAW}/package.json?cb=${bust}`, { cache: 'no-store' }),
-      fetch(`${GH_RAW}/CHANGELOG.md?cb=${bust}`, { cache: 'no-store' }),
     ]);
     const commit = await commitRes.json();
     const remoteHash = commit && commit.sha ? String(commit.sha).slice(0, 7) : null;
     const remotePkg = await pkgRes.json();
     const remoteVersion = remotePkg.version;
 
-    let changelog = '';
-    let release_date = null;
-    try {
-      const parsed = extractLatestChangelog(await clRes.text());
-      changelog = parsed.changelog;
-      release_date = parsed.release_date;
-    } catch (_e) { /* changelog is best-effort */ }
+    // Release notes keyed by the latest (offered) version so "What's new in
+    // v{latest}" matches its bullets. Falls back to a generic message.
+    const release_notes = releaseNotes[remoteVersion] || releaseNotes['default'];
 
     // Any new commit = update available. If either hash is unavailable, degrade
     // to "up to date" so we never show a false update-available state.
@@ -261,10 +254,12 @@ app.get('/api/system/update-status', async (_req, res) => {
       latest_version: remoteVersion,
       current_commit: localHash,
       latest_commit: remoteHash,
+      current_hash: localHash,   // alias for the requested response shape
+      latest_hash: remoteHash,   // alias
       up_to_date: !updateAvail,
       update_available: updateAvail,
-      changelog,
-      release_date,
+      release_notes,
+      release_date: new Date().toISOString().slice(0, 10),
     });
   } catch (e) {
     console.error('[update-status] version check failed:', e.message);
