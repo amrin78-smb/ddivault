@@ -976,7 +976,7 @@ function changelogBody(md?: string): string {
   return md.replace(/^##\s+.*$/m, '').trim();
 }
 
-const UPDATE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+const UPDATE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — covers slow npm install + Next.js build before services are back
 // After the API is confirmed stably back up, wait this long before reloading so
 // the Next.js frontend (which starts AFTER the API) has time to finish booting —
 // otherwise the reload lands on "page cannot be reached" for 20-30 seconds.
@@ -1108,7 +1108,7 @@ function UpdatingOverlay() {
           </div>
         )}
         {phase !== 'back_up' && (
-          <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 30-60 seconds)</p>
+          <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 1-3 minutes)</p>
         )}
         <button
           className="btn btn-primary"
