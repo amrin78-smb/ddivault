@@ -63,6 +63,11 @@ const releaseNotes = {
     'Empty scopes are no longer counted toward Critical or Warning scope KPIs',
     'Collector marks pool-less scopes as "empty" instead of trusting the Windows state',
   ],
+  '1.5.0': [
+    'Create DNS Zone now supports Forwarder (conditional forwarder) zones',
+    'New "Forward to (DNS server IPs)" field for comma-separated upstream resolvers',
+    'Forwarder zones are created via Add-DnsServerConditionalForwarderZone over WinRM',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -2485,12 +2490,21 @@ app.delete('/api/dns/records', requireWrite, async (req, res) => {
 // Add DNS zone
 app.post('/api/dns/zones', requireWrite, async (req, res) => {
   try {
-    const { server_id, zone_name, zone_type, replication_scope } = req.body;
+    const { server_id, zone_name, zone_type, replication_scope, forwarder_ips } = req.body;
     if (!server_id || !zone_name) return res.status(400).json({ error: 'server_id and zone_name required' });
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const ok = psWrite.addDnsZone(serverData.ip, zone_name, zone_type || 'Primary', replication_scope || 'Domain', serverData.auth);
+    const isForwarder = String(zone_type || '').toLowerCase() === 'forwarder';
+    let forwarderIps = [];
+    if (isForwarder) {
+      forwarderIps = String(forwarder_ips || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (forwarderIps.length === 0) return res.status(400).json({ error: 'forwarder_ips required for a forwarder zone' });
+    }
+
+    const ok = isForwarder
+      ? psWrite.addDnsForwarderZone(serverData.ip, zone_name, forwarderIps, serverData.auth)
+      : psWrite.addDnsZone(serverData.ip, zone_name, zone_type || 'Primary', replication_scope || 'Domain', serverData.auth);
     if (!ok) return res.status(500).json({ error: 'Zone creation failed — check WinRM and DNS server role' });
 
     await db.query(

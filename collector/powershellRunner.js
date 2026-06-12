@@ -420,6 +420,17 @@ function addDnsZone(serverIp, zoneName, zoneType, replicationScope, auth) {
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
+// Create a conditional forwarder zone — WRITE. forwarderIps is an array of IP strings.
+function addDnsForwarderZone(serverIp, zoneName, forwarderIps, auth) {
+  const masters = (Array.isArray(forwarderIps) ? forwarderIps : [forwarderIps])
+    .map(ip => String(ip).trim())
+    .filter(Boolean)
+    .map(ip => `'${ip}'`)
+    .join(',');
+  const script = `Add-DnsServerConditionalForwarderZone -Name '${zoneName}' -MasterServers ${masters} -ReplicationScope 'Forest' -ErrorAction Stop; Write-Output 'ok'`;
+  return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
+}
+
 function removeDnsZone(serverIp, zoneName, auth) {
   const script = `Remove-DnsServerZone -Name '${zoneName}' -Force -ErrorAction Stop; Write-Output 'ok'`;
   return !!(runPS(serverIp, script, auth, true) || '').includes('ok');
@@ -521,6 +532,7 @@ module.exports = {
   addDnsTxtRecord,
   removeDnsRecord,
   addDnsZone,
+  addDnsForwarderZone,
   removeDnsZone,
   setDnsZoneAging,
 };

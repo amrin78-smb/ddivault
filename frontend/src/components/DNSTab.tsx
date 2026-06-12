@@ -390,8 +390,8 @@ function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
 function AddZoneModal({ servers, onClose, onDone }: {
   servers: DnsServer[]; onClose: () => void; onDone: () => void;
 }) {
-  const [form, setForm] = useState<{ server_id: number | ''; zone_name: string; zone_type: string; replication_scope: string }>({
-    server_id: servers[0]?.id ?? '', zone_name: '', zone_type: 'Primary', replication_scope: 'Domain',
+  const [form, setForm] = useState<{ server_id: number | ''; zone_name: string; zone_type: string; replication_scope: string; forwarder_ips: string }>({
+    server_id: servers[0]?.id ?? '', zone_name: '', zone_type: 'Primary', replication_scope: 'Domain', forwarder_ips: '',
   });
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
@@ -399,6 +399,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
 
   const save = async () => {
     if (!form.zone_name || !form.server_id) { toast('Server and zone name required', 'error'); return; }
+    if (form.zone_type === 'Forwarder' && !form.forwarder_ips.trim()) { toast('Forwarder IP(s) required for a forwarder zone', 'error'); return; }
     setLoading(true);
     try {
       await api('/dns/zones', {
@@ -438,6 +439,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
           <select value={form.zone_type} onChange={e => setForm(p => ({ ...p, zone_type: e.target.value }))} style={INPUT}>
             <option value="Primary">Primary — authoritative zone</option>
             <option value="Secondary">Secondary — read-only replica</option>
+            <option value="Forwarder">Forwarder — conditional forwarder</option>
           </select>
         </div>
         {form.zone_type === 'Primary' && (
@@ -448,6 +450,12 @@ function AddZoneModal({ servers, onClose, onDone }: {
               <option value="Forest">Forest — all DCs in forest</option>
               <option value="Legacy">Legacy — all DNS servers in domain</option>
             </select>
+          </div>
+        )}
+        {form.zone_type === 'Forwarder' && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Forward to (DNS server IPs)</label>
+            <input value={form.forwarder_ips} onChange={e => setForm(p => ({ ...p, forwarder_ips: e.target.value }))} style={INPUT} placeholder="8.8.8.8, 8.8.4.4" />
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
