@@ -138,6 +138,12 @@ function pctNum(v: number | string): number {
   return isNaN(n) ? 0 : n;
 }
 
+// A scope with no dynamic pool (total_ips 0, or collector-marked state='empty')
+// is "empty" — not "Full". The total_ips check covers rows not yet re-polled.
+function isEmptyScope(s: Scope): boolean {
+  return (s.total_ips ?? 0) === 0 || String(s.state || '').toLowerCase() === 'empty';
+}
+
 function stateBadge(state: string): string {
   if (state === 'Active') return 'badge-green';
   if (state === 'Reservation') return 'badge-blue';
@@ -1014,8 +1020,8 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
     let warning = 0, critical = 0, totalIPs = 0, usedIPs = 0;
     scopes.forEach(s => {
       const p = pctNum(s.percent_used);
-      if (p >= 90) critical++;
-      else if (p >= 80) warning++;
+      if (p >= 90 && !isEmptyScope(s)) critical++;
+      else if (p >= 80 && !isEmptyScope(s)) warning++;
       totalIPs += s.total_ips || 0;
       usedIPs += s.in_use || 0;
     });
@@ -1382,20 +1388,24 @@ function ScopeRow({
         <td><UtilBar pct={pct} /></td>
         <td style={{
           fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-          color: !forecast || forecast.status === 'insufficient_data'
+          color: isEmptyScope(scope) || !forecast || forecast.status === 'insufficient_data'
             ? 'var(--text-secondary)'
             : forecast.status === 'stable'
               ? 'var(--green)'
               : forecastColor(forecast.days_to_full),
         }}>
-          {!forecast || forecast.status === 'insufficient_data'
+          {isEmptyScope(scope)
             ? '—'
-            : forecast.status === 'stable'
-              ? 'Stable'
-              : (forecast.days_to_full == null ? 'Healthy' : `${forecast.days_to_full}d to full`)}
+            : !forecast || forecast.status === 'insufficient_data'
+              ? '—'
+              : forecast.status === 'stable'
+                ? 'Stable'
+                : (forecast.days_to_full == null ? 'Healthy' : `${forecast.days_to_full}d to full`)}
         </td>
         <td>
-          {(scope.free ?? 0) <= 0 ? (
+          {isEmptyScope(scope) ? (
+            <span className={`badge ${stateBadge('Disabled')}`}>Empty</span>
+          ) : (scope.free ?? 0) <= 0 ? (
             <span className={`badge ${stateBadge('Full')}`}>Full</span>
           ) : canWrite ? (
             <button

@@ -57,6 +57,12 @@ const releaseNotes = {
     'Sort zones by records, name, or last updated — defaults to busiest first',
     'Prominent colored record-count badges and more compact zone rows',
   ],
+  '1.4.1': [
+    'DHCP scopes with no dynamic pool now show a gray "Empty" badge instead of red "Full"',
+    'Empty scopes display a dash for forecast — no exhaustion projection without a pool',
+    'Empty scopes are no longer counted toward Critical or Warning scope KPIs',
+    'Collector marks pool-less scopes as "empty" instead of trusting the Windows state',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -390,7 +396,7 @@ app.post('/api/system/update', async (_req, res) => {
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const [scopes, leases, zones, alerts] = await Promise.all([
-      db.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE percent_used >= 90) as critical, COUNT(*) FILTER (WHERE percent_used >= 80 AND percent_used < 90) as warning FROM dhcp_scopes'),
+      db.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE percent_used >= 90 AND total_ips > 0) as critical, COUNT(*) FILTER (WHERE percent_used >= 80 AND percent_used < 90 AND total_ips > 0) as warning FROM dhcp_scopes'),
       db.query("SELECT COUNT(*) as total FROM dhcp_leases WHERE address_state = 'Active'"),
       db.query('SELECT COUNT(*) as total FROM dns_zones'),
       db.query("SELECT COUNT(*) as total FROM alert_events WHERE acknowledged = FALSE"),

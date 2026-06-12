@@ -215,6 +215,9 @@ async function collectScopeStats(server) {
     const total    = inUse + free;
     const pct      = total > 0 ? parseFloat(((inUse / total) * 100).toFixed(2)) : 0;
     const cfg      = scopeConfig[scopeId] || {};
+    // A scope with no dynamic pool (InUse + Free = 0) is empty/unconfigured,
+    // not "Full". Force state to 'empty' rather than whatever Windows reports.
+    const scopeState = total === 0 ? 'empty' : (cfg.State || 'Active').toLowerCase();
 
     const res = await db.query(
       `INSERT INTO dhcp_scopes
@@ -233,7 +236,7 @@ async function collectScopeStats(server) {
        RETURNING id`,
       [server.id, scopeId, cfg.Name||null,
        scopeIdStr(cfg.StartRange)||null, scopeIdStr(cfg.EndRange)||null,
-       scopeIdStr(cfg.SubnetMask)||null, cfg.State||'Active',
+       scopeIdStr(cfg.SubnetMask)||null, scopeState,
        parsePsDuration(cfg.LeaseDuration),
        total, inUse, free, reserved, pending, pct, cfg.Description||null]
     );
