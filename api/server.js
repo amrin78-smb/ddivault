@@ -43,6 +43,13 @@ const releaseNotes = {
     'One-time cleanup removes existing duplicate DNS records on deploy',
     'DNS records list now shows a correct Last Updated value',
   ],
+  '1.3.0': [
+    'More accurate DHCP capacity forecasts using daily peak utilization',
+    'Anomalous days (collector outages, just-added scopes) excluded from the trend',
+    'Requires 7+ days of data before forecasting — shows a dash until then',
+    'Flat scopes now read Stable instead of an alarmist exhaustion date',
+    'Forecasts weight the most recent 14 days of growth',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

@@ -54,6 +54,7 @@ interface ScopeForecast {
   scope_cidr?: string;
   days_to_full?: number | null;
   days_to_80pct?: number | null;
+  status?: 'ok' | 'stable' | 'insufficient_data';
 }
 
 interface ServerOption {
@@ -1379,10 +1380,19 @@ function ScopeRow({
           {(scope.free ?? 0).toLocaleString()}
         </td>
         <td><UtilBar pct={pct} /></td>
-        <td style={{ fontSize: 12, fontWeight: 600, color: forecastColor(forecast?.days_to_full), whiteSpace: 'nowrap' }}>
-          {forecast
-            ? (forecast.days_to_full == null ? 'Healthy' : `${forecast.days_to_full}d to full`)
-            : '—'}
+        <td style={{
+          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+          color: !forecast || forecast.status === 'insufficient_data'
+            ? 'var(--text-secondary)'
+            : forecast.status === 'stable'
+              ? 'var(--green)'
+              : forecastColor(forecast.days_to_full),
+        }}>
+          {!forecast || forecast.status === 'insufficient_data'
+            ? '—'
+            : forecast.status === 'stable'
+              ? 'Stable'
+              : (forecast.days_to_full == null ? 'Healthy' : `${forecast.days_to_full}d to full`)}
         </td>
         <td>
           {(scope.free ?? 0) <= 0 ? (

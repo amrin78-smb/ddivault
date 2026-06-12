@@ -1,14 +1,24 @@
 // forecastEngine.js — DDIVault capacity planning via linear regression.
 //
-// Pure local computation: pulls DHCP scope utilization history, fits a
-// least-squares line of in_use leases over time (days), and projects when
-// each scope will cross 80% / 90% / 100% utilization. Results are upserted
-// into scope_forecasts and (optionally) raise scope_exhaustion_forecast
-// alerts with email dispatch.
+// Pure local computation: pulls DHCP scope utilization history, aggregates to
+// daily peaks, filters out anomalous/ramp-up days, fits a least-squares line of
+// in_use leases over time (days), and projects when each scope will cross
+// 80% / 90% / 100% utilization. Results are upserted into scope_forecasts and
+// (optionally) raise scope_exhaustion_forecast alerts with email dispatch.
+//
+// Each forecast is classified by `status`:
+//   'ok'                — growing; days_to_* are projected
+//   'stable'            — growth below ~0.5 leases/day; not alarmist, days null
+//   'insufficient_data' — fewer than 7 usable peak-days; days null
 //
 // NOTE: There is no per-subnet history table, so IPAM subnet forecasting is
 // intentionally not implemented here. If a subnet history table is added
 // later, mirror the runForecasts logic against it.
+
+const MIN_PEAK_DAYS = 7;        // minimum days of peak data for a forecast
+const MAX_PEAK_DAYS = 14;       // only the most recent N peak-days are relevant
+const ANOMALY_FLOOR_PCT = 0.2;  // drop days whose peak < 20% of the median peak
+const STABLE_SLOPE = 0.5;       // leases/day below which a scope is "stable"
 
 function log(m) {
   console.log('[' + new Date().toISOString() + '] ' + m);
@@ -70,14 +80,60 @@ async function runForecasts(db) {
 
   for (const scope of scopes) {
     try {
-      const dbId = scope.id;            // dhcp_scopes.id (FK target for history)
+      const dbId = scope.id;             // dhcp_scopes.id (FK target for history)
       const scopeTextId = scope.scope_id; // textual scope id (e.g. "10.0.0.0")
       const name = scope.name;
       const total = Number(scope.total_ips);
 
-      // 1. Fetch last 30 days of history.
+      if (!(total > 0)) {
+        continue; // cannot compute a percentage
+      }
+
+      // Shared upsert — handles all three statuses through one code path.
+      const upsertForecast = (f) =>
+        db.query(
+          `INSERT INTO scope_forecasts
+             (scope_id, calculated_at, current_pct, growth_rate_per_day,
+              days_to_80pct, days_to_90pct, days_to_full, confidence,
+              recommendation, data_points, status)
+           VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (scope_id) DO UPDATE SET
+             calculated_at      = NOW(),
+             current_pct        = EXCLUDED.current_pct,
+             growth_rate_per_day= EXCLUDED.growth_rate_per_day,
+             days_to_80pct      = EXCLUDED.days_to_80pct,
+             days_to_90pct      = EXCLUDED.days_to_90pct,
+             days_to_full       = EXCLUDED.days_to_full,
+             confidence         = EXCLUDED.confidence,
+             recommendation     = EXCLUDED.recommendation,
+             data_points        = EXCLUDED.data_points,
+             status             = EXCLUDED.status`,
+          [
+            dbId, f.currentPct, f.growthRate, f.daysTo80, f.daysTo90,
+            f.daysToFull, f.confidence, f.recommendation, f.dataPoints, f.status,
+          ]
+        );
+
+      const currentPctOf = (val) =>
+        Math.round((Number(val) / total) * 100 * 100) / 100;
+
+      const insufficient = async (dataPoints) => {
+        await upsertForecast({
+          currentPct: currentPctOf(scope.in_use),
+          growthRate: 0,
+          daysTo80: null, daysTo90: null, daysToFull: null,
+          confidence: 'low',
+          recommendation: 'Insufficient data — need at least 7 days of history',
+          dataPoints,
+          status: 'insufficient_data',
+        });
+        upserted++;
+        processed++;
+      };
+
+      // 1. Fetch last 30 days of raw history (aggregated to daily peaks below).
       const hr = await db.query(
-        `SELECT in_use, EXTRACT(EPOCH FROM recorded_at) AS ts
+        `SELECT in_use, recorded_at, EXTRACT(EPOCH FROM recorded_at) AS ts
            FROM dhcp_scope_history
           WHERE scope_id = $1
             AND recorded_at > NOW() - INTERVAL '30 days'
@@ -85,31 +141,84 @@ async function runForecasts(db) {
         [dbId]
       );
       const hist = hr.rows;
-      const dataPoints = hist.length;
-      if (dataPoints < 7) {
-        continue; // not enough signal to forecast
+
+      // 2. Aggregate to one peak (max in_use) reading per calendar day. Newly
+      //    added scopes ramp up and night/off-hours readings are low; daily
+      //    peaks smooth out that noise so the regression tracks real growth.
+      const dailyPeaks = {};
+      for (const row of hist) {
+        const day = new Date(row.recorded_at).toISOString().split('T')[0];
+        if (!dailyPeaks[day] || Number(row.in_use) > Number(dailyPeaks[day].in_use)) {
+          dailyPeaks[day] = row;
+        }
+      }
+      const peakHistory = Object.values(dailyPeaks).sort(
+        (a, b) => new Date(a.recorded_at) - new Date(b.recorded_at)
+      );
+
+      // 3. Require at least 7 days of peak data for a reliable forecast.
+      if (peakHistory.length < MIN_PEAK_DAYS) {
+        await insufficient(peakHistory.length);
+        continue;
       }
 
-      // 2. Linear regression of in_use over time-in-days.
-      const ts0 = Number(hist[0].ts);
-      const xs = hist.map((h) => (Number(h.ts) - ts0) / 86400);
-      const ys = hist.map((h) => Number(h.in_use));
+      // 4. Drop anomalous days (peak < 20% of median peak) — collector outages or
+      //    a scope that was only just added show up as near-zero days and skew
+      //    the regression line.
+      const sortedPeaks = peakHistory.map((r) => Number(r.in_use)).sort((a, b) => a - b);
+      const medianPeak = sortedPeaks[Math.floor(sortedPeaks.length / 2)];
+      let filteredHistory = peakHistory.filter(
+        (r) => Number(r.in_use) >= medianPeak * ANOMALY_FLOOR_PCT
+      );
+
+      // 5. Cap at the most recent 14 peak-days — older data is less relevant.
+      filteredHistory = filteredHistory.slice(-MAX_PEAK_DAYS);
+
+      // Guard: if filtering left too few points to regress, treat as insufficient.
+      if (filteredHistory.length < MIN_PEAK_DAYS) {
+        await insufficient(filteredHistory.length);
+        continue;
+      }
+
+      // 6. Linear regression of daily-peak in_use over time-in-days.
+      const ts0 = Number(filteredHistory[0].ts);
+      const xs = filteredHistory.map((h) => (Number(h.ts) - ts0) / 86400);
+      const ys = filteredHistory.map((h) => Number(h.in_use));
       const { slope, ok } = linregSlope(xs, ys);
       if (!ok) {
-        continue; // degenerate x (e.g. all same timestamp)
+        continue; // degenerate x (e.g. all readings land on the same day)
       }
       const growthRate = slope; // leases/day
 
-      // 3. Current usage / total.
-      const latestInUse = Number(hist[hist.length - 1].in_use);
+      const dataPoints = filteredHistory.length;
+      const latestInUse = Number(filteredHistory[filteredHistory.length - 1].in_use);
       const current = Number.isFinite(latestInUse) ? latestInUse : Number(scope.in_use);
-      if (!(total > 0)) {
-        continue; // cannot compute a percentage
+      const currentPct = currentPctOf(current);
+
+      // 7. Confidence from sample size (peak-days actually used).
+      let confidence;
+      if (dataPoints >= 14) confidence = 'high';
+      else if (dataPoints >= 10) confidence = 'medium';
+      else confidence = 'low';
+
+      // 8. Below ~0.5 leases/day the scope is effectively flat — don't raise an
+      //    alarmist exhaustion forecast; report it as stable instead.
+      if (slope < STABLE_SLOPE) {
+        await upsertForecast({
+          currentPct,
+          growthRate,
+          daysTo80: null, daysTo90: null, daysToFull: null,
+          confidence,
+          recommendation: 'Stable — no significant growth',
+          dataPoints,
+          status: 'stable',
+        });
+        upserted++;
+        processed++;
+        continue;
       }
 
-      // 4. Percentages and time-to-target.
-      const currentPct = Math.round((current / total) * 100 * 100) / 100;
-
+      // 9. Percentages and time-to-target.
       // Cap forecast days so a near-zero (but positive) slope can't produce an
       // astronomical value that overflows the INTEGER columns. 9999 days ≈ 27y.
       const safeDays = (days) => {
@@ -125,15 +234,9 @@ async function runForecasts(db) {
       const daysTo90 = daysTo(0.9 * total);
       const daysToFull = daysTo(total);
 
-      // 5. Confidence from sample size.
-      let confidence;
-      if (dataPoints >= 30) confidence = 'high';
-      else if (dataPoints >= 14) confidence = 'medium';
-      else confidence = 'low';
-
-      // 6. Recommendation text.
+      // 10. Recommendation text.
       let recommendation;
-      if (slope <= 0 || daysToFull == null) {
+      if (daysToFull == null) {
         recommendation = 'Scope healthy — no action needed';
       } else if (daysToFull <= 7) {
         recommendation = 'Critical — expand scope immediately';
@@ -145,38 +248,14 @@ async function runForecasts(db) {
         recommendation = 'Scope healthy — no action needed';
       }
 
-      // 7. Upsert forecast.
-      await db.query(
-        `INSERT INTO scope_forecasts
-           (scope_id, calculated_at, current_pct, growth_rate_per_day,
-            days_to_80pct, days_to_90pct, days_to_full, confidence,
-            recommendation, data_points)
-         VALUES ($1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (scope_id) DO UPDATE SET
-           calculated_at      = NOW(),
-           current_pct        = EXCLUDED.current_pct,
-           growth_rate_per_day= EXCLUDED.growth_rate_per_day,
-           days_to_80pct      = EXCLUDED.days_to_80pct,
-           days_to_90pct      = EXCLUDED.days_to_90pct,
-           days_to_full       = EXCLUDED.days_to_full,
-           confidence         = EXCLUDED.confidence,
-           recommendation     = EXCLUDED.recommendation,
-           data_points        = EXCLUDED.data_points`,
-        [
-          dbId,
-          currentPct,
-          growthRate,
-          daysTo80,
-          daysTo90,
-          daysToFull,
-          confidence,
-          recommendation,
-          dataPoints,
-        ]
-      );
+      // 11. Upsert forecast.
+      await upsertForecast({
+        currentPct, growthRate, daysTo80, daysTo90, daysToFull,
+        confidence, recommendation, dataPoints, status: 'ok',
+      });
       upserted++;
 
-      // 8. Alert (with 24h dedup) + best-effort email dispatch.
+      // 12. Alert (with 24h dedup) + best-effort email dispatch.
       if (alertEnabled && daysToFull != null && daysToFull <= alertThreshold) {
         const message = `Scope ${scopeTextId} (${name}) forecast to exhaust in ~${daysToFull} days`;
         try {

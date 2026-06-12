@@ -472,9 +472,12 @@ CREATE TABLE IF NOT EXISTS scope_forecasts (
   days_to_full        INT,
   confidence          TEXT,
   recommendation      TEXT,
-  data_points         INT
+  data_points         INT,
+  status              TEXT DEFAULT 'ok'   -- 'ok' | 'stable' | 'insufficient_data'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_forecasts_scope ON scope_forecasts(scope_id);
+-- Forecast status classification (added later; idempotent for existing installs)
+ALTER TABLE scope_forecasts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ok';
 
 -- subnet_forecasts references ipam_subnets (created earlier in this file)
 CREATE TABLE IF NOT EXISTS subnet_forecasts (
