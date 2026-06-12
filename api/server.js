@@ -50,6 +50,13 @@ const releaseNotes = {
     'Flat scopes now read Stable instead of an alarmist exhaustion date',
     'Forecasts weight the most recent 14 days of growth',
   ],
+  '1.4.0': [
+    'DNS zone list hides noisy forwarder zones by default, with a one-click toggle',
+    'Forward and Reverse zone groups are now collapsible',
+    'New zone type filter pills (All / Primary / Secondary / Forwarder)',
+    'Sort zones by records, name, or last updated — defaults to busiest first',
+    'Prominent colored record-count badges and more compact zone rows',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

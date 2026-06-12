@@ -507,11 +507,12 @@ function ZoneRow({ zone, selected, onSelect, onDelete }: {
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
   const canWrite = rbacCanWrite && licenseState.canWrite;
+  const count = zone.record_count || 0;
   return (
     <div
       onClick={onSelect}
       style={{
-        padding: '9px 12px 9px 13px', cursor: 'pointer',
+        padding: '6px 12px 6px 13px', cursor: 'pointer',
         borderLeft: `3px solid ${selected ? 'var(--primary)' : 'transparent'}`,
         background: selected ? 'var(--primary-light)' : 'transparent',
         borderBottom: '1px solid var(--border-light)',
@@ -521,25 +522,26 @@ function ZoneRow({ zone, selected, onSelect, onDelete }: {
       onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {/* Prominent record-count badge — green when records exist, gray when empty */}
+        <span
+          className={`badge ${count > 0 ? 'badge-green' : 'badge-gray'}`}
+          style={{ fontSize: 10, fontWeight: 700, minWidth: 22, textAlign: 'center', flexShrink: 0 }}
+          title={`${count} ${count === 1 ? 'record' : 'records'}`}
+        >{count}</span>
+        <span style={{ fontWeight: 600, fontSize: 12.5, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {zone.zone_name}
         </span>
-        <span className="badge badge-blue" style={{ fontSize: 9 }}>{zone.zone_type}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{shortTime(zone.last_updated)}</span>
+        {zone.is_ds_integrated && <span className="badge badge-green" style={{ fontSize: 8, flexShrink: 0 }}>AD</span>}
         {canWrite && (
           <button
             onClick={e => { e.stopPropagation(); onDelete(); }}
             title="Delete zone"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0, lineHeight: 1 }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0, lineHeight: 1, flexShrink: 0 }}
             onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
             onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
           >×</button>
         )}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>
-        <span>{zone.record_count || 0} {zone.record_count === 1 ? 'record' : 'records'}</span>
-        <span style={{ color: 'var(--border)' }}>·</span>
-        <span>{shortTime(zone.last_updated)}</span>
-        {zone.is_ds_integrated && <span className="badge badge-green" style={{ fontSize: 8 }}>AD</span>}
       </div>
     </div>
   );
@@ -548,24 +550,31 @@ function ZoneRow({ zone, selected, onSelect, onDelete }: {
 // ════════════════════════════════════════════════════════════
 // Zone section (labelled group in left panel) — module scope
 // ════════════════════════════════════════════════════════════
-function ZoneSection({ title, zones, selectedZone, onSelect, onDelete }: {
+function ZoneSection({ title, zones, selectedZone, onSelect, onDelete, collapsed, onToggle }: {
   title: string;
   zones: DnsZone[];
   selectedZone: DnsZone | null;
   onSelect: (z: DnsZone) => void;
   onDelete: (z: DnsZone) => void;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   if (zones.length === 0) return null;
   return (
     <div>
-      <div style={{
-        padding: '7px 13px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-        letterSpacing: '0.06em', color: 'var(--text-muted)', background: 'var(--bg-primary)',
-        position: 'sticky', top: 0, zIndex: 1, borderBottom: '1px solid var(--border-light)',
-      }}>
+      <div
+        onClick={onToggle}
+        style={{
+          padding: '7px 13px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+          letterSpacing: '0.06em', color: 'var(--text-muted)', background: 'var(--bg-primary)',
+          position: 'sticky', top: 0, zIndex: 1, borderBottom: '1px solid var(--border-light)',
+          display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <span style={{ display: 'inline-block', transition: 'transform 0.12s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', fontSize: 9 }}>▼</span>
         {title} <span style={{ color: 'var(--border)' }}>·</span> {zones.length}
       </div>
-      {zones.map(z => (
+      {!collapsed && zones.map(z => (
         <ZoneRow key={z.id} zone={z} selected={selectedZone?.id === z.id}
           onSelect={() => onSelect(z)} onDelete={() => onDelete(z)} />
       ))}
@@ -930,6 +939,11 @@ function ZonesRecordsPanel() {
   const [selectedServer, setSelectedServer] = useState<number | null>(null);
   const [selectedZone, setSelectedZone]     = useState<DnsZone | null>(null);
   const [zoneFilter, setZoneFilter]   = useState('');
+  const [showForwarders, setShowForwarders] = useState(false);      // Fix 1 — hide forwarder zones by default
+  const [zoneTypeFilter, setZoneTypeFilter] = useState<'all' | 'primary' | 'secondary' | 'forwarder'>('all'); // Fix 3
+  const [zoneSort, setZoneSort]       = useState<'records' | 'name' | 'updated'>('records'); // Fix 5 — default records high→low
+  const [fwdCollapsed, setFwdCollapsed] = useState(false);          // Fix 2 — collapsible sections
+  const [revCollapsed, setRevCollapsed] = useState(true);           // reverse zones collapsed by default (rarely needed)
   const [recordSearch, setRecordSearch] = useState('');
   const [typeFilter, setTypeFilter]   = useState('');
   const [recordPage, setRecordPage]   = useState(1);
@@ -1115,13 +1129,44 @@ function ZonesRecordsPanel() {
     [zones, selectedServer],
   );
 
-  const listZones = useMemo(() => {
-    const f = zoneFilter.trim().toLowerCase();
-    return f ? serverFilteredZones.filter(z => z.zone_name.toLowerCase().includes(f)) : serverFilteredZones;
-  }, [serverFilteredZones, zoneFilter]);
+  const isForwarder = (z: DnsZone) => (z.zone_type || '').toLowerCase() === 'forwarder';
 
-  const forwardZones = listZones.filter(z => !z.is_reverse);
-  const reverseZones = listZones.filter(z => z.is_reverse);
+  // text + zone-type filter
+  const filteredZones = useMemo(() => {
+    const f = zoneFilter.trim().toLowerCase();
+    return serverFilteredZones.filter(z => {
+      if (f && !z.zone_name.toLowerCase().includes(f)) return false;
+      if (zoneTypeFilter !== 'all' && (z.zone_type || '').toLowerCase() !== zoneTypeFilter) return false;
+      return true;
+    });
+  }, [serverFilteredZones, zoneFilter, zoneTypeFilter]);
+
+  // Total forwarder zones available in "all" view (drives whether the toggle shows at all).
+  const forwarderCountAll = useMemo(
+    () => (zoneTypeFilter === 'all' ? filteredZones.filter(isForwarder).length : 0),
+    [filteredZones, zoneTypeFilter],
+  );
+  // Count currently hidden (for the "+ Show N forwarder zones" label).
+  const hiddenForwarderCount = showForwarders ? 0 : forwarderCountAll;
+
+  // Hide forwarder zones unless explicitly shown or filtered to (Fix 1).
+  const visibleZones = useMemo(() => {
+    if (zoneTypeFilter === 'forwarder' || showForwarders) return filteredZones;
+    return filteredZones.filter(z => !isForwarder(z));
+  }, [filteredZones, zoneTypeFilter, showForwarders]);
+
+  // Sort (Fix 5)
+  const sortZones = useCallback((arr: DnsZone[]) => {
+    const out = [...arr];
+    if (zoneSort === 'name') out.sort((a, b) => a.zone_name.localeCompare(b.zone_name));
+    else if (zoneSort === 'updated') out.sort((a, b) => new Date(b.last_updated || 0).getTime() - new Date(a.last_updated || 0).getTime());
+    else out.sort((a, b) => (b.record_count || 0) - (a.record_count || 0)); // records high→low (default)
+    return out;
+  }, [zoneSort]);
+
+  const listZones = visibleZones;
+  const forwardZones = useMemo(() => sortZones(visibleZones.filter(z => !z.is_reverse)), [visibleZones, sortZones]);
+  const reverseZones = useMemo(() => sortZones(visibleZones.filter(z => z.is_reverse)), [visibleZones, sortZones]);
 
   const totalRecords = useMemo(() => serverFilteredZones.reduce((a, z) => a + (z.record_count || 0), 0), [serverFilteredZones]);
   const fwdCount = serverFilteredZones.filter(z => !z.is_reverse).length;
@@ -1208,13 +1253,34 @@ function ZonesRecordsPanel() {
 
           {/* LEFT — zone list */}
           <div className="card" style={{ flex: '0 0 32%', minWidth: 300, maxWidth: 420, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: 12, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <input
                 placeholder="Filter zones…"
                 value={zoneFilter}
                 onChange={e => setZoneFilter(e.target.value)}
                 style={INPUT}
               />
+              {/* Type filter pills (Fix 3) */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {([['all', 'All'], ['primary', 'Primary'], ['secondary', 'Secondary'], ['forwarder', 'Forwarder']] as const).map(([key, label]) => {
+                  const active = zoneTypeFilter === key;
+                  return (
+                    <button key={key} onClick={() => setZoneTypeFilter(key)} style={{
+                      padding: '3px 10px', borderRadius: 14, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                      border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                      background: active ? 'var(--primary-light)' : 'var(--bg-card)',
+                      color: active ? 'var(--primary)' : 'var(--text-muted)', fontFamily: 'inherit',
+                    }}>{label}</button>
+                  );
+                })}
+              </div>
+              {/* Sort dropdown (Fix 5) */}
+              <select value={zoneSort} onChange={e => setZoneSort(e.target.value as typeof zoneSort)}
+                style={{ ...INPUT, fontSize: 12, padding: '6px 8px' }}>
+                <option value="records">Records (High–Low)</option>
+                <option value="name">Name (A–Z)</option>
+                <option value="updated">Last Updated</option>
+              </select>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
               {loadingZones ? (
@@ -1227,14 +1293,31 @@ function ZonesRecordsPanel() {
                     </div>
                   ))}
                 </div>
-              ) : listZones.length === 0 ? (
+              ) : listZones.length === 0 && hiddenForwarderCount === 0 ? (
                 <EmptyState title="No matching zones" message={zoneFilter ? 'Try a different filter.' : 'No zones for this server.'} />
               ) : (
                 <>
                   <ZoneSection title="Forward Zones" zones={forwardZones} selectedZone={selectedZone}
-                    onSelect={setSelectedZone} onDelete={deleteZone} />
+                    onSelect={setSelectedZone} onDelete={deleteZone}
+                    collapsed={fwdCollapsed} onToggle={() => setFwdCollapsed(c => !c)} />
                   <ZoneSection title="Reverse Zones" zones={reverseZones} selectedZone={selectedZone}
-                    onSelect={setSelectedZone} onDelete={deleteZone} />
+                    onSelect={setSelectedZone} onDelete={deleteZone}
+                    collapsed={revCollapsed} onToggle={() => setRevCollapsed(c => !c)} />
+                  {/* Show/hide forwarder zones toggle (Fix 1) */}
+                  {forwarderCountAll > 0 && (
+                    <button
+                      onClick={() => setShowForwarders(s => !s)}
+                      style={{
+                        width: '100%', textAlign: 'left', padding: '9px 13px', cursor: 'pointer',
+                        background: 'var(--bg-primary)', border: 'none', borderTop: '1px solid var(--border-light)',
+                        color: 'var(--primary)', fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}
+                    >
+                      {showForwarders
+                        ? '− Hide forwarder zones'
+                        : `+ Show ${hiddenForwarderCount} forwarder zone${hiddenForwarderCount === 1 ? '' : 's'}`}
+                    </button>
+                  )}
                 </>
               )}
             </div>
