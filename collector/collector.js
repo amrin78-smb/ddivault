@@ -509,8 +509,10 @@ async function syncDns(server) {
       if (records && records.length) {
         for (const rec of records) {
           await db.query(
-            `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl)
-             VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+            `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl, last_seen)
+             VALUES ($1,$2,$3,$4,$5,NOW())
+             ON CONFLICT (zone_id, hostname, record_type, record_data)
+             DO UPDATE SET ttl = EXCLUDED.ttl, last_seen = NOW()`,
             [zoneDbId, rec.HostName, rec.RecordType, String(rec.RecordData||''), rec.TimeToLive||null]
           ).catch(() => {});
         }

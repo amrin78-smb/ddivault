@@ -37,6 +37,12 @@ const releaseNotes = {
     'Cleaner update screen with structured release notes',
     'Removed the legacy CHANGELOG file',
   ],
+  '1.2.2': [
+    'Fixed DNS records duplicating on every collection cycle',
+    'Added a unique constraint and upsert so records refresh in place',
+    'One-time cleanup removes existing duplicate DNS records on deploy',
+    'DNS records list now shows a correct Last Updated value',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -1070,7 +1076,7 @@ app.get('/api/dns/records', async (req, res) => {
 
     params.push(limit, offset);
     const rows = await db.query(
-      `SELECT r.*, z.zone_name
+      `SELECT r.*, r.last_seen as last_updated, z.zone_name
        FROM dns_records r
        JOIN dns_zones z ON z.id = r.zone_id
        ${whereClause}
@@ -2412,9 +2418,10 @@ app.post('/api/dns/records', requireWrite, async (req, res) => {
     const zoneRes = await db.query('SELECT id FROM dns_zones WHERE zone_name=$1 AND server_id=$2', [zone_name, parseInt(server_id)]);
     if (zoneRes.rows.length) {
       await db.query(
-        `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT DO NOTHING`,
+        `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl, last_seen)
+         VALUES ($1,$2,$3,$4,$5,NOW())
+         ON CONFLICT (zone_id, hostname, record_type, record_data)
+         DO UPDATE SET ttl = EXCLUDED.ttl, last_seen = NOW()`,
         [zoneRes.rows[0].id, hostname, record_type.toUpperCase(), record_data, ttlSec]
       );
     }

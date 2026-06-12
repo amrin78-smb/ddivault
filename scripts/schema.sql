@@ -177,6 +177,31 @@ CREATE INDEX IF NOT EXISTS idx_dns_records_hostname ON dns_records(hostname);
 CREATE INDEX IF NOT EXISTS idx_dns_records_type     ON dns_records(record_type);
 CREATE INDEX IF NOT EXISTS idx_dns_records_zone     ON dns_records(zone_id);
 
+-- ── dns_records de-dup + unique constraint ─────────────────────
+-- One-time cleanup: remove duplicate rows keeping only the latest last_seen
+-- per (zone_id, hostname, record_type, record_data). Safe & idempotent — once
+-- the unique constraint exists no duplicates can be created, so re-running is a no-op.
+DELETE FROM dns_records
+WHERE id NOT IN (
+  SELECT DISTINCT ON (zone_id, hostname, record_type, record_data) id
+  FROM dns_records
+  ORDER BY zone_id, hostname, record_type, record_data, last_seen DESC
+);
+
+-- Add the unique constraint idempotently (Postgres has no ADD CONSTRAINT IF NOT EXISTS).
+-- The collector always writes a non-NULL record_data (String(...||'')), so NULL-vs-NULL
+-- distinctness is not a concern in practice.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'dns_records_unique'
+  ) THEN
+    ALTER TABLE dns_records
+      ADD CONSTRAINT dns_records_unique
+      UNIQUE (zone_id, hostname, record_type, record_data);
+  END IF;
+END$$;
+
 -- ── Alert Rules ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS alert_rules (
   id               SERIAL PRIMARY KEY,
