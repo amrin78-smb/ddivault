@@ -97,9 +97,10 @@ export function PageHeader({ title, subtitle, children }: {
   children?: React.ReactNode;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-      <div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+      <div className="page-head-row">
         <div className="page-title">{title}</div>
+        {subtitle && <span className="page-head-sep">·</span>}
         {subtitle && <div className="page-subtitle">{subtitle}</div>}
       </div>
       {children && <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{children}</div>}

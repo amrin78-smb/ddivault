@@ -1038,10 +1038,13 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
 
   // ── Render ──────────────────────────────────────────────────
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
 
       {/* Header */}
       <PageHeader title="DHCP" subtitle="Scope utilization, leases, and reservations across your DHCP servers">
+        <button className="btn" onClick={loadScopes} title="Refresh (R)">⟳ Refresh</button>
+      </PageHeader>
+      <div className="sub-tab-bar">
         <div className="segmented" role="tablist">
           {(['scopes', 'leases', 'reservations'] as View[]).map(v => (
             <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)} style={{ textTransform: 'capitalize' }}>
@@ -1049,8 +1052,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
             </button>
           ))}
         </div>
-        <button className="btn" onClick={loadScopes} title="Refresh (R)">⟳ Refresh</button>
-      </PageHeader>
+      </div>
 
       <ReadOnlyBanner />
 
@@ -1058,10 +1060,10 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {kpis.map((k, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: k.color }}>
-            <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: k.color }}>
+            <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: k.color }}>
               {k.value.toLocaleString()}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, fontWeight: 500 }}>{k.label}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, fontWeight: 500 }}>{k.label}</div>
           </div>
         ))}
       </div>

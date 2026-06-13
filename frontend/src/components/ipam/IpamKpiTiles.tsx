@@ -51,11 +51,11 @@ export function IpamKpiTiles({
           {loading ? (
             <Skeleton height={28} width={60} />
           ) : (
-            <div style={{ fontSize: 26, fontWeight: 700, color: tile.color }}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: tile.color }}>
               {tile.value.toLocaleString()}
             </div>
           )}
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{tile.label}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{tile.label}</div>
           {!loading && tile.pct !== undefined && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7 }}>
               <div

@@ -1043,7 +1043,7 @@ export default function IPAMTab() {
     [subnets]);
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader
         title="IPAM"
         subtitle="Hierarchical IP address management — supernets, subnets, and live address utilization"

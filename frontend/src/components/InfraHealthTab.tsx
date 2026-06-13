@@ -74,7 +74,7 @@ export default function InfraHealthTab() {
   const stripText = overall === 'critical' ? 'Critical issues detected' : overall === 'warning' ? 'Warnings present' : 'All systems healthy';
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="Infrastructure Health" subtitle="Live health score, WinRM reachability, DHCP failover and DNS replication across every monitored server." />
 
       {/* Status strip */}

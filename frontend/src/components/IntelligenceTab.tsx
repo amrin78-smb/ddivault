@@ -82,8 +82,8 @@ const TIME_RANGES: { label: string; value: string }[] = [
 function StatTile({ value, label, sub, color }: { value: React.ReactNode; label: string; sub?: string; color?: string }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: color || 'var(--navy)' }}>
-      <div style={{ fontSize: 26, fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
       {sub && <div style={{ ...MUTED, marginTop: 2 }}>{sub}</div>}
     </div>
   );
@@ -217,7 +217,7 @@ export default function IntelligenceTab({ initialType }: { initialType?: string 
   const ackedAnoms = useMemo(() => anomalies.filter(a => a.acknowledged), [anomalies]);
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="Intelligence" subtitle="Behavioral & security anomaly detection" />
 
       {/* Stat tiles */}

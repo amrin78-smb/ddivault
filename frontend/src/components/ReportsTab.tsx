@@ -109,7 +109,7 @@ export default function ReportsTab() {
   const showDays = active?.filters.includes('days');
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="Reports" subtitle="Generate professional, exportable reports for capacity planning, compliance and security reviews." />
 
       {/* Report cards */}

@@ -87,6 +87,13 @@ const releaseNotes = {
     'Compact middle row — smaller donut and trend chart, tighter card padding',
     'Middle row height capped so the dashboard reads in one glance',
   ],
+  '1.8.0': [
+    'Sub-tab bars (DHCP, DNS, Events & Alerts, Settings) now stay sticky while scrolling',
+    'Single-line compact page headers — title and subtitle on one row',
+    'Shorter sub-tab pills (32px) and tighter page header padding across all pages',
+    'Compact KPI tiles everywhere — smaller numbers/labels and reduced height',
+    'Tighter section spacing on every page for more content above the fold',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

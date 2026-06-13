@@ -496,13 +496,7 @@ function ServerPill({ server, active, onClick }: {
 // ════════════════════════════════════════════════════════════
 function SubTabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} style={{
-      padding: '8px 16px', borderRadius: 22, cursor: 'pointer', fontSize: 13, fontWeight: 600,
-      border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-      background: active ? 'var(--primary-light)' : 'var(--bg-card)',
-      color: active ? 'var(--primary)' : 'var(--text-primary)', fontFamily: 'inherit',
-      whiteSpace: 'nowrap',
-    }}>{label}</button>
+    <button onClick={onClick} className={`tab-pill ${active ? 'active' : ''}`}>{label}</button>
   );
 }
 
@@ -611,7 +605,7 @@ function KpiTile({ label, value, sub, color, alert }: {
   return (
     <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color }}>
       <div style={{ fontSize: 24, fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px' }}>{value}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
       {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{sub}</div>}
     </div>
   );
@@ -812,7 +806,7 @@ function HealthOverviewPanel() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 12 }}>
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="kpi-card"><Skeleton height={24} width="50%" /><div style={{ height: 8 }} /><Skeleton height={12} width="70%" /></div>
@@ -848,7 +842,7 @@ function HealthOverviewPanel() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* KPI tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 12 }}>
         <KpiTile label="Servers Online" color="var(--green)"
@@ -1199,7 +1193,7 @@ function ZonesRecordsPanel() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* toolbar actions */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         {canWrite && (
@@ -1239,8 +1233,8 @@ function ZonesRecordsPanel() {
           { l: 'Total Records', v: totalRecords,               c: 'var(--purple)' },
         ].map((t, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: t.c }}>
-            <div style={{ fontSize: 26, fontWeight: 800, color: t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{t.l}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{t.l}</div>
           </div>
         ))}
       </div>
@@ -1718,7 +1712,7 @@ function IntelligencePanel() {
   useEscape(() => { if (pendingDelete) setPendingDelete(null); });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Stale Records */}
       <div style={CARD}>
         <SectionHead title="Stale Records"
@@ -2083,7 +2077,7 @@ function AnalyticsPanel() {
   const hasQueryData = queryStats.some(s => s.history && s.history.length > 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
         {/* Record type distribution */}
         <div style={CARD}>
@@ -2163,12 +2157,12 @@ export default function DNSTab() {
   const [tab, setTab] = useState<DnsSubTab>('health');
 
   return (
-    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="DNS" subtitle="DNS health, replication topology, zones, records, and hygiene intelligence" />
       <ReadOnlyBanner />
 
       {/* Sub-tab bar */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="sub-tab-bar">
         <SubTabButton label="Health Overview" active={tab === 'health'} onClick={() => setTab('health')} />
         <SubTabButton label="Zones & Records" active={tab === 'zones'} onClick={() => setTab('zones')} />
         <SubTabButton label="Intelligence" active={tab === 'intel'} onClick={() => setTab('intel')} />

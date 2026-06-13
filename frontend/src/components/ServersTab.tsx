@@ -495,7 +495,7 @@ export default function ServersTab() {
   const untestedCount = servers.filter(s => s.winrm_test_ok == null).length;
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader
         title="Known Servers"
         subtitle="DHCP and DNS servers monitored via WinRM / PowerShell remoting"
@@ -510,19 +510,19 @@ export default function ServersTab() {
       {/* KPI tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--navy)' }}>
-          <div className="stat-value" style={{ fontSize: 28 }}>{total}</div>
+          <div className="stat-value" style={{ fontSize: 24 }}>{total}</div>
           <div className="stat-label">Total Servers</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--green)' }}>
-          <div className="stat-value" style={{ fontSize: 28, color: 'var(--green)' }}>{okCount}</div>
+          <div className="stat-value" style={{ fontSize: 24, color: 'var(--green)' }}>{okCount}</div>
           <div className="stat-label">WinRM OK</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--red)' }}>
-          <div className="stat-value" style={{ fontSize: 28, color: 'var(--red)' }}>{failCount}</div>
+          <div className="stat-value" style={{ fontSize: 24, color: 'var(--red)' }}>{failCount}</div>
           <div className="stat-label">WinRM Failed</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: '#94a3b8' }}>
-          <div className="stat-value" style={{ fontSize: 28, color: 'var(--text-muted)' }}>{untestedCount}</div>
+          <div className="stat-value" style={{ fontSize: 24, color: 'var(--text-muted)' }}>{untestedCount}</div>
           <div className="stat-label">Not Tested</div>
         </div>
       </div>

@@ -75,8 +75,8 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 function StatTile({ value, label, sub, color }: { value: React.ReactNode; label: string; sub?: string; color?: string }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: color || 'var(--navy)' }}>
-      <div style={{ fontSize: 26, fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
       {sub && <div style={{ ...MUTED, marginTop: 2 }}>{sub}</div>}
     </div>
   );
@@ -147,7 +147,7 @@ export default function AuditTab() {
   const actions = ['create', 'modify', 'delete', 'scan', 'import', 'export', 'reserve', 'release', 'test', 'login', 'logout'];
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <PageHeader title="Audit Log" subtitle="Every change across DNS, DHCP, IPAM and settings — who, what, when, and from where. Live-updates every 10s.">
         {canManageSystem && (
           <button className="btn" onClick={exportCsv}>Export CSV</button>

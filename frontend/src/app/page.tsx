@@ -546,20 +546,20 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
         {loading && !stats
           ? Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="kpi-card" style={{ borderLeftColor: 'var(--border)', padding: '14px 16px' }}>
+              <div key={i} className="kpi-card" style={{ borderLeftColor: 'var(--border)', padding: '12px 16px' }}>
                 <Skeleton height={28} width="45%" /><div style={{ height: 6 }} /><Skeleton height={12} width="75%" />
               </div>
             ))
           : kpis.map((k, i) => (
               <div key={i} className="kpi-card" onClick={k.onClick}
-                style={{ borderLeftColor: k.color, padding: '14px 16px', cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }}
+                style={{ borderLeftColor: k.color, padding: '12px 16px', cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 28, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
                   <Trend delta={k.delta} invert={k.invert} />
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>
                 <div style={{ ...MUTED, marginTop: 2 }}>{k.sub}</div>
               </div>
             ))}
@@ -847,13 +847,14 @@ function EventsTab() {
   const ackedAlerts = useMemo(() => alerts.filter(a =>  a.acknowledged), [alerts]);
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <PageHeader title="Events & Alerts" subtitle="Fired alerts and the raw DHCP event log from your servers">
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <PageHeader title="Events & Alerts" subtitle="Fired alerts and the raw DHCP event log from your servers" />
+      <div className="sub-tab-bar">
         <div className="segmented">
           <button className={view === 'alerts' ? 'active' : ''} onClick={() => setView('alerts')}>Alerts ({alTotal})</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}>DHCP Events ({evTotal})</button>
         </div>
-      </PageHeader>
+      </div>
 
       {view === 'alerts' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1289,7 +1290,7 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, o
 // ── Settings sub-tab pill (mirrors the DNS tab pill style) ─────
 function SettingsPill({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: boolean }) {
   return (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} className={active ? 'tab-pill active' : 'tab-pill'} style={{
       padding: '8px 16px', borderRadius: 22, cursor: 'pointer', fontSize: 13, fontWeight: 600,
       border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
@@ -1478,18 +1479,20 @@ function SettingsTab() {
   const activeSubtitle = TABS.find(t => t.id === subTab)?.subtitle || '';
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16, height: '100%', boxSizing: 'border-box' }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
       <PageHeader title="Settings" subtitle={activeSubtitle} />
 
       {/* Sub-tab pill bar */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {TABS.map(t => (
-          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
-        ))}
+      <div className="sub-tab-bar">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {TABS.map(t => (
+            <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
+          ))}
+        </div>
       </div>
 
       {/* Independently-scrolling content region */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {subTab === 'general' && (
           <div style={grid}>
             <div style={{ ...CARD, padding: 20 }}>
