@@ -535,6 +535,18 @@ async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serve
 async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
 async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
 async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
+
+// Poll scopes across all servers, then record one IPAM utilization snapshot per
+// cycle (self-throttled to ~hourly) for the trend chart.
+async function pollScopesCycle() {
+  await pollAll(collectScopeStats, 'Scopes');
+  // Record an IPAM utilization snapshot (self-throttled to ~hourly) for the trend chart.
+  try {
+    await ipamSync.recordUtilizationSnapshot(db);
+  } catch (e) {
+    console.error('[IPAM Snapshot] error:', e.message);
+  }
+}
 // Re-entrancy guard — the DNS monitor runs every 20m and can take minutes on
 // servers with many zones (servers are polled in parallel, so the run takes
 // max(per-server) not the sum). If a previous run is still in flight, skip this tick
@@ -614,7 +626,7 @@ async function main() {
   await seedInitialServer();
 
   await pollAll(tailDhcpLog,       'Log');
-  await pollAll(collectScopeStats, 'Scopes');
+  await pollScopesCycle();
   await pollAll(syncLeases,        'Leases');
   await pollAll(syncReservations,  'Reservations');
   await pollAll(syncDns,           'DNS');
@@ -628,7 +640,7 @@ async function main() {
   try { await runDnsMonitor(); } catch (e) { console.error('[DNS-Monitor] startup error:', e.message); }
 
   setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
-  setInterval(() => pollAll(collectScopeStats, 'Scopes'),       INTERVAL_SCOPE_STATS);
+  setInterval(() => pollScopesCycle(),                          INTERVAL_SCOPE_STATS);
   setInterval(() => pollAll(syncLeases,        'Leases'),       INTERVAL_LEASE_SYNC);
   setInterval(() => pollAll(syncReservations,  'Reservations'), INTERVAL_LEASE_SYNC);
   setInterval(() => pollAll(syncDns,           'DNS'),          INTERVAL_DNS_SYNC);

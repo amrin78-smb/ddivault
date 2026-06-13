@@ -1,14 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import IPAMImport from '@/components/IPAMImport';
 import {
-  PageHeader, EmptyState, Skeleton, TableSkeleton, Breadcrumb,
-  UtilBar, Spinner, pctColor, useRefreshKey, useEscape,
+  PageHeader, EmptyState, TableSkeleton, Breadcrumb,
+  UtilBar, Spinner, useRefreshKey, useEscape,
 } from '@/components/ui';
+import { IpamKpiTiles } from '@/components/ipam/IpamKpiTiles';
+import { IpamDonut } from '@/components/ipam/IpamDonut';
+import { IpamTrendChart, TrendPoint } from '@/components/ipam/IpamTrendChart';
+import { IpamTopSubnets, TopSubnet } from '@/components/ipam/IpamTopSubnets';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -199,6 +203,88 @@ const siteName = (siteId: number | null | undefined, sites: Site[], fallback?: s
   }
   return fallback || '';
 };
+
+// IP <-> integer + usable host range for a network/prefix
+function ipToInt(ip: string): number {
+  const p = (ip || '').split('.').map(Number);
+  if (p.length !== 4 || p.some(isNaN)) return 0;
+  return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
+}
+function intToIp(n: number): string {
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+}
+function ipRange(network: string, prefix: number): string {
+  const base = ipToInt(cleanNetwork(network));
+  if (!base && cleanNetwork(network) !== '0.0.0.0') return '—';
+  const size = Math.pow(2, 32 - prefix);
+  if (prefix >= 31) return `${intToIp(base)} – ${intToIp(base + size - 1)}`;
+  return `${intToIp(base + 1)} – ${intToIp(base + size - 2)}`;
+}
+
+// Utilization → health status badge
+function utilStatus(pct: number): { label: string; badge: string } {
+  if (pct >= 90) return { label: 'Critical', badge: 'badge-red' };
+  if (pct >= 80) return { label: 'Warning',  badge: 'badge-orange' };
+  return { label: 'Healthy', badge: 'badge-green' };
+}
+
+// Relative "time ago" for Last Scanned
+function relTime(d?: string): string {
+  if (!d) return 'Never';
+  const t = new Date(d).getTime();
+  if (isNaN(t)) return 'Never';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24); if (days < 30) return `${days}d ago`;
+  return fmtDay(d);
+}
+
+// ════════════════════════════════════════════════════════════
+// Row actions ··· dropdown menu (module scope)
+// ════════════════════════════════════════════════════════════
+interface MenuItem { label: string; onClick: () => void; danger?: boolean }
+function RowMenu({ items }: { items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        title="Actions"
+        style={{
+          background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+          cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '2px 8px', color: 'var(--text-muted)',
+        }}
+      >⋯</button>
+      {open && (
+        <>
+          <div onClick={e => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 50 }} />
+          <div style={{
+            position: 'absolute', right: 0, top: '100%', marginTop: 4, minWidth: 168, zIndex: 51,
+            background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-lg)', overflow: 'hidden',
+          }}>
+            {items.map((it, i) => (
+              <button
+                key={i}
+                onClick={e => { e.stopPropagation(); setOpen(false); it.onClick(); }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                  fontSize: 12.5, background: 'none', border: 'none', cursor: 'pointer',
+                  color: it.danger ? 'var(--red)' : 'var(--text-primary)',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-primary)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+              >{it.label}</button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ════════════════════════════════════════════════════════════
 // Field / Modal helpers (module scope)
@@ -514,56 +600,6 @@ function ReserveModal({ ip, onClose, onConfirm }: {
 }
 
 // ════════════════════════════════════════════════════════════
-// Tree subnet row (module scope)
-// ════════════════════════════════════════════════════════════
-function SubnetRow({ subnet, sites, onView, onScan, onDelete, onEdit }: {
-  subnet: Subnet; sites: Site[]; onView: () => void; onScan: () => void; onDelete: () => void; onEdit: () => void;
-}) {
-  const { canWrite: rbacCanWrite } = useRBAC();
-  const { state: licenseState } = useLicense();
-  const canWrite = rbacCanWrite && licenseState.canWrite;
-  const total   = subnet.total_hosts || totalHosts(subnet.prefix_length);
-  const used    = subnet.used_hosts || 0;
-  const unknown = subnet.unknown_hosts || 0;
-
-  return (
-    <div
-      onClick={onView}
-      style={{
-        padding: '10px 16px 10px 44px', display: 'flex', alignItems: 'center', gap: 12,
-        cursor: 'pointer', borderBottom: '1px solid var(--border-light)', transition: 'background 0.12s',
-      }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-primary)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-    >
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
-      <div style={{ minWidth: 170 }}>
-        <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>
-          {subnet.is_sensitive && <span title="Sensitive subnet" style={{ marginRight: 5 }}>🔒</span>}
-          {cleanNetwork(subnet.network)}/{subnet.prefix_length}
-        </div>
-        {subnet.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subnet.name}</div>}
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 110 }}>{siteName(subnet.site_id, sites, subnet.site)}</div>
-      {subnet.vlan_id ? <span className="badge badge-blue">VLAN {subnet.vlan_id}</span> : null}
-      <div style={{ flex: 1, minWidth: 120 }}><UtilBar pct={utilPct(used, total)} /></div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 92, textAlign: 'right', ...MONO }}>{used}/{total}</div>
-      {unknown > 0 && <span className="badge badge-orange" style={{ minWidth: 70, justifyContent: 'center' }}>⚠ {unknown}</span>}
-      <div style={{ fontSize: 11, color: subnet.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', minWidth: 96 }}>
-        {scanLabel(subnet.scan_status, subnet.last_scanned)}
-      </div>
-      {canWrite && (
-        <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
-          <button onClick={onScan} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
-          <button onClick={onEdit} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>
-          <button onClick={onDelete} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Del</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
 // Subnet detail (full-screen overlay) — module scope
 // ════════════════════════════════════════════════════════════
 function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[]; onClose: () => void }) {
@@ -857,6 +893,16 @@ export default function IPAMTab() {
   const [prevActive, setPrevActive] = useState<number | null>(null);
   const [syncing, setSyncing]       = useState(false);
 
+  // Utilization history (trend chart)
+  const [history, setHistory]             = useState<TrendPoint[]>([]);
+  const [historyLoading, setHistoryLoad]  = useState(true);
+  const [granularity, setGranularity]     = useState<'daily' | 'weekly'>('daily');
+
+  // Filter bar
+  const [search, setSearch]               = useState('');
+  const [supernetFilter, setSupernetFilter] = useState<string>('all');   // 'all' | supernet id | 'unassigned'
+  const [statusFilter, setStatusFilter]   = useState<'all' | 'healthy' | 'warning' | 'critical'>('all');
+
   // ── Load ──────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     const [sn, sub, vl, si, cf] = await Promise.allSettled([
@@ -876,6 +922,18 @@ export default function IPAMTab() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useRefreshKey(loadAll);
+
+  // ── Utilization history ───────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryLoad(true);
+    const days = granularity === 'weekly' ? 56 : 7;
+    api(`/ipam/utilization-history?days=${days}`)
+      .then(d => { if (!cancelled) setHistory(d.data || []); })
+      .catch(() => { if (!cancelled) setHistory([]); })
+      .finally(() => { if (!cancelled) setHistoryLoad(false); });
+    return () => { cancelled = true; };
+  }, [granularity]);
 
   // ── Global scan poll ──────────────────────────────────────
   useEffect(() => {
@@ -934,13 +992,20 @@ export default function IPAMTab() {
     catch (e: any) { toast(e.message, 'error'); }
   };
 
+  const nextIpForSubnet = async (s: Subnet) => {
+    const d = await api(`/ipam/subnets/${s.id}/next-ip`).catch(() => null);
+    if (d?.available) toast(`Next available IP in ${cleanNetwork(s.network)}/${s.prefix_length}: ${d.ip}`, 'success');
+    else toast('Subnet is full', 'error');
+  };
+
   const syncFromDhcp = async () => {
     setSyncing(true);
     try {
       const d = await api('/ipam/sync-from-dhcp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-      }) as { created: number; updated: number; supernetsCreated: number };
-      toast(`IPAM sync complete — ${d.created} created, ${d.updated} updated, ${d.supernetsCreated} supernet(s)`, 'success');
+      }) as { created: number; updated: number; supernetsCreated: number; addressesSynced?: number };
+      const addrPart = d.addressesSynced ? `, ${d.addressesSynced} addresses` : '';
+      toast(`IPAM sync complete — ${d.created} created, ${d.updated} updated, ${d.supernetsCreated} supernet(s)${addrPart}`, 'success');
       loadAll();
     } catch (e: any) { toast(e.message || 'Sync failed', 'error'); }
     finally { setSyncing(false); }
@@ -962,7 +1027,20 @@ export default function IPAMTab() {
   // ── Derived ───────────────────────────────────────────────
   const orphanSubnets = useMemo(() => subnets.filter(s => !s.supernet_id), [subnets]);
   const totalIPs   = useMemo(() => subnets.reduce((a, s) => a + (s.total_hosts || 0), 0), [subnets]);
+  const usedIPs    = useMemo(() => subnets.reduce((a, s) => a + (s.used_hosts || 0), 0), [subnets]);
+  const freeIPs    = useMemo(() => subnets.reduce((a, s) => a + (s.free_hosts || 0), 0), [subnets]);
   const totalUnknown = useMemo(() => subnets.reduce((a, s) => a + (s.unknown_hosts || 0), 0), [subnets]);
+
+  const topSubnets: TopSubnet[] = useMemo(() =>
+    subnets
+      .map(s => {
+        const total = s.total_hosts || totalHosts(s.prefix_length);
+        return { id: s.id, label: `${cleanNetwork(s.network)}/${s.prefix_length}`, pct: utilPct(s.used_hosts || 0, total), used: s.used_hosts || 0, total };
+      })
+      .filter(s => s.total > 0)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 5),
+    [subnets]);
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -971,11 +1049,13 @@ export default function IPAMTab() {
         subtitle="Hierarchical IP address management — supernets, subnets, and live address utilization"
       >
         <div className="segmented">
-          {(['tree', 'flat', 'vlans'] as View[]).map(v => (
-            <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>
-              {v === 'tree' ? 'Tree' : v === 'flat' ? 'All Subnets' : 'VLANs'}
-            </button>
-          ))}
+          <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}>Tree</button>
+          <button className={view === 'flat' ? 'active' : ''} onClick={() => setView('flat')}>All Subnets</button>
+          <button
+            disabled
+            title="Coming Soon"
+            style={{ opacity: 0.45, cursor: 'not-allowed' }}
+          >VLANs</button>
         </div>
         {canWrite && <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>}
         {canWrite && (
@@ -1022,21 +1102,57 @@ export default function IPAMTab() {
       )}
 
       {/* ── KPI tiles ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-        {[
-          { label: 'Supernets',     value: supernets.length, color: 'var(--navy)' },
-          { label: 'Subnets',       value: subnets.length,   color: 'var(--blue)' },
-          { label: 'Total IPs',     value: totalIPs,         color: 'var(--purple)' },
-          { label: 'Unknown Hosts', value: totalUnknown,     color: totalUnknown > 0 ? 'var(--orange)' : 'var(--green)' },
-        ].map((t, i) => (
-          <div key={i} className="kpi-card" style={{ borderLeftColor: t.color }}>
-            <div style={{ fontSize: 26, fontWeight: 700, color: t.color }}>
-              {loading ? <Skeleton height={28} width={60} /> : t.value.toLocaleString()}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{t.label}</div>
-          </div>
-        ))}
-      </div>
+      <IpamKpiTiles
+        supernetCount={supernets.length}
+        subnetCount={subnets.length}
+        totalIps={totalIPs}
+        usedIps={usedIPs}
+        freeIps={freeIPs}
+        unknownHosts={totalUnknown}
+        loading={loading}
+      />
+
+      {/* ── Middle row: donut · trend · top subnets ── */}
+      {!loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: '35fr 35fr 30fr', gap: 12 }}>
+          <IpamDonut used={usedIPs} free={freeIPs} total={totalIPs} />
+          <IpamTrendChart data={history} granularity={granularity} onGranularityChange={setGranularity} loading={historyLoading} />
+          <IpamTopSubnets subnets={topSubnets} onViewAll={() => setView('flat')} />
+        </div>
+      )}
+
+      {/* ── Filter bar ── */}
+      {!loading && view === 'tree' && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '10px 14px',
+        }}>
+          <input
+            placeholder="Search supernets or subnets…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ ...INPUT, width: 280 }}
+          />
+          <select value={supernetFilter} onChange={e => setSupernetFilter(e.target.value)} style={{ ...INPUT, width: 200 }}>
+            <option value="all">All Supernets</option>
+            {supernets.map(sn => (
+              <option key={sn.id} value={String(sn.id)}>{sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`}</option>
+            ))}
+            {orphanSubnets.length > 0 && <option value="unassigned">Unassigned</option>}
+          </select>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} style={{ ...INPUT, width: 160 }}>
+            <option value="all">All Status</option>
+            <option value="healthy">Healthy</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {supernets.length} supernet{supernets.length === 1 ? '' : 's'} · {subnets.length} subnet{subnets.length === 1 ? '' : 's'}
+          </span>
+        </div>
+      )}
 
       {/* ── Active scan progress ── */}
       {scanStatus?.jobs?.length > 0 && (
@@ -1088,8 +1204,10 @@ export default function IPAMTab() {
           onViewSubnet={setSelectedSubnet} onScanSubnet={scanSubnet} onDeleteSubnet={deleteSubnet}
           onAddSubnet={openAddSubnet} onDeleteSupernet={deleteSupernet}
           onEditSupernet={setEditSupernet} onEditSubnet={setEditSubnet}
+          onNextIp={nextIpForSubnet}
           prefixSel={prefixSel} setPrefixSel={setPrefixSel}
           nextSubnetResult={nextSubnetResult} onFindNextSubnet={findNextSubnet}
+          search={search} supernetFilter={supernetFilter} statusFilter={statusFilter}
         />
       ) : view === 'flat' ? (
         <FlatView subnets={subnets} sites={sites} onView={setSelectedSubnet} onScan={scanSubnet} onDelete={deleteSubnet} onEdit={setEditSubnet} />
@@ -1129,23 +1247,25 @@ export default function IPAMTab() {
 function TreeView({
   supernets, subnets, orphanSubnets, sites, expanded, onToggle,
   onViewSubnet, onScanSubnet, onDeleteSubnet, onAddSubnet, onDeleteSupernet,
-  onEditSupernet, onEditSubnet,
+  onEditSupernet, onEditSubnet, onNextIp,
   prefixSel, setPrefixSel, nextSubnetResult, onFindNextSubnet,
+  search, supernetFilter, statusFilter,
 }: {
   supernets: Supernet[]; subnets: Subnet[]; orphanSubnets: Subnet[]; sites: Site[];
   expanded: Set<number>; onToggle: (id: number) => void;
   onViewSubnet: (s: Subnet) => void; onScanSubnet: (s: Subnet) => void; onDeleteSubnet: (id: number) => void;
   onAddSubnet: (supernetId: number | null) => void; onDeleteSupernet: (id: number) => void;
-  onEditSupernet: (sn: Supernet) => void; onEditSubnet: (s: Subnet) => void;
+  onEditSupernet: (sn: Supernet) => void; onEditSubnet: (s: Subnet) => void; onNextIp: (s: Subnet) => void;
   prefixSel: Record<number, number>; setPrefixSel: (f: (p: Record<number, number>) => Record<number, number>) => void;
   nextSubnetResult: Record<number, string>; onFindNextSubnet: (sn: Supernet) => void;
+  search: string; supernetFilter: string; statusFilter: 'all' | 'healthy' | 'warning' | 'critical';
 }) {
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
   const canWrite = rbacCanWrite && licenseState.canWrite;
   const CARD: React.CSSProperties = {
     background: 'var(--bg-card)', border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden',
+    borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'visible',
   };
 
   if (supernets.length === 0 && orphanSubnets.length === 0) {
@@ -1160,77 +1280,181 @@ function TreeView({
     );
   }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {supernets.map(sn => {
-        const children  = subnets.filter(s => s.supernet_id === sn.id);
-        const isOpen    = expanded.has(sn.id);
-        const totalUsed = children.reduce((a, s) => a + (s.used_hosts || 0), 0);
-        const totalAll  = children.reduce((a, s) => a + (s.total_hosts || 0), 0);
-        const prefix    = prefixSel[sn.id] || 24;
-        const snSite    = siteName(sn.site_id, sites, sn.site);
+  const q = search.trim().toLowerCase();
+  const filterActive = q !== '' || statusFilter !== 'all';
 
-        return (
-          <div key={sn.id} style={CARD}>
-            {/* Supernet header */}
-            <div
-              onClick={() => onToggle(sn.id)}
-              style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderBottom: isOpen ? '1px solid var(--border)' : 'none' }}
-            >
-              <span style={{ fontSize: 13, color: 'var(--text-muted)', display: 'inline-block', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--navy)', flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
-                  {sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`}
-                  <span style={{ ...MONO, fontSize: 12, color: 'var(--text-muted)', marginLeft: 10, fontWeight: 400 }}>{cleanNetwork(sn.network)}/{sn.prefix_length}</span>
-                </div>
-                {snSite && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>📍 {snSite}</div>}
+  const subnetBand = (s: Subnet) => {
+    const pct = utilPct(s.used_hosts || 0, s.total_hosts || totalHosts(s.prefix_length));
+    return pct >= 90 ? 'critical' : pct >= 80 ? 'warning' : 'healthy';
+  };
+  const matchSubnet = (s: Subnet) => {
+    if (statusFilter !== 'all' && subnetBand(s) !== statusFilter) return false;
+    if (q) {
+      const hay = `${cleanNetwork(s.network)}/${s.prefix_length} ${s.name || ''} ${siteName(s.site_id, sites, s.site) || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  };
+  const matchSupernetText = (sn: Supernet) => {
+    if (!q) return true;
+    const hay = `${cleanNetwork(sn.network)}/${sn.prefix_length} ${sn.name || ''} ${siteName(sn.site_id, sites, sn.site) || ''}`.toLowerCase();
+    return hay.includes(q);
+  };
+
+  const visibleSupernets = supernets.filter(sn => {
+    if (supernetFilter === 'unassigned') return false;
+    if (supernetFilter !== 'all' && String(sn.id) !== supernetFilter) return false;
+    return true;
+  });
+  const showUnassigned = (supernetFilter === 'all' || supernetFilter === 'unassigned') && orphanSubnets.length > 0;
+  const filteredOrphans = orphanSubnets.filter(matchSubnet);
+
+  // ── Subnet <tr> ──
+  const subnetRow = (sub: Subnet) => {
+    const total = sub.total_hosts || totalHosts(sub.prefix_length);
+    const used  = sub.used_hosts || 0;
+    const st    = utilStatus(utilPct(used, total));
+    const menu: MenuItem[] = [{ label: 'Next Available IP', onClick: () => onNextIp(sub) }];
+    if (canWrite) {
+      menu.unshift({ label: 'Scan', onClick: () => onScanSubnet(sub) });
+      menu.push({ label: 'Edit', onClick: () => onEditSubnet(sub) });
+      menu.push({ label: 'Delete', onClick: () => onDeleteSubnet(sub.id), danger: true });
+    }
+    return (
+      <tr key={`sub-${sub.id}`} className="clickable" onClick={() => onViewSubnet(sub)}>
+        <td style={{ ...TD, paddingLeft: 40 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
+            <div>
+              <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>
+                {sub.is_sensitive && <span title="Sensitive subnet" style={{ marginRight: 5 }}>🔒</span>}
+                {cleanNetwork(sub.network)}/{sub.prefix_length}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 80 }}>{children.length} subnets</div>
-              {totalAll > 0 && <div style={{ width: 200 }}><UtilBar pct={utilPct(totalUsed, totalAll)} /></div>}
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                {canWrite && <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onAddSubnet(sn.id)}>+ Subnet</button>}
-                <select
-                  value={prefix}
-                  onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
-                  style={{ fontSize: 11, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
-                >
-                  {PREFIX_OPTIONS.map(p => <option key={p} value={p}>/{p}</option>)}
-                </select>
-                <button className="btn" style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => onFindNextSubnet(sn)}>Next Free</button>
-                {nextSubnetResult[sn.id] && (
-                  <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
-                )}
-                {canWrite && <button onClick={() => onEditSupernet(sn)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Edit</button>}
-                {canWrite && <button onClick={() => onDeleteSupernet(sn.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
-              </div>
+              {sub.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.name}</div>}
             </div>
-
-            {/* Children */}
-            {isOpen && children.map(sub => (
-              <SubnetRow key={sub.id} subnet={sub} sites={sites} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
-            ))}
-            {isOpen && children.length === 0 && (
-              <div style={{ padding: '16px 48px', color: 'var(--text-muted)', fontSize: 13 }}>
-                No subnets yet — click + Subnet to add one
-              </div>
-            )}
           </div>
-        );
-      })}
+        </td>
+        <td style={TD}><span className="badge badge-gray">Subnet</span></td>
+        <td style={{ ...TD, color: 'var(--text-muted)' }}>—</td>
+        <td style={{ ...TD, ...MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sub.network, sub.prefix_length)}</td>
+        <td style={{ ...TD, minWidth: 150 }}><UtilBar pct={utilPct(used, total)} /></td>
+        <td style={{ ...TD, ...MONO, whiteSpace: 'nowrap' }}>{used.toLocaleString()} / {total.toLocaleString()}</td>
+        <td style={TD}>
+          <span className={`badge ${st.badge}`}>{st.label}</span>
+          {sub.unknown_hosts > 0 && <span className="badge badge-orange" style={{ marginLeft: 6 }}>⚠ {sub.unknown_hosts}</span>}
+        </td>
+        <td style={{ ...TD, fontSize: 11, color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          {sub.scan_status === 'error' ? '⚠ Error' : relTime(sub.last_scanned)}
+        </td>
+        <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+          <RowMenu items={menu} />
+        </td>
+      </tr>
+    );
+  };
 
-      {/* Unassigned */}
-      {orphanSubnets.length > 0 && (
-        <div style={CARD}>
-          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)' }} />
-            Unassigned Subnets <span style={{ fontWeight: 400 }}>({orphanSubnets.length})</span>
-          </div>
-          {orphanSubnets.map(sub => (
-            <SubnetRow key={sub.id} subnet={sub} sites={sites} onView={() => onViewSubnet(sub)} onScan={() => onScanSubnet(sub)} onDelete={() => onDeleteSubnet(sub.id)} onEdit={() => onEditSubnet(sub)} />
-          ))}
-        </div>
-      )}
+  return (
+    <div style={CARD}>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Network</th>
+            <th>Type</th>
+            <th>Subnets</th>
+            <th>IP Range</th>
+            <th>Utilization</th>
+            <th>Used / Total</th>
+            <th>Status</th>
+            <th>Last Scanned</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleSupernets.map(sn => {
+            const children      = subnets.filter(s => s.supernet_id === sn.id);
+            const matchedKids    = filterActive ? children.filter(matchSubnet) : children;
+            if (filterActive && !matchSupernetText(sn) && matchedKids.length === 0) return null;
+            const isOpen        = expanded.has(sn.id) || (filterActive && matchedKids.length > 0);
+            const totalUsed     = children.reduce((a, s) => a + (s.used_hosts || 0), 0);
+            const totalAll      = children.reduce((a, s) => a + (s.total_hosts || 0), 0);
+            const prefix        = prefixSel[sn.id] || 24;
+            const snSite        = siteName(sn.site_id, sites, sn.site);
+            const snMenu: MenuItem[] = [];
+            if (canWrite) {
+              snMenu.push({ label: '+ Subnet', onClick: () => onAddSubnet(sn.id) });
+              snMenu.push({ label: 'Edit Supernet', onClick: () => onEditSupernet(sn) });
+              snMenu.push({ label: 'Delete Supernet', onClick: () => onDeleteSupernet(sn.id), danger: true });
+            }
+
+            return (
+              <Fragment key={`sn-${sn.id}`}>
+                <tr className="clickable" onClick={() => onToggle(sn.id)} style={{ background: 'var(--bg-primary)' }}>
+                  <td style={TD}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'inline-block', width: 12, transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--navy)', flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-primary)' }}>
+                          {sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`}
+                          <span style={{ ...MONO, fontSize: 11.5, color: 'var(--text-muted)', marginLeft: 9, fontWeight: 400 }}>{cleanNetwork(sn.network)}/{sn.prefix_length}</span>
+                        </div>
+                        {snSite && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>📍 {snSite}</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td style={TD}><span className="badge badge-blue">Supernet</span></td>
+                  <td style={{ ...TD, ...MONO }}>{children.length}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sn.network, sn.prefix_length)}</td>
+                  <td style={{ ...TD, minWidth: 150 }}>{totalAll > 0 ? <UtilBar pct={utilPct(totalUsed, totalAll)} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                  <td style={{ ...TD, ...MONO, whiteSpace: 'nowrap' }}>{totalUsed.toLocaleString()} / {totalAll.toLocaleString()}</td>
+                  <td style={{ ...TD, color: 'var(--text-muted)' }}>—</td>
+                  <td style={{ ...TD, color: 'var(--text-muted)' }}>—</td>
+                  <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
+                      <select
+                        value={prefix}
+                        onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
+                        title="Prefix for next free subnet"
+                        style={{ fontSize: 11, padding: '3px 5px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                      >
+                        {PREFIX_OPTIONS.map(p => <option key={p} value={p}>/{p}</option>)}
+                      </select>
+                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => onFindNextSubnet(sn)}>Next Free</button>
+                      {nextSubnetResult[sn.id] && (
+                        <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
+                      )}
+                      {snMenu.length > 0 && <RowMenu items={snMenu} />}
+                    </div>
+                  </td>
+                </tr>
+                {isOpen && matchedKids.map(sub => subnetRow(sub))}
+                {isOpen && matchedKids.length === 0 && (
+                  <tr>
+                    <td colSpan={9} style={{ ...TD, paddingLeft: 40, color: 'var(--text-muted)', fontSize: 13 }}>
+                      {filterActive ? 'No matching subnets' : 'No subnets yet — use the ··· menu to add one'}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+
+          {/* Unassigned subnets */}
+          {showUnassigned && (!filterActive || filteredOrphans.length > 0) && (
+            <>
+              <tr style={{ background: 'var(--bg-primary)' }}>
+                <td colSpan={9} style={{ ...TD, fontWeight: 600, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', display: 'inline-block' }} />
+                    Unassigned Subnets ({filterActive ? filteredOrphans.length : orphanSubnets.length})
+                  </span>
+                </td>
+              </tr>
+              {(filterActive ? filteredOrphans : orphanSubnets).map(sub => subnetRow(sub))}
+            </>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -75,6 +75,13 @@ const releaseNotes = {
     'Hostname, MAC, and device fingerprint carry over from leases into IPAM',
     'Address sync runs on every collector poll and on the manual sync button',
   ],
+  '1.7.0': [
+    'Redesigned IPAM page with an enterprise layout — 6 KPI tiles (incl. Used/Free IP utilization)',
+    'New IP Address Utilization donut and a Utilization Over Time chart (Daily/Weekly)',
+    'Top Subnets by Utilization panel and a search / supernet / status filter bar',
+    'Tree view is now a full table — Type, IP Range, Status (Healthy/Warning/Critical), Last Scanned, and a ··· actions menu',
+    'Hourly IPAM utilization snapshots recorded for trend history; VLANs tab marked Coming Soon',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -3498,6 +3505,26 @@ app.get('/api/ipam/conflicts', async (req, res) => {
     res.json({ data: conflicts.rows, count: conflicts.rows.length });
   } catch (err) {
     console.error('[API] conflicts error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── IPAM — utilization history (hourly snapshots for the trend chart) ──
+app.get('/api/ipam/utilization-history', async (req, res) => {
+  try {
+    let days = parseInt(req.query.days, 10);
+    if (!Number.isFinite(days) || days <= 0) days = 7;
+    if (days > 365) days = 365;
+    const rows = await db.query(
+      `SELECT id, recorded_at, total_ips, used_ips, free_ips, utilization_pct
+         FROM ipam_utilization_history
+        WHERE recorded_at > NOW() - ($1::int * INTERVAL '1 day')
+        ORDER BY recorded_at ASC`,
+      [days]
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] ipam utilization-history error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -123,3 +123,15 @@ ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS device_type TEXT;
 ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS device_vendor TEXT;
 ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS risk_level TEXT DEFAULT 'unknown';
 ALTER TABLE ipam_addresses ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN DEFAULT FALSE;
+
+-- ── IPAM utilization history (hourly snapshots for the trend chart) ──
+CREATE TABLE IF NOT EXISTS ipam_utilization_history (
+  id              BIGSERIAL PRIMARY KEY,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  total_ips       INTEGER,
+  used_ips        INTEGER,
+  free_ips        INTEGER,
+  utilization_pct NUMERIC(5,2)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ipam_util_hist_time ON ipam_utilization_history(recorded_at DESC);

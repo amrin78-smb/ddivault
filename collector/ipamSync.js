@@ -181,4 +181,47 @@ async function syncAddressesFromLeases(db, subnetId, network) {
   return n;
 }
 
-module.exports = { maskToPrefixLength, deriveSupernet, syncScopesToIpam, syncAddressesFromLeases };
+/**
+ * recordUtilizationSnapshot — capture an aggregate IPAM utilization snapshot
+ * for the trend chart. Self-throttled to roughly hourly: skips if a snapshot
+ * was already taken within the last 55 minutes. Sums total/used/free hosts
+ * across managed subnets and stores a single row in ipam_utilization_history.
+ * Never throws — returns a result object describing what happened.
+ * @param {object} db - pg Pool/Client
+ * @returns {Promise<object>} { recorded, ... }
+ */
+async function recordUtilizationSnapshot(db) {
+  try {
+    const recent = await db.query(
+      `SELECT 1 FROM ipam_utilization_history WHERE recorded_at > NOW() - INTERVAL '55 minutes' LIMIT 1`
+    );
+    if (recent.rows.length > 0) {
+      return { recorded: false };
+    }
+
+    const agg = await db.query(
+      `SELECT COALESCE(SUM(total_hosts),0)::int AS total_ips,
+              COALESCE(SUM(used_hosts),0)::int  AS used_ips,
+              COALESCE(SUM(free_hosts),0)::int  AS free_ips
+       FROM ipam_subnets
+       WHERE total_hosts > 0`
+    );
+    const row = agg.rows[0] || {};
+    const total_ips = row.total_ips || 0;
+    const used_ips = row.used_ips || 0;
+    const free_ips = row.free_ips || 0;
+    const pct = total_ips > 0 ? Number((used_ips / total_ips * 100).toFixed(2)) : 0;
+
+    await db.query(
+      `INSERT INTO ipam_utilization_history (total_ips, used_ips, free_ips, utilization_pct)
+       VALUES ($1, $2, $3, $4)`,
+      [total_ips, used_ips, free_ips, pct]
+    );
+
+    return { recorded: true, total_ips, used_ips, free_ips, pct };
+  } catch (err) {
+    return { recorded: false, error: err.message };
+  }
+}
+
+module.exports = { maskToPrefixLength, deriveSupernet, syncScopesToIpam, syncAddressesFromLeases, recordUtilizationSnapshot };
