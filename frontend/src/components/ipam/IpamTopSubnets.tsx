@@ -23,12 +23,12 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius)',
         boxShadow: 'var(--shadow-sm)',
-        padding: 18,
+        padding: '12px 16px',
         display: 'flex',
         flexDirection: 'column',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 700 }}>Top Subnets by Utilization</div>
         <button
           onClick={onViewAll}
@@ -50,7 +50,7 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
               display: 'flex',
               alignItems: 'center',
               gap: 10,
-              padding: '8px 0',
+              padding: '6px 0',
               borderBottom: i === subnets.length - 1 ? 'none' : '1px solid var(--border-light)',
             }}
           >

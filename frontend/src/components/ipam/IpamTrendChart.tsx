@@ -27,7 +27,7 @@ const cardStyle: React.CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius)',
   boxShadow: 'var(--shadow-sm)',
-  padding: 18,
+  padding: '12px 16px',
   display: 'flex',
   flexDirection: 'column',
 };
@@ -67,7 +67,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
   );
 
   const header = (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
       <div style={{ fontSize: 13, fontWeight: 700 }}>Utilization Over Time</div>
       {toggle}
     </div>
@@ -77,7 +77,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
     return (
       <div style={cardStyle}>
         {header}
-        <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
           Loading…
         </div>
       </div>
@@ -88,7 +88,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
     return (
       <div style={cardStyle}>
         {header}
-        <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '0 24px' }}>
+        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '0 24px' }}>
           Not enough history yet — utilization is recorded hourly.
         </div>
       </div>
@@ -97,7 +97,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
 
   // Chart geometry
   const W = 600;
-  const H = 220;
+  const H = 160;
   const padL = 48;
   const padR = 16;
   const padT = 14;

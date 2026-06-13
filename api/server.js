@@ -82,6 +82,11 @@ const releaseNotes = {
     'Tree view is now a full table — Type, IP Range, Status (Healthy/Warning/Critical), Last Scanned, and a ··· actions menu',
     'Hourly IPAM utilization snapshots recorded for trend history; VLANs tab marked Coming Soon',
   ],
+  '1.7.1': [
+    'IPAM donut now shows the Used/Free legend beside the chart instead of below',
+    'Compact middle row — smaller donut and trend chart, tighter card padding',
+    'Middle row height capped so the dashboard reads in one glance',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

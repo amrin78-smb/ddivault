@@ -1114,7 +1114,7 @@ export default function IPAMTab() {
 
       {/* ── Middle row: donut · trend · top subnets ── */}
       {!loading && (
-        <div style={{ display: 'grid', gridTemplateColumns: '35fr 35fr 30fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '35fr 35fr 30fr', gap: 12, maxHeight: 220 }}>
           <IpamDonut used={usedIPs} free={freeIPs} total={totalIPs} />
           <IpamTrendChart data={history} granularity={granularity} onGranularityChange={setGranularity} loading={historyLoading} />
           <IpamTopSubnets subnets={topSubnets} onViewAll={() => setView('flat')} />
