@@ -68,6 +68,13 @@ const releaseNotes = {
     'New "Forward to (DNS server IPs)" field for comma-separated upstream resolvers',
     'Forwarder zones are created via Add-DnsServerConditionalForwarderZone over WinRM',
   ],
+  '1.6.0': [
+    'IPAM "Sync from DHCP" now populates IP addresses from existing DHCP leases',
+    'Subnets show live hosts immediately — no manual scan required to see addresses',
+    'Active leases map to "dhcp" status; prior leases map to "offline"',
+    'Hostname, MAC, and device fingerprint carry over from leases into IPAM',
+    'Address sync runs on every collector poll and on the manual sync button',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -2197,7 +2204,7 @@ app.post('/api/ipam/scan-all', requireWrite, async (req, res) => {
 app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
   try {
     const ipamSync = require('../collector/ipamSync');
-    const totals = { created: 0, updated: 0, supernetsCreated: 0 };
+    const totals = { created: 0, updated: 0, supernetsCreated: 0, addressesSynced: 0 };
     const servers = await db.query(
       "SELECT id FROM ddi_servers WHERE is_active = TRUE AND role IN ('dhcp','both')"
     );
@@ -2225,6 +2232,7 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
         totals.created += r.created;
         totals.updated += r.updated;
         totals.supernetsCreated += r.supernetsCreated;
+        totals.addressesSynced += (r.addressesSynced || 0);
       } catch (serverErr) {
         console.error(`[API] sync-from-dhcp server ${server.id} error:`, serverErr.message);
       }
@@ -2233,9 +2241,9 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
       action: 'sync',
       entity_type: 'ipam',
       entity_name: 'dhcp-sync',
-      change_summary: `IPAM sync from DHCP: ${totals.created} created, ${totals.updated} updated`,
+      change_summary: `IPAM sync from DHCP: ${totals.created} created, ${totals.updated} updated, ${totals.addressesSynced} addresses`,
     });
-    res.json({ success: true, created: totals.created, updated: totals.updated, supernetsCreated: totals.supernetsCreated });
+    res.json({ success: true, created: totals.created, updated: totals.updated, supernetsCreated: totals.supernetsCreated, addressesSynced: totals.addressesSynced });
   } catch (err) {
     console.error('[API] sync-from-dhcp error:', err.message);
     res.status(500).json({ error: 'Internal server error' });

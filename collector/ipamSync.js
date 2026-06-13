@@ -38,7 +38,7 @@ const isIpv4 = s => /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(String(s
 async function syncScopesToIpam(db, scopes, opts = {}) {
   const log = opts.log || (() => {});
   const getGateway = opts.getGateway || null;
-  let created = 0, updated = 0, supernetsCreated = 0;
+  let created = 0, updated = 0, supernetsCreated = 0, addressesSynced = 0;
 
   for (const sc of (scopes || [])) {
     try {
@@ -73,12 +73,14 @@ async function syncScopesToIpam(db, scopes, opts = {}) {
         supernetId = supSel.rows[0] ? supSel.rows[0].id : null;
       }
 
+      let subnetId = null;
       if (existing.rows.length) {
         // Existing subnet: only refresh name + is_managed. NEVER touch site_id/gateway/supernet.
+        subnetId = existing.rows[0].id;
         await db.query(
           `UPDATE ipam_subnets SET name = COALESCE(name, $2), is_managed = true, updated_at = NOW()
            WHERE id = $1`,
-          [existing.rows[0].id, sc.name || null]
+          [subnetId, sc.name || null]
         );
         updated++;
       } else {
@@ -88,15 +90,17 @@ async function syncScopesToIpam(db, scopes, opts = {}) {
           try { const g = await getGateway(network); if (isIpv4(g)) gateway = g; } catch (_) {}
         }
 
-        await db.query(
+        const ins = await db.query(
           `INSERT INTO ipam_subnets
              (network, prefix_length, name, gateway, supernet_id, description, is_managed)
            VALUES ($1, $2, $3, $4, $5, 'Auto-synced from DHCP scope', true)
            ON CONFLICT (network, prefix_length) DO UPDATE SET
              name = COALESCE(EXCLUDED.name, ipam_subnets.name),
-             is_managed = true`,
+             is_managed = true
+           RETURNING id`,
           [network, prefix, sc.name || `${network}/${prefix}`, gateway, supernetId]
         );
+        subnetId = ins.rows.length ? ins.rows[0].id : null;
         created++;
         log(`[IPAM Sync] Created subnet ${network}/${prefix} → supernet ${sup.network}/${sup.prefix}`);
       }
@@ -114,11 +118,67 @@ async function syncScopesToIpam(db, scopes, opts = {}) {
           [s.in_use, s.free, s.total_ips, network, prefix]
         );
       }
+
+      // Populate ipam_addresses from existing DHCP leases so the subnet shows
+      // live hosts without waiting for a manual IPAM scan. Leases store the
+      // scope's network address in dhcp_leases.scope_id (TEXT), matching `network`.
+      if (subnetId) {
+        const addr = await syncAddressesFromLeases(db, subnetId, network);
+        addressesSynced += addr;
+      }
     } catch (err) {
       log(`[IPAM Sync] Error on scope ${sc && sc.scopeId}: ${err.message}`);
     }
   }
-  return { created, updated, supernetsCreated };
+  return { created, updated, supernetsCreated, addressesSynced };
 }
 
-module.exports = { maskToPrefixLength, deriveSupernet, syncScopesToIpam };
+/**
+ * Upsert ipam_addresses rows for a subnet from its DHCP leases.
+ * Leases carry the scope's network address in dhcp_leases.scope_id (TEXT),
+ * which equals the IPAM subnet's `network` address — so we match on that.
+ * @returns number of address rows synced
+ */
+async function syncAddressesFromLeases(db, subnetId, network) {
+  const leases = await db.query(
+    `SELECT ip_address::text AS ip_address, hostname, mac_address,
+            address_state, device_type, device_vendor
+       FROM dhcp_leases
+      WHERE scope_id = $1`,
+    [network]
+  );
+
+  let n = 0;
+  for (const lease of leases.rows) {
+    if (!lease.ip_address) continue;
+    // Active leases are live DHCP hosts; anything else was seen before but is
+    // no longer active. Both are documented ipam_addresses.status values.
+    const status = lease.address_state === 'Active' ? 'dhcp' : 'offline';
+    await db.query(
+      `INSERT INTO ipam_addresses
+         (subnet_id, ip_address, hostname, mac_address, status, device_type, device_vendor, last_seen)
+       VALUES ($1, $2::inet, $3, $4, $5, $6, $7, NOW())
+       ON CONFLICT (subnet_id, ip_address) DO UPDATE SET
+         hostname      = COALESCE(EXCLUDED.hostname, ipam_addresses.hostname),
+         mac_address   = COALESCE(EXCLUDED.mac_address, ipam_addresses.mac_address),
+         status        = EXCLUDED.status,
+         device_type   = COALESCE(EXCLUDED.device_type, ipam_addresses.device_type),
+         device_vendor = COALESCE(EXCLUDED.device_vendor, ipam_addresses.device_vendor),
+         last_seen     = NOW(),
+         updated_at    = NOW()`,
+      [
+        subnetId,
+        lease.ip_address,
+        lease.hostname,
+        lease.mac_address,
+        status,
+        lease.device_type,
+        lease.device_vendor,
+      ]
+    );
+    n++;
+  }
+  return n;
+}
+
+module.exports = { maskToPrefixLength, deriveSupernet, syncScopesToIpam, syncAddressesFromLeases };
