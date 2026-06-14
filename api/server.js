@@ -125,6 +125,11 @@ const releaseNotes = {
     'These alerts use one-open-alert-per-condition dedup instead of an hourly re-fire window — no more repeats while an issue persists',
     'Documented the schema deploy order for alert auto-resolve (resolved_at columns) in the upgrade runbook',
   ],
+  '1.12.1': [
+    'Removed the standalone Intelligence tab — its anomaly insights now surface directly in the Dashboard (Security Overview, Pillar Scorecards, Priority Action Center) and the DNS Insights view',
+    'Anomaly detection continues running in the background collector and feeds alerts as before — no monitoring capability was removed',
+    'Security cards and anomaly items on the Dashboard now link to Events & Alerts instead of the retired tab',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -1673,36 +1678,12 @@ app.get('/api/anomalies/summary', async (req, res) => {
   }
 });
 
-app.post('/api/anomalies/acknowledge-all', requireWrite, async (req, res) => {
-  try {
-    const by = (req.user && req.user.email) || req.body.user || 'admin';
-    const result = await db.query(
-      `UPDATE anomaly_events SET acknowledged=TRUE, acknowledged_at=NOW(), acknowledged_by=$1 WHERE acknowledged=FALSE`,
-      [by]
-    );
-    if (req.audit) req.audit({ action: 'modify', entity_type: 'anomaly_event', entity_id: null, entity_name: 'all', change_summary: `Acknowledged all anomalies (${result.rowCount})` });
-    res.json({ success: true, count: result.rowCount });
-  } catch (err) {
-    console.error('[API] anomaly ack-all error:', err.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/anomalies/:id/ack', requireWrite, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const by = (req.user && req.user.email) || 'admin';
-    await db.query(
-      `UPDATE anomaly_events SET acknowledged=TRUE, acknowledged_at=NOW(), acknowledged_by=$2 WHERE id=$1`,
-      [id, by]
-    );
-    if (req.audit) req.audit({ action: 'modify', entity_type: 'anomaly_event', entity_id: id, entity_name: String(id), change_summary: `Acknowledged anomaly ${id}` });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('[API] anomaly ack error:', err.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Note: anomaly acknowledge routes (POST /api/anomalies/acknowledge-all and
+// POST /api/anomalies/:id/ack) were removed with the Intelligence tab (v1.12.1).
+// The read endpoints GET /api/anomalies and GET /api/anomalies/summary remain —
+// they feed the Dashboard (Priority Action Center, Security Overview, Pillar
+// Scorecards) and the DNS Insights view. Anomaly detection continues in the
+// collector, surfacing through alerts.
 
 // ── Feature 5: Site health ────────────────────────────────────
 app.get('/api/site-health', async (req, res) => {

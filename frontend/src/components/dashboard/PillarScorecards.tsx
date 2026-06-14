@@ -193,7 +193,7 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
     {
       key: 'security',
       name: 'Security',
-      tab: 'intelligence',
+      tab: 'events',
       score: p.security?.score ?? null,
       trend: p.security?.trend ?? [],
       metrics: [

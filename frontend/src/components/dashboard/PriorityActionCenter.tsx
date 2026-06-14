@@ -166,7 +166,7 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
         source: 'Security',
         title: a.description || a.anomaly_type || 'Anomaly detected',
         ts: a.detected_at,
-        onClick: () => onNavigate?.('intelligence', { anomalyType: a.anomaly_type }),
+        onClick: () => onNavigate?.('events'),
       });
     }
 
