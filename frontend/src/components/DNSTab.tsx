@@ -126,7 +126,18 @@ interface QueryStatPoint {
   response_time_ms: number;
   nxdomain_count: number;
   total_queries: number;
+  successful?: number;
   failed: number;
+}
+
+// ── DNS anomaly (security intelligence) ───────────────────────
+interface DnsAnomaly {
+  id: number;
+  anomaly_type: string;
+  severity: string;
+  description: string | null;
+  acknowledged: boolean;
+  detected_at: string;
 }
 interface QueryStat {
   server_id: number;
@@ -1493,9 +1504,11 @@ function ZonesRecordsPanel() {
 }
 
 // ════════════════════════════════════════════════════════════
-// PANEL 3 — Intelligence
+// DNS Management Console — full stale-records / forwarder / scavenging
+// management, reachable from the Insights "Manage →" / "Clean up →" links.
+// (Formerly the standalone Intelligence sub-tab; functionality preserved.)
 // ════════════════════════════════════════════════════════════
-function IntelligencePanel() {
+function DnsManagementConsole({ onBack }: { onBack: () => void }) {
   const { toast } = useToast();
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
@@ -1713,6 +1726,13 @@ function IntelligencePanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Back to Insights */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button onClick={onBack} className="btn" style={{ padding: '6px 12px', fontSize: 12 }}>← Back to Insights</button>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>DNS Management Console</span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Stale records · forwarders · scavenging</span>
+      </div>
+
       {/* Stale Records */}
       <div style={CARD}>
         <SectionHead title="Stale Records"
@@ -1960,54 +1980,6 @@ function IntelligencePanel() {
   );
 }
 
-// ════════════════════════════════════════════════════════════
-// Donut chart (module scope) — mirrors DeviceDonut bar style
-// ════════════════════════════════════════════════════════════
-function RecordDonut({ data }: { data: { record_type: string; count: number }[] }) {
-  // COUNT(*) can arrive as a string from the API — coerce to a number so the
-  // total is summed (not string-concatenated) and percentages divide correctly.
-  const rows = data.map(d => ({ record_type: d.record_type, count: Number(d.count) || 0 }));
-  const total = rows.reduce((sum, item) => sum + item.count, 0);
-  if (total === 0) return <EmptyState title="No records" message="No DNS records to chart." />;
-
-  // build donut segments
-  const R = 64, SW = 22, C = 2 * Math.PI * R;
-  let acc = 0;
-  const segments = rows.map(d => {
-    const frac = d.count / total;
-    const seg = { ...d, frac, dash: frac * C, offset: acc * C, color: RECORD_COLORS[d.record_type] || '#6b7280' };
-    acc += frac;
-    return seg;
-  });
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap', padding: 16 }}>
-      <svg width={160} height={160} viewBox="0 0 160 160" style={{ flexShrink: 0 }}>
-        <g transform="rotate(-90 80 80)">
-          {segments.map((s, i) => (
-            <circle key={i} cx={80} cy={80} r={R} fill="none" stroke={s.color} strokeWidth={SW}
-              strokeDasharray={`${s.dash} ${C - s.dash}`} strokeDashoffset={-s.offset}>
-              <title>{`${s.record_type}: ${s.count.toLocaleString()} (${(s.frac * 100).toFixed(1)}%)`}</title>
-            </circle>
-          ))}
-        </g>
-        <text x={80} y={76} textAnchor="middle" fontSize={22} fontWeight={800} fill="var(--text-primary)">{total.toLocaleString()}</text>
-        <text x={80} y={94} textAnchor="middle" fontSize={11} fill="var(--text-muted)">records</text>
-      </svg>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 180 }}>
-        {segments.map(s => (
-          <div key={s.record_type} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-            <span style={{ flex: 1, color: 'var(--text-primary)' }}>{s.record_type}</span>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{s.count.toLocaleString()}</span>
-            <span style={{ color: 'var(--text-muted)', width: 46, textAlign: 'right' }}>{(s.frac * 100).toFixed(1)}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Sparkline (module scope) ──────────────────────────────────
 function Sparkline({ points, color = 'var(--blue)' }: { points: number[]; color?: string }) {
   if (points.length < 2) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>insufficient data</span>;
@@ -2027,122 +1999,469 @@ function Sparkline({ points, color = 'var(--blue)' }: { points: number[]; color?
 }
 
 // ════════════════════════════════════════════════════════════
-// PANEL 4 — Analytics
+// DNS Insights helpers (module scope)
 // ════════════════════════════════════════════════════════════
-function AnalyticsPanel() {
-  const [breakdown, setBreakdown] = useState<{ record_type: string; count: number }[]>([]);
-  const [zones, setZones] = useState<DnsZone[]>([]);
+const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
+const sevBadgeClass = (sev: string) => sev === 'critical' ? 'badge-red' : sev === 'warning' ? 'badge-yellow' : 'badge-gray';
+const DNS_ANOMALY_LABELS: Record<string, string> = {
+  dns_replication_lag: 'Replication Lag',
+  dns_forwarder_down: 'Forwarder Down',
+  dns_record_count_drop: 'Record Count Drop',
+  dns_stale_records: 'Stale Records',
+  dns_scavenging_disabled: 'Scavenging Disabled',
+};
+
+function compactNum(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+// Compact KPI tile — number 20px, label 11px, 70px tall
+function InsightKpi({ label, value, color, alert }: { label: string; value: React.ReactNode; color: string; alert?: boolean }) {
+  return (
+    <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color, padding: '12px 16px', minHeight: 70 }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
+    </div>
+  );
+}
+
+// Small inline "action →" link used in card headers / rows
+function CardLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: 11, fontWeight: 600, fontFamily: 'inherit', padding: 0, whiteSpace: 'nowrap' }}>{label}</button>
+  );
+}
+
+// Compact card shell — header padding 12px 16px, title 13px. scroll caps body to ~5 rows.
+function InsightCard({ title, right, children, scroll }: { title: string; right?: React.ReactNode; children: React.ReactNode; scroll?: boolean }) {
+  return (
+    <div style={{ ...CARD, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>
+        {right}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, ...(scroll ? { maxHeight: 196, overflowY: 'auto' as const } : {}) }}>{children}</div>
+    </div>
+  );
+}
+
+// Locked / not-yet-available card
+function LockedCard({ icon, title, lines, linkLabel }: { icon: string; title: string; lines: string[]; linkLabel: string }) {
+  return (
+    <div style={{
+      background: 'var(--bg-primary)', border: '1px dashed var(--border)', borderRadius: 'var(--radius)',
+      opacity: 0.7, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      textAlign: 'center', minHeight: 160, padding: 16, gap: 5,
+    }}>
+      <div style={{ fontSize: 22 }}>{icon}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
+      {lines.map((l, i) => <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.3 }}>{l}</div>)}
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginTop: 4 }}>{linkLabel}</span>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// PANEL — DNS Insights (replaces Intelligence + Analytics)
+// ════════════════════════════════════════════════════════════
+function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'events') => void; onGotoHealth: () => void }) {
+  const { toast } = useToast();
+  const { canWrite: rbacCanWrite } = useRBAC();
+  const { state: licenseState } = useLicense();
+  const canWrite = rbacCanWrite && licenseState.canWrite;
+
+  const [view, setView] = useState<'dashboard' | 'manage'>('dashboard');
+
+  const [topology, setTopology]   = useState<TopologyServer[]>([]);
   const [queryStats, setQueryStats] = useState<QueryStat[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [health, setHealth]       = useState<DnsHealth | null>(null);
+  const [forwarders, setForwarders] = useState<Forwarder[]>([]);
+  const [breakdown, setBreakdown] = useState<{ record_type: string; count: number }[]>([]);
+  const [scav, setScav]           = useState<ScavengingRow[]>([]);
+  const [stale, setStale]         = useState<StaleRecord[]>([]);
+  const [zones, setZones]         = useState<DnsZone[]>([]);
+  const [anomalies, setAnomalies] = useState<DnsAnomaly[]>([]);
+  const [loading, setLoading]     = useState(true);
+
+  const [testing, setTesting]   = useState<number | null>(null);
+  const [enabling, setEnabling] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [b, z, q] = await Promise.all([
-      api('/dns/record-type-breakdown').catch(() => null),
-      api('/dns/zones').catch(() => null),
+    const [t, q, h, f, b, sc, st, z, an] = await Promise.all([
+      api('/dns/topology').catch(() => null),
       api('/dns/query-stats').catch(() => null),
+      api('/dns/health').catch(() => null),
+      api('/dns/forwarders').catch(() => null),
+      api('/dns/record-type-breakdown').catch(() => null),
+      api('/dns/scavenging').catch(() => null),
+      api('/dns/stale-records').catch(() => null),
+      api('/dns/zones').catch(() => null),
+      api('/anomalies?acknowledged=false&limit=1000').catch(() => null),
     ]);
-    setBreakdown((b?.data as { record_type: string; count: number }[]) || []);
-    setZones((z?.data as DnsZone[]) || []);
+    setTopology((t?.servers as TopologyServer[]) || []);
     setQueryStats((q?.data as QueryStat[]) || []);
+    setHealth(h || null);
+    setForwarders((f?.data as Forwarder[]) || []);
+    setBreakdown((b?.data as { record_type: string; count: number }[]) || []);
+    setScav((sc?.data as ScavengingRow[]) || []);
+    setStale((st?.data as StaleRecord[]) || []);
+    setZones((z?.data as DnsZone[]) || []);
+    const allAn = (an?.data as DnsAnomaly[]) || [];
+    setAnomalies(allAn.filter(a => (a.anomaly_type || '').startsWith('dns_')));
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
   useRefreshKey(() => { load(); });
 
-  const topZones = useMemo(() =>
-    [...zones].sort((a, b) => (b.record_count || 0) - (a.record_count || 0)).slice(0, 10),
-    [zones]);
-  const maxZoneCount = topZones.reduce((m, z) => Math.max(m, z.record_count || 0), 0) || 1;
+  // ── Inline write actions ────────────────────────────────────
+  const testForwarder = async (f: Forwarder) => {
+    setTesting(f.id);
+    try {
+      const d = await api('/dns/forwarders/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_id: f.server_id, forwarder_ip: f.forwarder_ip }),
+      });
+      const r = d.result || {};
+      toast(`${f.forwarder_ip}: ${r.Reachable ? `reachable (${r.ResponseMs ?? '?'}ms)` : 'unreachable'}`, r.Reachable ? 'success' : 'error');
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setTesting(null); }
+  };
 
-  // NXDOMAIN aggregate from latest
-  const nx = useMemo(() => {
-    let nxc = 0, tot = 0;
+  const enableScav = async (row: ScavengingRow) => {
+    setEnabling(row.id);
+    try {
+      await api('/dns/scavenging/enable', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_id: row.server_id, zone_name: row.zone_name, enabled: true }),
+      });
+      toast(`Scavenging enabled on ${row.zone_name}`, 'success');
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
+    finally { setEnabling(null); }
+  };
+
+  // ── Derived data ────────────────────────────────────────────
+  const avgHealth = useMemo(() => {
+    if (!topology.length) return null;
+    return Math.round(topology.reduce((a, s) => a + (s.health_score || 0), 0) / topology.length);
+  }, [topology]);
+
+  const queryAgg = useMemo(() => {
+    let total = 0, success = 0, hasData = false;
     for (const s of queryStats) {
-      if (s.latest) { nxc += s.latest.nxdomain_count || 0; tot += s.latest.total_queries || 0; }
+      if (s.latest) {
+        hasData = true;
+        const tq = s.latest.total_queries || 0;
+        total += tq;
+        success += s.latest.successful ?? (tq - (s.latest.failed || 0));
+      }
     }
-    return tot > 0 ? { pct: (nxc / tot) * 100, nxc, tot } : null;
+    return { total, success, hasData, rate: total > 0 ? (success / total) * 100 : null };
   }, [queryStats]);
 
+  const recordTotal = useMemo(() => breakdown.reduce((a, b) => a + (Number(b.count) || 0), 0), [breakdown]);
+  const recordRows = useMemo(() => {
+    const m = new Map(breakdown.map(b => [b.record_type, Number(b.count) || 0]));
+    return RECORD_TYPES.map(tp => ({ type: tp, count: m.get(tp) || 0 })).filter(r => r.count > 0);
+  }, [breakdown]);
+  const maxRecord = recordRows.reduce((m, r) => Math.max(m, r.count), 0) || 1;
+
+  const topZones = useMemo(() => [...zones].sort((a, b) => (b.record_count || 0) - (a.record_count || 0)).slice(0, 8), [zones]);
+  const maxZoneCount = topZones.reduce((m, z) => Math.max(m, z.record_count || 0), 0) || 1;
+
+  const staleByZone = useMemo(() => {
+    const m = new Map<string, { zone: string; count: number; oldest: number }>();
+    for (const r of stale) {
+      let g = m.get(r.zone_name);
+      if (!g) { g = { zone: r.zone_name, count: 0, oldest: 0 }; m.set(r.zone_name, g); }
+      g.count++;
+      if (r.days_stale > g.oldest) g.oldest = r.days_stale;
+    }
+    return Array.from(m.values()).sort((a, b) => b.count - a.count);
+  }, [stale]);
+
+  const anomalyByType = useMemo(() => {
+    const m = new Map<string, { type: string; count: number; sev: string }>();
+    for (const a of anomalies) {
+      let g = m.get(a.anomaly_type);
+      if (!g) { g = { type: a.anomaly_type, count: 0, sev: 'info' }; m.set(a.anomaly_type, g); }
+      g.count++;
+      if ((SEV_RANK[a.severity] || 0) > (SEV_RANK[g.sev] || 0)) g.sev = a.severity;
+    }
+    return Array.from(m.values()).sort((a, b) => b.count - a.count || (SEV_RANK[b.sev] || 0) - (SEV_RANK[a.sev] || 0));
+  }, [anomalies]);
+
+  const queryServers = useMemo(() => queryStats.filter(s => s.history && s.history.length > 0), [queryStats]);
+
+  // ── Detail (management console) view ────────────────────────
+  if (view === 'manage') return <DnsManagementConsole onBack={() => { setView('dashboard'); load(); }} />;
+
+  // ── Loading skeleton ────────────────────────────────────────
   if (loading) {
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div className="card"><TableSkeleton rows={6} cols={2} /></div>
-        <div className="card"><TableSkeleton rows={6} cols={2} /></div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,minmax(0,1fr))', gap: 12 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="kpi-card"><Skeleton height={20} width="55%" /><div style={{ height: 8 }} /><Skeleton height={11} width="75%" /></div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
+          {Array.from({ length: 3 }).map((_, i) => <div key={i} className="card"><TableSkeleton rows={5} cols={3} /></div>)}
+        </div>
       </div>
     );
   }
 
-  const hasQueryData = queryStats.some(s => s.history && s.history.length > 0);
+  const inSync = health?.zones_in_sync ?? 0;
+  const syncTotal = (health?.zones_in_sync ?? 0) + (health?.zones_out_of_sync ?? 0);
+  const staleTotal = stale.length;
+  const scavDisabled = health?.scavenging_disabled_zones ?? 0;
+  const replIssues = health?.replication_issues ?? 0;
+
+  const cellSm: React.CSSProperties = { fontSize: 12 };
+  const tableStyle: React.CSSProperties = { fontSize: 12 };
+
+  // Hygiene metric row
+  const hygiene = (icon: string, label: string, count: number, ok: boolean, action: { label: string; onClick: () => void }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--border-light)' }}>
+      <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{label}</div>
+      </div>
+      <span style={{ fontSize: 20, fontWeight: 800, color: ok ? 'var(--green)' : 'var(--orange)', letterSpacing: '-0.5px' }}>{count.toLocaleString()}</span>
+      <span className={`badge ${ok ? 'badge-green' : 'badge-yellow'}`} style={{ flexShrink: 0 }}>{ok ? 'OK' : 'Review'}</span>
+      <CardLink label={action.label} onClick={action.onClick} />
+    </div>
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16 }}>
-        {/* Record type distribution */}
-        <div style={CARD}>
-          <SectionHead title="Record Type Distribution" />
-          <RecordDonut data={breakdown} />
-        </div>
 
-        {/* Top zones by record count */}
-        <div style={CARD}>
-          <SectionHead title="Top Zones by Record Count" />
-          {topZones.length === 0 ? (
-            <EmptyState title="No zones" message="No zones available." />
+      {/* ───────────────── Row 1 — KPI strip ───────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,minmax(0,1fr))', gap: 12 }}>
+        <InsightKpi label="Avg Health" color={avgHealth != null ? scoreColor(avgHealth) : 'var(--text-muted)'}
+          value={avgHealth != null ? avgHealth : '—'} />
+        <InsightKpi label="Query Success Rate"
+          color={queryAgg.rate == null ? 'var(--text-muted)' : queryAgg.rate >= 99 ? 'var(--green)' : 'var(--yellow)'}
+          alert={queryAgg.rate != null && queryAgg.rate < 95}
+          value={queryAgg.rate == null ? '—' : `${queryAgg.rate.toFixed(2)}%`} />
+        <InsightKpi label="Total Queries 24h" color="var(--blue)"
+          value={queryAgg.hasData ? compactNum(queryAgg.total) : '—'} />
+        <InsightKpi label="Active Servers" color="var(--green)"
+          value={`${health?.servers_online ?? 0}/${health?.servers_total ?? 0}`}
+          alert={(health?.servers_total ?? 0) > 0 && (health?.servers_online ?? 0) < (health?.servers_total ?? 0)} />
+        <InsightKpi label="Zones In Sync" color="var(--navy)"
+          value={`${inSync}/${syncTotal}`}
+          alert={(health?.zones_out_of_sync ?? 0) > 0} />
+        <InsightKpi label="Open Alerts" color={anomalies.length > 0 ? 'var(--red)' : 'var(--green)'}
+          value={anomalies.length} alert={anomalies.length > 0} />
+      </div>
+
+      {/* ───────────────── Row 2 — 3 columns ───────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
+
+        {/* Forwarder Health */}
+        <InsightCard title="Forwarder Health" scroll>
+          {forwarders.length === 0 ? (
+            <EmptyState title="No forwarders" message="No DNS forwarders on monitored servers." />
           ) : (
-            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {topZones.map(z => (
-                <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ width: 150, fontSize: 12, fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={z.zone_name}>{z.zone_name}</span>
-                  <div style={{ flex: 1, height: 10, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
-                    <div style={{ width: `${((z.record_count || 0) / maxZoneCount) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 5 }} />
+            <table className="data-table" style={tableStyle}>
+              <thead>
+                <tr><th>Server</th><th>Forwarder</th><th>Status</th><th>Resp</th>{canWrite && <th style={{ textAlign: 'right' }}></th>}</tr>
+              </thead>
+              <tbody>
+                {forwarders.map(f => (
+                  <tr key={f.id}>
+                    <td style={{ ...cellSm, fontWeight: 600, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.hostname}>{f.hostname}</td>
+                    <td style={{ ...cellSm, fontFamily: 'monospace' }}>{f.forwarder_ip}</td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }} />
+                      </span>
+                    </td>
+                    <td style={{ ...cellSm, fontWeight: 600, color: f.is_reachable === false ? 'var(--red)' : f.response_time_ms == null ? 'var(--text-muted)' : f.response_time_ms < 50 ? 'var(--green)' : f.response_time_ms <= 200 ? 'var(--yellow)' : 'var(--red)' }}>
+                      {f.response_time_ms != null ? `${f.response_time_ms}ms` : '—'}
+                    </td>
+                    {canWrite && (
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn" disabled={testing === f.id} onClick={() => testForwarder(f)} style={{ padding: '3px 9px', fontSize: 11 }}>
+                          {testing === f.id ? <Spinner size={10} /> : 'Test'}
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </InsightCard>
+
+        {/* Record Type Distribution — horizontal bars */}
+        <InsightCard title="Record Type Distribution">
+          {recordRows.length === 0 ? (
+            <EmptyState title="No records" message="No DNS records to chart." />
+          ) : (
+            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {recordRows.map(r => (
+                <div key={r.type} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 44, fontSize: 11, fontWeight: 700, color: RECORD_COLORS[r.type] || '#6b7280', flexShrink: 0 }}>{r.type}</span>
+                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
+                    <div style={{ width: `${(r.count / maxRecord) * 100}%`, height: '100%', background: RECORD_COLORS[r.type] || '#6b7280', borderRadius: 5 }} />
                   </div>
-                  <span style={{ width: 56, textAlign: 'right', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{(z.record_count || 0).toLocaleString()}</span>
+                  <span style={{ width: 54, textAlign: 'right', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{r.count.toLocaleString()}</span>
+                  <span style={{ width: 40, textAlign: 'right', fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{((r.count / recordTotal) * 100).toFixed(1)}%</span>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </InsightCard>
+
+        {/* Security Intelligence */}
+        <InsightCard title="Security Intelligence"
+          right={<CardLink label="View all →" onClick={() => onNavigate?.('events')} />} scroll>
+          {anomalyByType.length === 0 ? (
+            <EmptyState icon="✓" title="No DNS anomalies" message="No unacknowledged DNS security anomalies." />
+          ) : (
+            <table className="data-table" style={tableStyle}>
+              <thead><tr><th>Anomaly</th><th style={{ textAlign: 'center' }}>Count</th><th style={{ textAlign: 'right' }}>Severity</th></tr></thead>
+              <tbody>
+                {anomalyByType.slice(0, 8).map(a => (
+                  <tr key={a.type}>
+                    <td style={{ ...cellSm, fontWeight: 600 }}>{DNS_ANOMALY_LABELS[a.type] || a.type}</td>
+                    <td style={{ ...cellSm, textAlign: 'center', fontWeight: 700 }}>{a.count}</td>
+                    <td style={{ textAlign: 'right' }}><span className={`badge ${sevBadgeClass(a.sev)}`}>{a.sev}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </InsightCard>
       </div>
 
-      {/* NXDOMAIN rate */}
-      {nx && (
-        <div style={CARD}>
-          <SectionHead title="NXDOMAIN Rate"
-            right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{nx.nxc.toLocaleString()} / {nx.tot.toLocaleString()} queries</span>} />
-          <div style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 32, fontWeight: 800, color: nx.pct > 20 ? 'var(--red)' : 'var(--green)' }}>{nx.pct.toFixed(1)}%</span>
-            <div style={{ flex: 1, height: 12, background: 'var(--border)', borderRadius: 6, overflow: 'hidden', maxWidth: 320 }}>
-              <div style={{ width: `${Math.min(100, nx.pct)}%`, height: '100%', background: nx.pct > 20 ? 'var(--red)' : 'var(--green)', borderRadius: 6 }} />
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{nx.pct > 20 ? 'High NXDOMAIN — possible misconfiguration or malware' : 'Healthy'}</span>
-          </div>
-        </div>
-      )}
+      {/* ───────────────── Row 3 — 3 columns ───────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
 
-      {/* Query rate trend */}
-      <div style={CARD}>
-        <SectionHead title="Query Rate Trend" />
-        {!hasQueryData ? (
-          <EmptyState title="No query statistics collected yet" message="Query rate data will appear once the collector gathers DNS server statistics." />
-        ) : (
-          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {queryStats.filter(s => s.history && s.history.length > 0).map(s => {
-              const pts = s.history.map(h => h.queries_per_sec || 0);
-              const latest = s.latest?.queries_per_sec ?? pts[pts.length - 1] ?? 0;
-              return (
-                <div key={s.server_id} style={{ display: 'flex', alignItems: 'center', gap: 14, borderBottom: '1px solid var(--border-light)', paddingBottom: 10 }}>
-                  <div style={{ width: 160, flexShrink: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.hostname}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{latest.toFixed(1)} qps now</div>
+        {/* DNS Hygiene */}
+        <InsightCard title="DNS Hygiene">
+          {hygiene('🧹', 'Stale Records', staleTotal, staleTotal === 0, { label: 'Clean up →', onClick: () => setView('manage') })}
+          {hygiene('🗑️', 'Scavenging Disabled', scavDisabled, scavDisabled === 0, { label: 'Manage →', onClick: () => setView('manage') })}
+          {hygiene('🔁', 'Replication Issues', replIssues, replIssues === 0, { label: 'View →', onClick: onGotoHealth })}
+        </InsightCard>
+
+        {/* Scavenging Status */}
+        <InsightCard title="Scavenging Status" scroll>
+          {scav.length === 0 ? (
+            <EmptyState title="No zones" message="No zones to report scavenging status." />
+          ) : (
+            <table className="data-table" style={tableStyle}>
+              <thead><tr><th>Zone</th><th>Scav</th><th>Aging</th>{canWrite && <th style={{ textAlign: 'right' }}></th>}</tr></thead>
+              <tbody>
+                {scav.map(row => {
+                  const off = !row.scavenging_enabled;
+                  return (
+                    <tr key={row.id} style={off ? { background: 'var(--yellow)' + '14' } : undefined}>
+                      <td style={{ ...cellSm, fontFamily: 'monospace', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.zone_name}>{row.zone_name}</td>
+                      <td><span className={`badge ${row.scavenging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.scavenging_enabled ? 'On' : 'Off'}</span></td>
+                      <td><span className={`badge ${row.aging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.aging_enabled ? 'On' : 'Off'}</span></td>
+                      {canWrite && (
+                        <td style={{ textAlign: 'right' }}>
+                          {off && (
+                            <button className="btn" disabled={enabling === row.id} onClick={() => enableScav(row)} style={{ padding: '3px 9px', fontSize: 11 }}>
+                              {enabling === row.id ? <Spinner size={10} /> : 'Enable'}
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </InsightCard>
+
+        {/* Query Rate (server-level) */}
+        <InsightCard title="Query Rate"
+          right={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>24h · server-level</span>} scroll>
+          {queryServers.length === 0 ? (
+            <EmptyState title="No query data" message="Query rate appears once the collector gathers DNS stats." />
+          ) : (
+            <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {queryServers.map(s => {
+                const pts = s.history.map(h => h.queries_per_sec || 0);
+                const latest = s.latest?.queries_per_sec ?? pts[pts.length - 1] ?? 0;
+                return (
+                  <div key={s.server_id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border-light)', paddingBottom: 7 }}>
+                    <div style={{ width: 120, flexShrink: 0, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.hostname}>{s.hostname}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{latest.toFixed(1)} qps</div>
+                    </div>
+                    <Sparkline points={pts} color="var(--blue)" />
                   </div>
-                  <Sparkline points={pts} color="var(--blue)" />
+                );
+              })}
+            </div>
+          )}
+        </InsightCard>
+      </div>
+
+      {/* ───────────────── Row 4 — 2 cols + 2 locked ───────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 12 }}>
+
+        {/* Top Zones by Record Count */}
+        <InsightCard title="Top Zones by Record Count" scroll>
+          {topZones.length === 0 ? (
+            <EmptyState title="No zones" message="No zones available." />
+          ) : (
+            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {topZones.map(z => (
+                <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 110, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={z.zone_name}>{z.zone_name}</span>
+                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
+                    <div style={{ width: `${((z.record_count || 0) / maxZoneCount) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 5 }} />
+                  </div>
+                  <span style={{ width: 48, textAlign: 'right', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{(z.record_count || 0).toLocaleString()}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </InsightCard>
+
+        {/* Stale Records Summary */}
+        <InsightCard title="Stale Records Summary"
+          right={<CardLink label="Clean up →" onClick={() => setView('manage')} />} scroll>
+          {staleByZone.length === 0 ? (
+            <EmptyState icon="✓" title="No stale records" message="No stale records detected." />
+          ) : (
+            <table className="data-table" style={tableStyle}>
+              <thead><tr><th>Zone</th><th style={{ textAlign: 'center' }}>Stale</th><th style={{ textAlign: 'center' }}>Oldest</th><th style={{ textAlign: 'right' }}></th></tr></thead>
+              <tbody>
+                {staleByZone.map(g => (
+                  <tr key={g.zone}>
+                    <td style={{ ...cellSm, fontFamily: 'monospace', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.zone}>{g.zone}</td>
+                    <td style={{ ...cellSm, textAlign: 'center', fontWeight: 700 }}>{g.count.toLocaleString()}</td>
+                    <td style={{ ...cellSm, textAlign: 'center', fontWeight: 700, color: g.oldest > 180 ? 'var(--red)' : 'var(--orange)' }}>{g.oldest}d</td>
+                    <td style={{ textAlign: 'right' }}><CardLink label="Clean up →" onClick={() => setView('manage')} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </InsightCard>
+
+        {/* Locked — Top Queried Domains */}
+        <LockedCard icon="🔒" title="Top Queried Domains"
+          lines={['Requires Windows DNS', 'Analytical Event Log']} linkLabel="How to enable →" />
+
+        {/* Locked — Zone Growth Trend */}
+        <LockedCard icon="🔒" title="Zone Growth Trend"
+          lines={['Historical snapshots', 'not yet collected']} linkLabel="Learn more →" />
       </div>
     </div>
   );
@@ -2151,9 +2470,9 @@ function AnalyticsPanel() {
 // ════════════════════════════════════════════════════════════
 // MAIN DNS TAB — thin shell with sub-tab routing
 // ════════════════════════════════════════════════════════════
-type DnsSubTab = 'health' | 'zones' | 'intel' | 'analytics';
+type DnsSubTab = 'health' | 'zones' | 'insights';
 
-export default function DNSTab() {
+export default function DNSTab({ onNavigate }: { onNavigate?: (tab: 'events') => void } = {}) {
   const [tab, setTab] = useState<DnsSubTab>('health');
 
   return (
@@ -2165,14 +2484,12 @@ export default function DNSTab() {
       <div className="sub-tab-bar">
         <SubTabButton label="Health Overview" active={tab === 'health'} onClick={() => setTab('health')} />
         <SubTabButton label="Zones & Records" active={tab === 'zones'} onClick={() => setTab('zones')} />
-        <SubTabButton label="Intelligence" active={tab === 'intel'} onClick={() => setTab('intel')} />
-        <SubTabButton label="Analytics" active={tab === 'analytics'} onClick={() => setTab('analytics')} />
+        <SubTabButton label="DNS Insights" active={tab === 'insights'} onClick={() => setTab('insights')} />
       </div>
 
       {tab === 'health' && <HealthOverviewPanel />}
       {tab === 'zones' && <ZonesRecordsPanel />}
-      {tab === 'intel' && <IntelligencePanel />}
-      {tab === 'analytics' && <AnalyticsPanel />}
+      {tab === 'insights' && <InsightsPanel onNavigate={onNavigate} onGotoHealth={() => setTab('health')} />}
     </div>
   );
 }

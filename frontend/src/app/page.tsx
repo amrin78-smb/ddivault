@@ -1733,7 +1733,7 @@ export default function DDIVaultApp() {
             {tab === 'dashboard' && <DashboardTab onNavigate={navigate} onFocusScope={focusScopeNav} />}
             {tab === 'scopes'    && <DHCPTab focusScope={focusScope} />}
             {tab === 'ipam'      && <IPAMTab />}
-            {tab === 'dns'       && <DNSTab />}
+            {tab === 'dns'       && <DNSTab onNavigate={navigate} />}
             {tab === 'events'    && <EventsTab />}
             {tab === 'intelligence' && <IntelligenceTab initialType={anomalyType} />}
             {tab === 'servers'   && <ServersTab />}

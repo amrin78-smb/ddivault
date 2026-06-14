@@ -94,6 +94,13 @@ const releaseNotes = {
     'Compact KPI tiles everywhere — smaller numbers/labels and reduced height',
     'Tighter section spacing on every page for more content above the fold',
   ],
+  '1.9.0': [
+    'New DNS Insights sub-tab combines the old Intelligence and Analytics views into one compact dashboard',
+    'KPI strip (Avg Health, Query Success Rate, Total Queries 24h, Active Servers, Zones In Sync, Open Alerts)',
+    'Forwarder health, record-type distribution, security anomalies, DNS hygiene, scavenging, query rate, and top zones on one screen',
+    'Inline forwarder Test and scavenging Enable actions; stale-record bulk cleanup via the Manage console',
+    'Locked placeholders for Top Queried Domains and Zone Growth Trend (require future DNS query-log collection)',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
