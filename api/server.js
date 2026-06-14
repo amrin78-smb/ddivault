@@ -108,6 +108,11 @@ const releaseNotes = {
     'New four-pillar scorecards (DHCP/DNS/IPAM/Security) with trend sparklines, infrastructure health trends + HA/failover, DNS query analytics, and a unified activity feed',
     'New read APIs: /api/dashboard/collector-status, /api/dashboard/pillars, /api/infrastructure/health-history',
   ],
+  '1.10.1': [
+    'Operations Center reordered — KPI tiles and pillar scorecards now sit at the top as the at-a-glance overview',
+    'Priority Action Center demoted below the overview and made collapsible (state remembered)',
+    'It auto-expands only when critical items exist, otherwise stays a one-line severity summary — less scrolling on a calm day',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

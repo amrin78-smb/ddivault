@@ -511,13 +511,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
         onNavigate={navStr}
       />
 
-      {/* Priority Action Center — unified, ranked triage queue */}
-      <PriorityActionCenter refreshNonce={refreshNonce} onNavigate={navStr} onFocusScope={onFocusScope} />
-
-      {/* Four pillar scorecards — DHCP / DNS / IPAM / Security */}
-      <PillarScorecards timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
-
-      {/* KPI strip (6 across, compact) */}
+      {/* KPI strip (6 across, compact) — the brief at-a-glance overview, on top */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0,1fr))', gap: 12 }}>
         {loading && !stats
           ? Array.from({ length: 6 }).map((_, i) => (
@@ -539,6 +533,12 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
               </div>
             ))}
       </div>
+
+      {/* Four pillar scorecards — DHCP / DNS / IPAM / Security */}
+      <PillarScorecards timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+
+      {/* Priority Action Center — collapsible triage queue, demoted below the overview */}
+      <PriorityActionCenter refreshNonce={refreshNonce} onNavigate={navStr} onFocusScope={onFocusScope} />
 
       {/* Infrastructure & redundancy — server health trend + HA/failover */}
       <InfraRedundancy timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />

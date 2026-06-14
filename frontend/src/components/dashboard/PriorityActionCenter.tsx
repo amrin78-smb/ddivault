@@ -63,10 +63,24 @@ function normSev(s: any): Severity {
 const arr = (v: any): any[] => (Array.isArray(v) ? v : Array.isArray(v?.data) ? v.data : []);
 const num = (v: any): number => { const n = Number(v); return isNaN(n) ? 0 : n; };
 
+const PAC_COLLAPSE_KEY = 'ddi-pac-collapsed';
+
 export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocusScope }: Props) {
   const [items, setItems] = useState<ActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const firstLoad = useRef(true);
+
+  // ── Collapse state ────────────────────────────────────────────
+  // Tracks whether the user has explicitly toggled (key exists in storage).
+  const hasUserPref = useRef(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(PAC_COLLAPSE_KEY);
+      hasUserPref.current = stored !== null;
+      if (stored !== null) return stored === '1';
+    }
+    return true; // default collapsed
+  });
 
   const load = useCallback(async () => {
     if (firstLoad.current) setLoading(true);
@@ -245,38 +259,84 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
     { critical: 0, warning: 0, info: 0 } as Record<Severity, number>
   );
 
+  // ── Auto-expand on criticals (only if user hasn't chosen) ─────
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (hasUserPref.current) return; // never override an explicit choice
+    setCollapsed(counts.critical === 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, counts.critical]);
+
+  // ── Header toggle (records explicit user preference) ──────────
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      hasUserPref.current = true;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(PAC_COLLAPSE_KEY, next ? '1' : '0');
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',
       borderRadius: 'var(--radius)', overflow: 'hidden',
     }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-        padding: '11px 14px', borderBottom: '1px solid var(--border)',
-      }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-          Priority Action Center
+      {/* Header (toggles collapse) */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        onClick={toggleCollapsed}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            toggleCollapsed();
+          }
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '11px 14px',
+          borderBottom: collapsed ? 'none' : '1px solid var(--border)',
+          cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{
+            fontSize: 11, color: 'var(--text-muted)', flexShrink: 0,
+            display: 'inline-block', transition: 'transform 0.15s',
+            transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+          }}>▾</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Priority Action Center
+          </span>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           <span style={{ color: counts.critical > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: counts.critical > 0 ? 700 : 400 }}>
             {counts.critical} critical
           </span>
           {' · '}{counts.warning} warning{' · '}{counts.info} info
+          {collapsed && (
+            <span style={{ marginLeft: 8, color: 'var(--text-muted)', opacity: 0.6 }}>expand</span>
+          )}
         </div>
       </div>
 
       {/* Body */}
-      {loading ? (
-        <TableSkeleton rows={6} cols={3} />
-      ) : items.length === 0 ? (
-        <EmptyState icon="✓" title="No action items" message="All systems clear — nothing needs attention." />
-      ) : (
-        <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-          {items.map((it) => (
-            <Row key={it.key} item={it} />
-          ))}
-        </div>
+      {!collapsed && (
+        loading ? (
+          <TableSkeleton rows={6} cols={3} />
+        ) : items.length === 0 ? (
+          <EmptyState icon="✓" title="No action items" message="All systems clear — nothing needs attention." />
+        ) : (
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {items.map((it) => (
+              <Row key={it.key} item={it} />
+            ))}
+          </div>
+        )
       )}
     </div>
   );
