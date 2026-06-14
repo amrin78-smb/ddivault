@@ -232,6 +232,18 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_fired  ON alert_events(fired_at DESC
 CREATE INDEX IF NOT EXISTS idx_alert_events_unacked ON alert_events(acknowledged)
   WHERE acknowledged = FALSE;
 
+-- ── Alert noise reduction: resolution tracking ───────────────
+-- An alert is OPEN iff (acknowledged = FALSE AND resolved_at IS NULL);
+-- RESOLVED iff resolved_at IS NOT NULL. Idempotent for existing installs.
+-- Severity columns above are plain TEXT (no CHECK constraint), so the
+-- 'critical'/'warning'/'info' tiers are all accepted without alteration.
+ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS resolved_at     TIMESTAMPTZ;
+ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS resolved_reason TEXT;
+
+-- Speeds the "open alerts" query (acknowledged = FALSE AND resolved_at IS NULL)
+CREATE INDEX IF NOT EXISTS idx_alert_events_open ON alert_events(acknowledged, resolved_at)
+  WHERE acknowledged = FALSE AND resolved_at IS NULL;
+
 -- ── App Settings ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS app_settings (
   key        TEXT PRIMARY KEY,
@@ -442,23 +454,54 @@ CREATE TABLE IF NOT EXISTS alert_email_log (
   error_msg   TEXT
 );
 
--- Seed default alert rule configs (idempotent)
-INSERT INTO alert_rule_config (rule_type, threshold_value, threshold_unit, severity) VALUES
-  ('scope_critical', 90, 'percent', 'critical'),
-  ('scope_warning', 80, 'percent', 'warning'),
-  ('scope_exhaustion_forecast', 14, 'days', 'warning'),
-  ('unknown_device', NULL, NULL, 'warning'),
-  ('server_unreachable', 3, 'retries', 'critical'),
-  ('dhcp_failover_broken', NULL, NULL, 'critical'),
-  ('dns_replication_lag', NULL, NULL, 'warning'),
-  ('lease_spike', 20, 'percent', 'warning'),
-  ('ip_conflict', NULL, NULL, 'critical'),
-  ('new_device_vip_subnet', NULL, NULL, 'critical'),
-  ('after_hours_device', NULL, NULL, 'warning'),
-  ('mac_spoofing', NULL, NULL, 'critical'),
-  ('dhcp_starvation', 50, 'per_minute', 'critical'),
-  ('subnet_jumping', NULL, NULL, 'warning')
+-- ── Seed default alert rule configs (noise-reduction mapping) ──
+-- Idempotent: ON CONFLICT (rule_type) DO NOTHING leaves existing installs'
+-- rows (including admin customizations) untouched. Fresh installs get the
+-- canonical severity + default-enabled + cooldown + digest mapping below.
+--   cooldown_mins: 60 for critical, 360 for warning/info (less re-fire churn).
+--   digest_mode:   TRUE for info-tier rules (batched into the hourly digest).
+-- NOTE: severity columns are plain TEXT (no CHECK constraint), so 'info' is
+-- accepted as-is. Rule_type strings match the strings the collector/dnsMonitor
+-- actually fire (see collector/anomalyDetector.js); none are renamed/invented.
+INSERT INTO alert_rule_config
+  (rule_type, threshold_value, threshold_unit, severity, is_enabled, cooldown_mins, digest_mode) VALUES
+  -- critical, enabled (cooldown 60)
+  ('scope_critical',             90,   'percent',    'critical', TRUE,  60,  FALSE),
+  ('server_unreachable',         3,    'retries',    'critical', TRUE,  60,  FALSE),
+  ('ip_conflict',                NULL, NULL,         'critical', TRUE,  60,  FALSE),
+  ('dhcp_starvation',            50,   'per_minute', 'critical', TRUE,  60,  FALSE),
+  ('dhcp_failover_broken',       NULL, NULL,         'critical', TRUE,  60,  FALSE),
+  -- warning, enabled (cooldown 360)
+  ('scope_warning',              80,   'percent',    'warning',  TRUE,  360, FALSE),
+  ('scope_exhaustion_forecast',  14,   'days',       'warning',  TRUE,  360, FALSE),
+  ('mac_spoofing',               NULL, NULL,         'warning',  TRUE,  360, FALSE),
+  ('new_device_vip_subnet',      NULL, NULL,         'warning',  TRUE,  360, FALSE),
+  ('dns_replication_lag',        NULL, NULL,         'warning',  TRUE,  360, FALSE),
+  ('dns_forwarder_down',         NULL, NULL,         'warning',  TRUE,  360, FALSE),
+  -- info, enabled, digested (cooldown 360)
+  ('lease_spike',                20,   'percent',    'info',     TRUE,  360, TRUE),
+  ('dns_record_count_drop',      NULL, NULL,         'info',     TRUE,  360, TRUE),
+  ('dns_stale_records',          NULL, NULL,         'info',     TRUE,  360, TRUE),
+  ('dns_scavenging_disabled',    NULL, NULL,         'info',     TRUE,  360, TRUE),
+  -- info, DISABLED by default (noisy), digested (cooldown 360)
+  ('after_hours_device',         NULL, NULL,         'info',     FALSE, 360, TRUE),
+  ('subnet_jumping',             NULL, NULL,         'info',     FALSE, 360, TRUE),
+  ('unknown_device',             NULL, NULL,         'info',     FALSE, 360, TRUE)
 ON CONFLICT (rule_type) DO NOTHING;
+
+-- ── Noise-reduction migration for EXISTING installs ──────────
+-- The seed's ON CONFLICT DO NOTHING never updates existing rows, so the three
+-- noisiest rules stay at their OLD shipped default (warning + enabled) forever.
+-- These guarded UPDATEs flip ONLY rows still at that exact original default to
+-- the new quiet state (info + disabled + digest). Because each is guarded on
+-- the old default values, it is safe to re-run and will NOT clobber any admin
+-- customization (a changed severity/is_enabled no longer matches the guard).
+UPDATE alert_rule_config SET severity = 'info', is_enabled = FALSE, digest_mode = TRUE
+  WHERE rule_type = 'after_hours_device' AND severity = 'warning' AND is_enabled = TRUE;
+UPDATE alert_rule_config SET severity = 'info', is_enabled = FALSE, digest_mode = TRUE
+  WHERE rule_type = 'subnet_jumping'     AND severity = 'warning' AND is_enabled = TRUE;
+UPDATE alert_rule_config SET severity = 'info', is_enabled = FALSE, digest_mode = TRUE
+  WHERE rule_type = 'unknown_device'     AND severity = 'warning' AND is_enabled = TRUE;
 
 -- ── Feature 2: Capacity planning ─────────────────────────────
 CREATE TABLE IF NOT EXISTS scope_forecasts (

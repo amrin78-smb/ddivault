@@ -160,7 +160,7 @@ async function detectAnomalies(db) {
               AND b.hour_of_day = EXTRACT(HOUR FROM NOW())::int
               AND b.day_of_week = EXTRACT(DOW FROM NOW())::int
             WHERE s.in_use IS NOT NULL
-              AND b.sample_count >= 5
+              AND b.sample_count >= 10
               AND b.stddev_leases > 0`
         )
       ).rows;
@@ -171,8 +171,11 @@ async function detectAnomalies(db) {
         const stddev = Number(r.stddev_leases);
         if (!Number.isFinite(current) || !Number.isFinite(avg) || !Number.isFinite(stddev)) continue;
 
-        if (current > avg + 2 * stddev) {
-          const severity = current > avg + 3 * stddev ? 'critical' : 'warning';
+        // Trigger at 3σ AND an absolute floor of +20 leases so tiny scopes
+        // (where 3σ may be only a handful of leases) don't fire on noise.
+        // Severity is 'info' at 3σ; only escalate to 'warning' at 4σ+.
+        if (current > avg + 3 * stddev && current - avg >= 20) {
+          const severity = current > avg + 4 * stddev ? 'warning' : 'info';
           const res = await recordAnomaly(db, {
             type: 'lease_spike',
             severity,
@@ -194,7 +197,7 @@ async function detectAnomalies(db) {
               current,
               avg,
               stddev,
-              threshold: avg + 2 * stddev,
+              threshold: avg + 3 * stddev,
             },
           });
           if (res) summary.lease_spike++;
@@ -206,64 +209,65 @@ async function detectAnomalies(db) {
   }
 
   // ---- 2. After-hours device ----------------------------------------------
+  // (Disabled by default at the config layer; retuned to be quiet if re-enabled.)
+  // Judge each device by whether its OWN first_seen timestamp fell outside
+  // business hours — not whether "now" is after hours. Production runs in
+  // Asia/Bangkok (UTC+7); business hours are defined in local time. Lookback is
+  // widened to 60 min so boundary devices aren't missed, and we only flag MACs
+  // that were genuinely never seen before this lease (no prior first_seen row).
   try {
     if (await isRuleEnabled(db, 'after_hours_device')) {
       const bhStart = await getSettingInt(db, 'business_hours_start', 7);
       const bhEnd = await getSettingInt(db, 'business_hours_end', 20);
 
-      // Compute hour/day in Bangkok time (UTC+7) regardless of the host
-      // timezone — production runs in Asia/Bangkok and business hours are
-      // defined in local time.
-      const now = new Date();
-      const hour = (now.getUTCHours() + 7) % 24;
-      const dow = new Date(now.getTime() + 7 * 60 * 60 * 1000).getUTCDay(); // 0=Sun..6=Sat
-      const isWeekend = dow === 0 || dow === 6;
-      const inBusinessHours = !isWeekend && hour >= bhStart && hour < bhEnd;
+      const rows = (
+        await db.query(
+          `SELECT l.ip_address, l.mac_address, l.hostname, l.scope_id, l.first_seen
+             FROM dhcp_leases l
+            WHERE l.first_seen > NOW() - INTERVAL '60 minutes'
+              -- Bangkok-local hour/day-of-week of the device's OWN first_seen.
+              AND (
+                    EXTRACT(DOW  FROM (l.first_seen AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')) IN (0, 6)
+                 OR EXTRACT(HOUR FROM (l.first_seen AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')) < $1
+                 OR EXTRACT(HOUR FROM (l.first_seen AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')) >= $2
+                  )
+              -- Genuinely new: no earlier sighting of this MAC anywhere.
+              AND NOT EXISTS (
+                    SELECT 1 FROM dhcp_leases o
+                     WHERE o.mac_address = l.mac_address
+                       AND o.first_seen < l.first_seen
+                  )
+            ORDER BY l.first_seen DESC
+            LIMIT 50`,
+          [bhStart, bhEnd]
+        )
+      ).rows;
 
-      if (!inBusinessHours) {
-        // Genuinely new devices: first_seen within last 40 min, and the same
-        // MAC was NOT seen more than 30 days ago anywhere in dhcp_leases.
-        const rows = (
-          await db.query(
-            `SELECT l.ip_address, l.mac_address, l.hostname, l.scope_id, l.first_seen
-               FROM dhcp_leases l
-              WHERE l.first_seen > NOW() - INTERVAL '40 minutes'
-                AND NOT EXISTS (
-                      SELECT 1 FROM dhcp_leases o
-                       WHERE o.mac_address = l.mac_address
-                         AND o.first_seen < NOW() - INTERVAL '30 days'
-                    )
-              ORDER BY l.first_seen DESC
-              LIMIT 50`
-          )
-        ).rows;
-
-        for (const r of rows) {
-          const entityId = r.ip_address || r.mac_address;
-          if (!entityId) continue;
-          const res = await recordAnomaly(db, {
-            type: 'after_hours_device',
-            severity: 'warning',
-            entityType: 'device',
-            entityId,
-            description:
-              'After-hours new device: ' +
-              (r.hostname || r.mac_address || r.ip_address) +
-              ' (' +
-              r.ip_address +
-              ' / ' +
-              r.mac_address +
-              ')',
-            details: {
-              ip_address: r.ip_address,
-              mac_address: r.mac_address,
-              hostname: r.hostname,
-              scope_id: r.scope_id,
-              first_seen: r.first_seen,
-            },
-          });
-          if (res) summary.after_hours_device++;
-        }
+      for (const r of rows) {
+        const entityId = r.ip_address || r.mac_address;
+        if (!entityId) continue;
+        const res = await recordAnomaly(db, {
+          type: 'after_hours_device',
+          severity: 'info',
+          entityType: 'device',
+          entityId,
+          description:
+            'After-hours new device: ' +
+            (r.hostname || r.mac_address || r.ip_address) +
+            ' (' +
+            r.ip_address +
+            ' / ' +
+            r.mac_address +
+            ')',
+          details: {
+            ip_address: r.ip_address,
+            mac_address: r.mac_address,
+            hostname: r.hostname,
+            scope_id: r.scope_id,
+            first_seen: r.first_seen,
+          },
+        });
+        if (res) summary.after_hours_device++;
       }
     }
   } catch (e) {
@@ -273,23 +277,32 @@ async function detectAnomalies(db) {
   // ---- 3. MAC spoofing ----------------------------------------------------
   try {
     if (await isRuleEnabled(db, 'mac_spoofing')) {
+      // Only count genuine (non-randomized) MACs. Randomized MACs (private
+      // Wi-Fi addresses) legitimately rotate per-connection and would otherwise
+      // produce constant false positives. Narrow window to ~10 min and require
+      // >= 5 distinct MACs on one IP to flag real spoofing.
       const rows = (
         await db.query(
-          `SELECT ip_address, COUNT(DISTINCT mac_address) c,
-                  array_agg(DISTINCT mac_address) macs
-             FROM dhcp_events
-            WHERE event_time > NOW() - INTERVAL '30 minutes'
-              AND ip_address IS NOT NULL
-              AND mac_address IS NOT NULL
-            GROUP BY ip_address
-           HAVING COUNT(DISTINCT mac_address) >= 2`
+          `SELECT e.ip_address, COUNT(DISTINCT e.mac_address) c,
+                  array_agg(DISTINCT e.mac_address) macs
+             FROM dhcp_events e
+            WHERE e.event_time > NOW() - INTERVAL '10 minutes'
+              AND e.ip_address IS NOT NULL
+              AND e.mac_address IS NOT NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM dhcp_leases l
+                     WHERE l.mac_address = e.mac_address
+                       AND l.is_mac_randomized = TRUE
+                  )
+            GROUP BY e.ip_address
+           HAVING COUNT(DISTINCT e.mac_address) >= 5`
         )
       ).rows;
 
       for (const r of rows) {
         const res = await recordAnomaly(db, {
           type: 'mac_spoofing',
-          severity: 'critical',
+          severity: 'warning',
           entityType: 'device',
           entityId: r.ip_address,
           description:
@@ -297,7 +310,7 @@ async function detectAnomalies(db) {
             r.ip_address +
             ': ' +
             r.c +
-            ' distinct MACs in 30 minutes',
+            ' distinct MACs in 10 minutes',
           details: { ip_address: r.ip_address, mac_count: Number(r.c), macs: r.macs },
         });
         if (res) summary.mac_spoofing++;
@@ -308,8 +321,8 @@ async function detectAnomalies(db) {
   }
 
   // ---- 4. Subnet jumping --------------------------------------------------
-  // Only flag a MAC seen in 3+ distinct /24 subnets in 24h. Normal WiFi roaming
-  // between two adjacent SSIDs/subnets is expected and would otherwise be noise.
+  // Only flag a MAC seen in 5+ distinct /24 subnets in 48h. Normal WiFi roaming
+  // between a few adjacent SSIDs/subnets is expected and would otherwise be noise.
   try {
     if (await isRuleEnabled(db, 'subnet_jumping')) {
       const rows = (
@@ -326,7 +339,7 @@ async function detectAnomalies(db) {
                     split_part(host(ip_address),'.',3)
                   )) subnets
              FROM dhcp_leases
-            WHERE last_seen > NOW() - INTERVAL '24 hours'
+            WHERE last_seen > NOW() - INTERVAL '48 hours'
               AND mac_address IS NOT NULL
               AND ip_address IS NOT NULL
             GROUP BY mac_address
@@ -334,14 +347,14 @@ async function detectAnomalies(db) {
                     split_part(host(ip_address),'.',1) || '.' ||
                     split_part(host(ip_address),'.',2) || '.' ||
                     split_part(host(ip_address),'.',3)
-                  )) >= 3`
+                  )) >= 5`
         )
       ).rows;
 
       for (const r of rows) {
         const res = await recordAnomaly(db, {
           type: 'subnet_jumping',
-          severity: 'warning',
+          severity: 'info',
           entityType: 'device',
           entityId: r.mac_address,
           description:
@@ -349,7 +362,7 @@ async function detectAnomalies(db) {
             r.mac_address +
             ' seen in ' +
             r.c +
-            ' distinct /24 subnets in 24h',
+            ' distinct /24 subnets in 48h',
           details: { mac_address: r.mac_address, subnet_count: Number(r.c), subnets: r.subnets },
         });
         if (res) summary.subnet_jumping++;
@@ -414,7 +427,7 @@ async function detectAnomalies(db) {
         if (!entityId) continue;
         const res = await recordAnomaly(db, {
           type: 'new_device_vip_subnet',
-          severity: 'critical',
+          severity: 'warning',
           entityType: 'device',
           entityId,
           description:
@@ -454,7 +467,7 @@ async function detectAnomalies(db) {
             WHERE event_id = 10
               AND event_time > NOW() - INTERVAL '1 minute'
             GROUP BY server_id
-           HAVING COUNT(*) > 50 AND COUNT(DISTINCT mac_address) > 30`
+           HAVING COUNT(*) > 150 AND COUNT(DISTINCT mac_address) > 75`
         )
       ).rows;
 
@@ -549,7 +562,7 @@ async function detectDnsAnomalies(db) {
 
         const res = await recordAnomaly(db, {
           type: 'dns_replication_lag',
-          severity: lag >= 3 ? 'critical' : 'warning',
+          severity: 'warning',
           entityType: 'dns_zone',
           entityId: r.zone_name,
           description:
@@ -614,7 +627,9 @@ async function detectDnsAnomalies(db) {
     log('dns_forwarder_down check failed: ' + e.message);
   }
 
-  // ---- 3. Record count drop (>10% vs ~24h ago) ----------------------------
+  // ---- 3. Record count drop (>25% vs ~24h ago) ----------------------------
+  // Suppress zones scavenged within the last 2 hours — scavenging legitimately
+  // removes stale records and would otherwise look like an alarming drop.
   try {
     if (await isRuleEnabled(db, 'dns_record_count_drop')) {
       const rows = (
@@ -632,7 +647,9 @@ async function detectDnsAnomalies(db) {
             WHERE z.record_count IS NOT NULL
               AND prev.record_count IS NOT NULL
               AND prev.record_count > 0
-              AND z.record_count < prev.record_count * 0.9`
+              AND z.record_count < prev.record_count * 0.75
+              AND (z.last_scavenged IS NULL
+                   OR z.last_scavenged < NOW() - INTERVAL '2 hours')`
         )
       ).rows;
 
@@ -641,7 +658,7 @@ async function detectDnsAnomalies(db) {
         const prev = Number(r.previous);
         const res = await recordAnomaly(db, {
           type: 'dns_record_count_drop',
-          severity: 'warning',
+          severity: 'info',
           entityType: 'dns_zone',
           entityId: r.zone_name,
           description:
@@ -661,7 +678,9 @@ async function detectDnsAnomalies(db) {
     log('dns_record_count_drop check failed: ' + e.message);
   }
 
-  // ---- 4. Excessive stale records (>50 per zone) --------------------------
+  // ---- 4. Excessive stale records (scales with zone size) -----------------
+  // Alert only when stale count exceeds GREATEST(100, 1% of the zone's records)
+  // so large zones aren't flagged on a trivial absolute count.
   try {
     if (await isRuleEnabled(db, 'dns_stale_records')) {
       const rows = (
@@ -669,15 +688,15 @@ async function detectDnsAnomalies(db) {
           `SELECT z.id, z.zone_name, COUNT(*) AS c
              FROM dns_stale_records sr
              JOIN dns_zones z ON z.id = sr.zone_id
-            GROUP BY z.id, z.zone_name
-           HAVING COUNT(*) > 50`
+            GROUP BY z.id, z.zone_name, z.record_count
+           HAVING COUNT(*) > GREATEST(100, COALESCE(z.record_count, 0) * 0.01)`
         )
       ).rows;
 
       for (const r of rows) {
         const res = await recordAnomaly(db, {
           type: 'dns_stale_records',
-          severity: 'warning',
+          severity: 'info',
           entityType: 'dns_zone',
           entityId: r.zone_name,
           description:
@@ -711,7 +730,7 @@ async function detectDnsAnomalies(db) {
       for (const r of rows) {
         const res = await recordAnomaly(db, {
           type: 'dns_scavenging_disabled',
-          severity: 'warning',
+          severity: 'info',
           entityType: 'dns_zone',
           entityId: r.zone_name,
           description: 'DNS scavenging disabled on zone ' + r.zone_name,
@@ -773,9 +792,9 @@ async function buildBaselines(db) {
         await db.query(
           `SELECT EXTRACT(HOUR FROM recorded_at)::int AS hour_of_day,
                   EXTRACT(DOW  FROM recorded_at)::int AS day_of_week,
-                  AVG(in_use)        AS avg_leases,
-                  STDDEV_POP(in_use) AS stddev_leases,
-                  COUNT(*)           AS sample_count
+                  AVG(in_use)         AS avg_leases,
+                  STDDEV_SAMP(in_use) AS stddev_leases,
+                  COUNT(*)            AS sample_count
              FROM dhcp_scope_history
             WHERE scope_id = $1
               AND in_use IS NOT NULL

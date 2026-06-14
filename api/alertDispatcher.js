@@ -172,9 +172,16 @@ async function sendHourlyDigest(db) {
 
       if (matching.length === 0) continue;
 
-      await emailer.sendDigest(db, matching, r);
-      recipientsSent += 1;
-      alertsSent += matching.length;
+      // Only count a recipient/alerts as sent when the digest actually delivered.
+      // emailer.sendDigest is success-gated: on a send failure it logs the alerts
+      // as 'failed' (not 'sent'), so the dedup query in this function will pick
+      // them up again on the next hourly run for retry — no alert is lost, and a
+      // later successful send logs 'sent' exactly once (no double-send).
+      const res = await emailer.sendDigest(db, matching, r);
+      if (res && res.ok) {
+        recipientsSent += 1;
+        alertsSent += matching.length;
+      }
     }
 
     return { recipients: recipientsSent, alerts: alertsSent };

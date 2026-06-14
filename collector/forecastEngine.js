@@ -7,9 +7,13 @@
 // (optionally) raise scope_exhaustion_forecast alerts with email dispatch.
 //
 // Each forecast is classified by `status`:
-//   'ok'                — growing; days_to_* are projected
-//   'stable'            — growth below ~0.5 leases/day; not alarmist, days null
+//   'ok'                — growing and exhaustion projected within a year
+//   'stable'            — growth below ~0.5 leases/day, OR exhaustion not
+//                         projected within ~365 days; not alarmist
 //   'insufficient_data' — fewer than 7 usable peak-days; days null
+//
+// Exhaustion alerts only fire for 'ok' forecasts at the highest confidence
+// tier (>= 14 peak-days), within the configured threshold (default 30 days).
 //
 // NOTE: There is no per-subnet history table, so IPAM subnet forecasting is
 // intentionally not implemented here. If a subnet history table is added
@@ -46,8 +50,8 @@ async function runForecasts(db) {
   let upserted = 0;
   let fired = 0;
 
-  // Pull the alert rule once (default threshold 14 days, default severity 'warning').
-  let alertThreshold = 14;
+  // Pull the alert rule once (default threshold 30 days, default severity 'warning').
+  let alertThreshold = 30;
   let alertEnabled = false;
   let alertSeverity = 'warning';
   try {
@@ -234,6 +238,25 @@ async function runForecasts(db) {
       const daysTo90 = daysTo(0.9 * total);
       const daysToFull = daysTo(total);
 
+      // 9b. Pathological near-zero-slope guard: a tiny positive slope above
+      //     STABLE_SLOPE can still project exhaustion hundreds/thousands of days
+      //     out. Anything beyond ~365 days is not actionable — report it as
+      //     'stable' rather than an alarming "exhausts in 9999 days".
+      if (daysToFull == null || daysToFull > 365) {
+        await upsertForecast({
+          currentPct,
+          growthRate,
+          daysTo80, daysTo90, daysToFull,
+          confidence,
+          recommendation: 'Stable — exhaustion not projected within a year',
+          dataPoints,
+          status: 'stable',
+        });
+        upserted++;
+        processed++;
+        continue;
+      }
+
       // 10. Recommendation text.
       let recommendation;
       if (daysToFull == null) {
@@ -255,8 +278,15 @@ async function runForecasts(db) {
       });
       upserted++;
 
-      // 12. Alert (with 24h dedup) + best-effort email dispatch.
-      if (alertEnabled && daysToFull != null && daysToFull <= alertThreshold) {
+      // 12. Alert (with 72h dedup) + best-effort email dispatch.
+      // Only fire when the forecast is high-confidence (>= 14 peak-days used).
+      // Lower-confidence trends are too noisy to alert on.
+      if (
+        alertEnabled &&
+        confidence === 'high' &&
+        daysToFull != null &&
+        daysToFull <= alertThreshold
+      ) {
         const message = `Scope ${scopeTextId} (${name}) forecast to exhaust in ~${daysToFull} days`;
         try {
           const dup = await db.query(
@@ -264,7 +294,7 @@ async function runForecasts(db) {
               WHERE scope_id = $1
                 AND severity = $2
                 AND message LIKE 'Scope ' || $3 || ' %forecast to exhaust%'
-                AND fired_at > NOW() - INTERVAL '24 hours'
+                AND fired_at > NOW() - INTERVAL '72 hours'
               LIMIT 1`,
             [scopeTextId, alertSeverity, scopeTextId]
           );

@@ -74,6 +74,8 @@ interface AlertEvent {
   occurrence_count?: number;
   first_fired_at?: string;
   server_hostname?: string;
+  resolved_at?: string | null;
+  resolved_reason?: string | null;
 }
 
 interface ScopeHistory {
@@ -682,7 +684,7 @@ function AlertRows({ alerts, muted, onAck }: { alerts: AlertEvent[]; muted?: boo
     <>
       {alerts.map(a => (
         <tr key={a.id} style={rowStyle}>
-          <td><span className={`badge ${muted ? 'badge-gray' : a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
+          <td><span className={`badge ${muted ? 'badge-gray' : a.severity === 'critical' ? 'badge-red' : a.severity === 'info' ? 'badge-blue' : 'badge-yellow'}`}>{a.severity}</span></td>
           <td>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{a.message}</span>
@@ -696,7 +698,7 @@ function AlertRows({ alerts, muted, onAck }: { alerts: AlertEvent[]; muted?: boo
           </td>
           <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
           <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
-          <td><span className={`badge ${a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.acknowledged ? 'ACK' : 'Open'}</span></td>
+          <td><span className={`badge ${a.resolved_at ? 'badge-green' : a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.resolved_at ? 'Resolved' : a.acknowledged ? 'ACK' : 'Open'}</span></td>
           <td>
             {muted
               ? <span style={{ fontSize: 11, ...MUTED }}>✓ acked</span>
@@ -717,18 +719,19 @@ function EventsTab() {
   const [hours, setHours]     = useState(24);
   const [typeFilter, setTypeFilter] = useState('');
   const [view, setView]       = useState<'alerts' | 'events'>('alerts');
-  const [alertFilter, setAlertFilter] = useState<'all' | 'open' | 'acked'>('all');
+  const [alertFilter, setAlertFilter] = useState<'all' | 'open' | 'acked' | 'resolved'>('open');
   const [ackedOpen, setAckedOpen] = useState(false);
+  const [resolvedOpen, setResolvedOpen] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), limit: '50', hours: String(hours) });
     if (typeFilter) params.set('type', typeFilter);
     api(`/events?${params}`).then(d => { setEvents(d.data || []); setEvTotal(d.total || 0); }).catch(() => {});
-    api('/alerts?limit=50').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
+    api('/alerts?limit=200').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
   }, [page, hours, typeFilter]);
 
-  const reloadAlerts = () => api('/alerts?limit=50').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
+  const reloadAlerts = () => api('/alerts?limit=200').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
 
   const ack = async (id: number) => {
     await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
@@ -741,8 +744,9 @@ function EventsTab() {
     reloadAlerts();
   };
 
-  const openAlerts  = useMemo(() => alerts.filter(a => !a.acknowledged), [alerts]);
-  const ackedAlerts = useMemo(() => alerts.filter(a =>  a.acknowledged), [alerts]);
+  const openAlerts     = useMemo(() => alerts.filter(a => !a.acknowledged && !a.resolved_at), [alerts]);
+  const ackedAlerts    = useMemo(() => alerts.filter(a =>  a.acknowledged), [alerts]);
+  const resolvedAlerts = useMemo(() => alerts.filter(a => !a.acknowledged &&  a.resolved_at), [alerts]);
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -758,13 +762,14 @@ function EventsTab() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Filter pills */}
           <div className="segmented">
-            <button className={alertFilter === 'all' ? 'active' : ''} onClick={() => setAlertFilter('all')}>All</button>
             <button className={alertFilter === 'open' ? 'active' : ''} onClick={() => setAlertFilter('open')}>Open ({openAlerts.length})</button>
             <button className={alertFilter === 'acked' ? 'active' : ''} onClick={() => setAlertFilter('acked')}>Acknowledged ({ackedAlerts.length})</button>
+            <button className={alertFilter === 'resolved' ? 'active' : ''} onClick={() => setAlertFilter('resolved')}>Resolved ({resolvedAlerts.length})</button>
+            <button className={alertFilter === 'all' ? 'active' : ''} onClick={() => setAlertFilter('all')}>All</button>
           </div>
 
           {/* Open alerts — always on top, full table */}
-          {alertFilter !== 'acked' && (
+          {(alertFilter === 'open' || alertFilter === 'all') && (
             <div style={CARD}>
               <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
                 <div style={TITLE}>Alert History</div>
@@ -780,7 +785,7 @@ function EventsTab() {
           )}
 
           {/* Acknowledged alerts — collapsible, muted */}
-          {alertFilter !== 'open' && ackedAlerts.length > 0 && (
+          {(alertFilter === 'acked' || alertFilter === 'all') && ackedAlerts.length > 0 && (
             <div style={CARD}>
               <div
                 onClick={() => setAckedOpen(o => !o)}
@@ -796,6 +801,29 @@ function EventsTab() {
                   <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
                     <AlertRows alerts={ackedAlerts} muted />
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* Auto-resolved alerts — collapsible, muted */}
+          {(alertFilter === 'resolved' || alertFilter === 'all') && resolvedAlerts.length > 0 && (
+            <div style={CARD}>
+              <div
+                onClick={() => setResolvedOpen(o => !o)}
+                style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: (resolvedOpen || alertFilter === 'resolved') ? '1px solid var(--border-light)' : 'none' }}
+              >
+                <div style={{ ...TITLE, color: 'var(--text-muted)' }}>✓ Auto-resolved ({resolvedAlerts.length} alert{resolvedAlerts.length === 1 ? '' : 's'})</div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: (resolvedOpen || alertFilter === 'resolved') ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </div>
+              {(resolvedOpen || alertFilter === 'resolved') && (
+                <table className="data-table">
+                  <thead><tr><th>Severity</th><th>Message</th><th>Scope</th><th>Fired</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody>
+                    <AlertRows alerts={resolvedAlerts} muted />
                   </tbody>
                 </table>
               )}

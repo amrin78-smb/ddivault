@@ -285,7 +285,10 @@ async function sendAlert(db, alert, recipients) {
   let failed = 0;
 
   for (const r of recipients) {
-    let status = 'sent';
+    // Success-gated logging: attempt the send first, and only log status='sent'
+    // AFTER sendMail() resolves. If it throws, log status='failed' so the alert
+    // is NOT treated as delivered and remains eligible for the next digest/retry.
+    let status;
     let errorMsg = null;
     try {
       await transport.sendMail({
@@ -294,6 +297,7 @@ async function sendAlert(db, alert, recipients) {
         subject,
         html,
       });
+      status = 'sent';
       sent++;
     } catch (err) {
       status = 'failed';
@@ -307,59 +311,107 @@ async function sendAlert(db, alert, recipients) {
         [alert.id, r.email, subject, status, errorMsg]
       );
     } catch (e) {
-      // Never throw from logging.
+      // Never throw from logging — a logging failure must not mask a successful
+      // send. A successful send that fails to log will be re-included next cycle
+      // (the dedup query keys off a status='sent' row), causing at most a
+      // duplicate notification rather than a lost one.
     }
   }
 
   return { sent, failed };
 }
 
+// Log every alert in a digest with a single status, atomically when possible.
+// Uses a BEGIN/COMMIT/ROLLBACK transaction on a dedicated pool client so the
+// digest's log rows are all-or-nothing. Falls back to per-row inserts on the
+// shared handle if the handle is not a pool (no .connect()). Never throws.
+async function logDigest(db, alerts, recipient, subject, status, errorMsg) {
+  const rows =
+    alerts.length > 0
+      ? alerts.map((a) => [a.id || null, recipient.email, subject, status, errorMsg])
+      : [[null, recipient.email, subject, status, errorMsg]];
+
+  const sql =
+    'INSERT INTO alert_email_log (alert_id, recipient, subject, status, error_msg) VALUES ($1, $2, $3, $4, $5)';
+
+  // Preferred: atomic transaction on a checked-out client.
+  if (db && typeof db.connect === 'function') {
+    let client;
+    try {
+      client = await db.connect();
+      await client.query('BEGIN');
+      for (const params of rows) {
+        await client.query(sql, params);
+      }
+      await client.query('COMMIT');
+      return;
+    } catch (e) {
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (e2) {
+          // ignore rollback failure
+        }
+      }
+      // Logging failure must never mask the send result. Swallow.
+    } finally {
+      if (client) {
+        try {
+          client.release();
+        } catch (e3) {
+          // ignore
+        }
+      }
+    }
+    return;
+  }
+
+  // Fallback: best-effort per-row inserts on the shared handle.
+  for (const params of rows) {
+    try {
+      await db.query(sql, params);
+    } catch (e) {
+      // ignore logging errors
+    }
+  }
+}
+
 async function sendDigest(db, alerts, recipient) {
   alerts = alerts || [];
 
+  const cfg = await getSmtpConfig(db);
+  if (!cfg || !cfg.enabled) {
+    return { ok: false, error: 'SMTP not enabled' };
+  }
+
+  const transport = buildTransport(cfg);
+  const html = renderDigestHtml(alerts);
+  const subject = '[DDIVault] Alert digest — ' + alerts.length + ' alert(s)';
+
+  // Success-gated logging: attempt delivery FIRST. Only write status='sent'
+  // rows AFTER sendMail() resolves. If sendMail throws, write status='failed'
+  // (never 'sent') so these alerts are NOT considered delivered and remain
+  // eligible for the next hourly digest. The dedup query in sendHourlyDigest
+  // keys off the presence of a status='sent' row per alert_id, so a failed
+  // send leaves the alert pickable next cycle, and a later success then logs
+  // 'sent' once — preventing both lost alerts and double-sends.
   try {
-    const cfg = await getSmtpConfig(db);
-    if (!cfg || !cfg.enabled) {
-      return { ok: false, error: 'SMTP not enabled' };
-    }
-
-    const transport = buildTransport(cfg);
-    const html = renderDigestHtml(alerts);
-    const subject = '[DDIVault] Alert digest — ' + alerts.length + ' alert(s)';
-
     await transport.sendMail({
       from: fromHeader(cfg),
       to: recipient.name ? '"' + recipient.name + '" <' + recipient.email + '>' : recipient.email,
       subject,
       html,
     });
-
-    if (alerts.length > 0) {
-      for (const a of alerts) {
-        try {
-          await db.query(
-            'INSERT INTO alert_email_log (alert_id, recipient, subject, status, error_msg) VALUES ($1, $2, $3, $4, $5)',
-            [a.id || null, recipient.email, subject, 'sent', null]
-          );
-        } catch (e) {
-          // ignore logging errors
-        }
-      }
-    } else {
-      try {
-        await db.query(
-          'INSERT INTO alert_email_log (alert_id, recipient, subject, status, error_msg) VALUES ($1, $2, $3, $4, $5)',
-          [null, recipient.email, subject, 'sent', null]
-        );
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    return { ok: true };
   } catch (err) {
+    // Send failed — log as 'failed' (not 'sent') so alerts stay eligible.
+    await logDigest(db, alerts, recipient, subject, 'failed', err.message);
     return { ok: false, error: err.message };
   }
+
+  // Send succeeded — now log as 'sent'. A logging failure here is swallowed
+  // inside logDigest and cannot turn a successful send into a reported failure.
+  await logDigest(db, alerts, recipient, subject, 'sent', null);
+  return { ok: true };
 }
 
 module.exports = {

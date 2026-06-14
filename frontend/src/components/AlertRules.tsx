@@ -58,6 +58,18 @@ const RULE_INFO: Record<string, { name: string; desc: string }> = {
 
 const SEVERITY_OPTIONS = ['critical', 'warning', 'info'];
 
+// Tier sort order (Critical → Warning → Info → anything unknown last)
+const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+
+// Badge class per severity, consistent with the app palette
+// (critical=red, warning=yellow, info=blue)
+function severityBadgeClass(s: string): string {
+  if (s === 'critical') return 'badge-red';
+  if (s === 'warning') return 'badge-yellow';
+  if (s === 'info') return 'badge-blue';
+  return 'badge-gray';
+}
+
 function ruleName(t: string): string { return RULE_INFO[t]?.name || t; }
 function ruleDesc(t: string): string { return RULE_INFO[t]?.desc || ''; }
 
@@ -128,6 +140,10 @@ export default function AlertRules() {
 
       <ReadOnlyBanner />
 
+      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        Rules are ordered by tier. Info-tier rules are low-signal and hidden from the default alert view.
+      </div>
+
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden' }}>
         {loading ? (
           <TableSkeleton rows={8} cols={6} />
@@ -147,7 +163,12 @@ export default function AlertRules() {
               </tr>
             </thead>
             <tbody>
-              {rules.map(r => (
+              {[...rules]
+                .sort((a, b) =>
+                  (SEVERITY_RANK[a.severity] ?? 99) - (SEVERITY_RANK[b.severity] ?? 99) ||
+                  ruleName(a.rule_type).localeCompare(ruleName(b.rule_type))
+                )
+                .map(r => (
                 <tr key={r.rule_type}>
                   <td style={{ ...TD, minWidth: 240 }}>
                     <div style={{ fontWeight: 600 }}>{ruleName(r.rule_type)}</div>
@@ -156,12 +177,15 @@ export default function AlertRules() {
                     )}
                   </td>
                   <td style={TD}>
-                    <input
-                      type="checkbox"
-                      checked={r.is_enabled}
-                      disabled={!canWrite}
-                      onChange={e => update(r.rule_type, { is_enabled: e.target.checked })}
-                    />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canWrite ? 'pointer' : 'default' }}>
+                      <input
+                        type="checkbox"
+                        checked={r.is_enabled}
+                        disabled={!canWrite}
+                        onChange={e => update(r.rule_type, { is_enabled: e.target.checked })}
+                      />
+                      <span className={`badge ${r.is_enabled ? 'badge-green' : 'badge-gray'}`}>{r.is_enabled ? 'On' : 'Off'}</span>
+                    </label>
                   </td>
                   <td style={{ ...TD, minWidth: 140 }}>
                     {r.threshold_value != null ? (
@@ -179,15 +203,19 @@ export default function AlertRules() {
                       <span style={{ color: 'var(--text-muted)' }}>—</span>
                     )}
                   </td>
-                  <td style={{ ...TD, minWidth: 120 }}>
-                    <select
-                      value={r.severity}
-                      disabled={!canWrite}
-                      onChange={e => update(r.rule_type, { severity: e.target.value })}
-                      style={INPUT}
-                    >
-                      {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-                    </select>
+                  <td style={{ ...TD, minWidth: 130 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className={`badge ${severityBadgeClass(r.severity)}`}>{r.severity}</span>
+                      <select
+                        value={r.severity}
+                        disabled={!canWrite}
+                        onChange={e => update(r.rule_type, { severity: e.target.value })}
+                        style={INPUT}
+                        aria-label="Severity"
+                      >
+                        {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                      </select>
+                    </div>
                   </td>
                   <td style={{ ...TD, minWidth: 100 }}>
                     <input

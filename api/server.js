@@ -113,6 +113,13 @@ const releaseNotes = {
     'Priority Action Center demoted below the overview and made collapsible (state remembered)',
     'It auto-expands only when critical items exist, otherwise stays a one-line severity summary — less scrolling on a calm day',
   ],
+  '1.11.0': [
+    'Alerts now auto-resolve when the condition clears (e.g. a scope drops back below threshold) instead of piling up until acknowledged',
+    'Scope alerts use hysteresis (fire 90/clear 85, fire 80/clear 75) and one-open-alert-per-condition dedup — no more flapping or hourly re-fires',
+    'New Info severity tier; noisy behavioral rules (after-hours device, subnet jumping, unknown device) demoted to Info and off by default; lease-spike, MAC-spoofing, subnet-jump, starvation, stale/record-drop thresholds retuned to cut false positives',
+    'Alerts page defaults to Open, adds a Resolved view, and Info-tier items are kept out of the Priority Action Center so managers see only meaningful alerts',
+    'Capacity forecast alerts require high confidence and a 30-day horizon; hourly digest emails are now retried on send failure instead of being silently dropped',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -449,7 +456,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
       db.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE percent_used >= 90 AND total_ips > 0) as critical, COUNT(*) FILTER (WHERE percent_used >= 80 AND percent_used < 90 AND total_ips > 0) as warning FROM dhcp_scopes'),
       db.query("SELECT COUNT(*) as total FROM dhcp_leases WHERE address_state = 'Active'"),
       db.query('SELECT COUNT(*) as total FROM dns_zones'),
-      db.query("SELECT COUNT(*) as total FROM alert_events WHERE acknowledged = FALSE"),
+      db.query("SELECT COUNT(*) as total FROM alert_events WHERE acknowledged = FALSE AND resolved_at IS NULL"),
     ]);
 
     const scopeRow   = scopes.rows[0];
@@ -1228,8 +1235,21 @@ app.get('/api/alerts', async (req, res) => {
     const limit  = safeLimit(req.query.limit);
     const offset = (page - 1) * limit;
     const unackedOnly = req.query.unacked === 'true';
+    const status = (req.query.status || 'all').toString();
 
-    const where = unackedOnly ? 'WHERE acknowledged = FALSE' : '';
+    // Build the WHERE clause from the status filter (and legacy unacked param).
+    // open     → acknowledged=FALSE AND resolved_at IS NULL
+    // resolved → resolved_at IS NOT NULL
+    // all      → no filter (default; preserves prior behaviour)
+    const conds = [];
+    if (status === 'open') {
+      conds.push('ae.acknowledged = FALSE', 'ae.resolved_at IS NULL');
+    } else if (status === 'resolved') {
+      conds.push('ae.resolved_at IS NOT NULL');
+    } else if (unackedOnly) {
+      conds.push('ae.acknowledged = FALSE');
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     // Group identical alerts (same server + same alert shape) within the same
     // hour into one representative row so a storm of 384 near-identical fires
@@ -1312,10 +1332,23 @@ app.post('/api/alerts/:id/acknowledge', requireWrite, async (req, res) => {
 app.post('/api/alerts/acknowledge-all', requireWrite, async (req, res) => {
   try {
     const user = req.body.user || 'admin';
+    const severity = req.body.severity;
+    const status = (req.body.status || 'open').toString();
+
+    // Only OPEN rows are ever ack-able (acknowledged=FALSE AND resolved_at IS NULL).
+    // Optional filters let the UI ack only what it is currently viewing.
+    const conds = ['acknowledged = FALSE', 'resolved_at IS NULL'];
+    const params = [user];
+    if (severity) {
+      params.push(severity);
+      conds.push(`severity = $${params.length}`);
+    }
+    // status is accepted for API symmetry; anything other than 'open' still only
+    // affects open rows (resolved rows cannot be acknowledged).
     await db.query(
       `UPDATE alert_events SET acknowledged = TRUE, acknowledged_by = $1, acknowledged_at = NOW()
-       WHERE acknowledged = FALSE`,
-      [user]
+       WHERE ${conds.join(' AND ')}`,
+      params
     );
     res.json({ success: true });
   } catch (err) {
@@ -1487,6 +1520,12 @@ app.put('/api/alert-rule-config/:type', requireSuperAdmin, async (req, res) => {
   try {
     const type = req.params.type;
     const { is_enabled, threshold_value, severity, cooldown_mins, digest_mode } = req.body;
+    // Valid severities are 'critical', 'warning', 'info'. Reject anything else
+    // (but allow null/undefined to pass through and keep the existing value).
+    const VALID_SEVERITIES = ['critical', 'warning', 'info'];
+    if (severity != null && !VALID_SEVERITIES.includes(severity)) {
+      return res.status(400).json({ error: 'Invalid severity (must be critical, warning, or info)' });
+    }
     const r = await db.query(
       `UPDATE alert_rule_config
          SET is_enabled=$2, threshold_value=$3, severity=$4, cooldown_mins=$5, digest_mode=$6, updated_at=NOW()

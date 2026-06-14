@@ -146,7 +146,7 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
 
     // ── Open DHCP alerts ──────────────────────────────────────
     for (const a of arr(fAlerts)) {
-      if (!a || a.acknowledged) continue;
+      if (!a || a.acknowledged || a.resolved_at) continue;
       out.push({
         key: `alert:${a.id}`,
         severity: normSev(a.severity),
@@ -159,7 +159,7 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
 
     // ── Unacknowledged anomalies ──────────────────────────────
     for (const a of arr(fAnomalies)) {
-      if (!a || a.acknowledged) continue;
+      if (!a || a.acknowledged || a.resolved_at) continue;
       out.push({
         key: `anomaly:${a.id}`,
         severity: normSev(a.severity),
@@ -247,7 +247,9 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
       return 0;
     });
 
-    setItems(out);
+    // The Action Center is the "meaningful triage" view — drop info-tier (low
+    // signal) items; they remain visible in the Intelligence / DNS consoles.
+    setItems(out.filter((it) => it.severity !== 'info'));
     setLoading(false);
     firstLoad.current = false;
   }, [onNavigate, onFocusScope]);
@@ -317,7 +319,7 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
           <span style={{ color: counts.critical > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: counts.critical > 0 ? 700 : 400 }}>
             {counts.critical} critical
           </span>
-          {' · '}{counts.warning} warning{' · '}{counts.info} info
+          {' · '}{counts.warning} warning
           {collapsed && (
             <span style={{ marginLeft: 8, color: 'var(--text-muted)', opacity: 0.6 }}>expand</span>
           )}

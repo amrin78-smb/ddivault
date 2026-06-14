@@ -35,8 +35,10 @@ const db = new Pool({
 
 db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 
-const SCOPE_WARNING_PCT    = parseFloat(process.env.SCOPE_WARNING_PCT  || '80');
-const SCOPE_CRITICAL_PCT   = parseFloat(process.env.SCOPE_CRITICAL_PCT || '90');
+const SCOPE_WARNING_PCT        = parseFloat(process.env.SCOPE_WARNING_PCT       || '80');
+const SCOPE_CRITICAL_PCT       = parseFloat(process.env.SCOPE_CRITICAL_PCT      || '90');
+const SCOPE_WARNING_CLEAR_PCT  = parseFloat(process.env.SCOPE_WARNING_CLEAR_PCT  || '75');
+const SCOPE_CRITICAL_CLEAR_PCT = parseFloat(process.env.SCOPE_CRITICAL_CLEAR_PCT || '85');
 
 const INTERVAL_LOG_TAIL    = 60  * 1000;
 const INTERVAL_SCOPE_STATS = 5   * 60 * 1000;
@@ -268,17 +270,42 @@ async function collectScopeStats(server) {
     } else if (pct >= SCOPE_WARNING_PCT) {
       alertsToFire.push({ scopeId, pct, severity:'warning',  msg:`[${ip}] Scope ${scopeId} is ${pct.toFixed(1)}% full — ${free} IPs remaining` });
     }
+
+    // Auto-resolve (hysteresis) — runs every poll for every scope, even healthy ones.
+    // Resolve OPEN critical alerts once utilization drops below the critical clear band.
+    if (pct < SCOPE_CRITICAL_CLEAR_PCT) {
+      await db.query(
+        `UPDATE alert_events
+            SET resolved_at = NOW(), resolved_reason = 'condition-cleared'
+          WHERE scope_id = $1 AND severity = 'critical'
+            AND acknowledged = FALSE AND resolved_at IS NULL`,
+        [scopeId]
+      ).catch(() => {});
+    }
+    // Resolve OPEN warning alerts once utilization drops below the warning clear band.
+    if (pct < SCOPE_WARNING_CLEAR_PCT) {
+      await db.query(
+        `UPDATE alert_events
+            SET resolved_at = NOW(), resolved_reason = 'condition-cleared'
+          WHERE scope_id = $1 AND severity = 'warning'
+            AND acknowledged = FALSE AND resolved_at IS NULL`,
+        [scopeId]
+      ).catch(() => {});
+    }
     upserted++;
   }
 
   log(`[Scopes] ${ip} — updated ${upserted} scope(s)`);
 
   for (const alert of alertsToFire) {
-    const recent = await db.query(
-      `SELECT id FROM alert_events WHERE scope_id=$1 AND severity=$2 AND fired_at > NOW()-INTERVAL '1 hour' LIMIT 1`,
+    // OPEN-condition dedup: only one open alert per (scope, severity) at a time.
+    const open = await db.query(
+      `SELECT id FROM alert_events
+        WHERE scope_id=$1 AND severity=$2 AND acknowledged=FALSE AND resolved_at IS NULL
+        LIMIT 1`,
       [alert.scopeId, alert.severity]
     );
-    if (!recent.rows.length) {
+    if (!open.rows.length) {
       await db.query(
         `INSERT INTO alert_events (scope_id, message, severity, server_id) VALUES ($1,$2,$3,$4)`,
         [alert.scopeId, alert.msg, alert.severity, server.id]
@@ -459,17 +486,38 @@ async function tailDhcpLog(server) {
       }
 
       if (ev.event_id === 1020) {
-        await db.query(
-          `INSERT INTO alert_events (server_id, scope_id, message, severity)
-           VALUES ($1,$2,$3,'critical')`,
-          [serverId, ev.ip_address, `[${ip}] DHCP scope full: ${ev.description}`]
-        ).catch(() => {});
+        // Dedup: skip if an OPEN scope-full alert already exists for this server+scope.
+        const msg1020 = `[${ip}] DHCP scope full: ${ev.description}`;
+        const open1020 = await db.query(
+          `SELECT id FROM alert_events
+            WHERE server_id=$1 AND scope_id=$2 AND message=$3
+              AND acknowledged=FALSE AND resolved_at IS NULL
+            LIMIT 1`,
+          [serverId, ev.ip_address, msg1020]
+        ).catch(() => ({ rows: [] }));
+        if (!open1020.rows.length) {
+          await db.query(
+            `INSERT INTO alert_events (server_id, scope_id, message, severity)
+             VALUES ($1,$2,$3,'critical')`,
+            [serverId, ev.ip_address, msg1020]
+          ).catch(() => {});
+        }
       }
       if (ev.event_id === 2019) {
-        await db.query(
-          `INSERT INTO alert_events (server_id, message, severity) VALUES ($1,$2,'critical')`,
-          [serverId, `[${ip}] Rogue DHCP server detected!`]
-        ).catch(() => {});
+        // Dedup: skip if an OPEN Rogue DHCP alert already exists for this server.
+        const open2019 = await db.query(
+          `SELECT id FROM alert_events
+            WHERE server_id=$1 AND message LIKE '%Rogue DHCP server detected%'
+              AND acknowledged=FALSE AND resolved_at IS NULL
+            LIMIT 1`,
+          [serverId]
+        ).catch(() => ({ rows: [] }));
+        if (!open2019.rows.length) {
+          await db.query(
+            `INSERT INTO alert_events (server_id, message, severity) VALUES ($1,$2,'critical')`,
+            [serverId, `[${ip}] Rogue DHCP server detected!`]
+          ).catch(() => {});
+        }
       }
     } catch (err) {
       if (!err.message.includes('unique')) console.error('[Log] Insert error:', err.message);
