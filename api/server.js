@@ -120,6 +120,11 @@ const releaseNotes = {
     'Alerts page defaults to Open, adds a Resolved view, and Info-tier items are kept out of the Priority Action Center so managers see only meaningful alerts',
     'Capacity forecast alerts require high confidence and a 30-day horizon; hourly digest emails are now retried on send failure instead of being silently dropped',
   ],
+  '1.12.0': [
+    'Server health, DHCP failover, and DNS replication-lag alerts now auto-resolve when the condition clears (server recovers, failover returns to normal, zone catches up)',
+    'These alerts use one-open-alert-per-condition dedup instead of an hourly re-fire window — no more repeats while an issue persists',
+    'Documented the schema deploy order for alert auto-resolve (resolved_at columns) in the upgrade runbook',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

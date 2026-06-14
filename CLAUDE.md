@@ -169,6 +169,12 @@ psql -U ddivault_user -d ddivault -f scripts/schema-server-auth.sql
 psql -U ddivault_user -d ddivault -f scripts/schema-sites.sql
 ```
 
+### ⚠️ Upgrade note — alert auto-resolve (v1.11.0+)
+The alerting overhaul added `alert_events.resolved_at` / `resolved_reason` (in `scripts/schema.sql`). The collector's auto-resolve and open-condition dedup queries reference these columns, so **`schema.sql` must be applied before the new Collector starts**, or the collector will error on every poll with `column "resolved_at" does not exist`.
+- **Normal deploy:** `installer/Update-DDIVault.ps1` already re-runs all four schema files (STEP 4.5, idempotent) before restarting services — no manual action needed.
+- **Manual deploy:** re-run `scripts/schema.sql` first, then restart `DDIVault-Collector` and `DDIVault-API`.
+- The seed also reclassifies noisy behavioral rules (`after_hours_device`, `subnet_jumping`, `unknown_device`) to the `info` tier and disables them by default; the guarded migration only flips rows still at the original shipped default, so prior admin customizations are preserved.
+
 ### Cross-DB access (NetVault sites)
 ```sql
 -- Run as postgres superuser on netvault DB

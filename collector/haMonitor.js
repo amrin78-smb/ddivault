@@ -30,16 +30,31 @@ function formatDuration(seconds) {
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
-/** Insert an alert only if an equivalent one hasn't fired in the last hour. */
-async function fireAlertDeduped(db, { serverId, scopeId, message, severity }) {
+/**
+ * Fire an alert only if there isn't already an OPEN one for the same condition.
+ * "Open" = acknowledged=FALSE AND resolved_at IS NULL. dedupeKey is a SQL LIKE
+ * pattern identifying the ongoing condition, so a re-poll with a slightly
+ * different message (new score, serial, or state) doesn't create a duplicate;
+ * it defaults to the exact message.
+ */
+async function fireAlertDeduped(db, { serverId, scopeId, message, severity, dedupeKey }) {
   const recent = await db.query(
-    `SELECT id FROM alert_events WHERE message=$1 AND fired_at > NOW()-INTERVAL '1 hour' LIMIT 1`,
-    [message]).catch(() => ({ rows: [] }));
+    `SELECT id FROM alert_events
+      WHERE message LIKE $1 AND acknowledged=FALSE AND resolved_at IS NULL LIMIT 1`,
+    [dedupeKey || message]).catch(() => ({ rows: [] }));
   if (recent.rows.length) return;
   await db.query(
     `INSERT INTO alert_events (server_id, scope_id, message, severity) VALUES ($1,$2,$3,$4)`,
     [serverId || null, scopeId || null, message, severity || 'warning']).catch(() => {});
   log(`[Alert] ${(severity || 'warning').toUpperCase()}: ${message}`);
+}
+
+/** Auto-resolve open alerts whose condition has cleared (matched by LIKE pattern). */
+async function resolveAlerts(db, { pattern, reason }) {
+  await db.query(
+    `UPDATE alert_events SET resolved_at=NOW(), resolved_reason=$2
+      WHERE acknowledged=FALSE AND resolved_at IS NULL AND message LIKE $1`,
+    [pattern, reason || 'condition-cleared']).catch(() => {});
 }
 
 // ── DHCP Failover ─────────────────────────────────────────────
@@ -82,8 +97,12 @@ async function pollFailover(db, ps, server, auth) {
     if (prevState && prevState !== state && state !== 'normal') {
       await fireAlertDeduped(db, {
         serverId: server.id, message: `DHCP failover "${relName}" changed state: ${prevState} → ${state}`,
+        dedupeKey: `DHCP failover "${relName}" changed state:%`,
         severity: state === 'partner-down' || state === 'communication-interrupted' ? 'critical' : 'warning',
       });
+    } else if (state === 'normal') {
+      // Failover back to normal — auto-resolve any open alert for this relationship.
+      await resolveAlerts(db, { pattern: `DHCP failover "${relName}" changed state:%`, reason: 'failover-normal' });
     }
   }
   log(`[Failover] ${ip} — ${pairs.length} relationship(s) checked`);
@@ -135,8 +154,12 @@ async function pollDnsSoa(db, ps, server, auth) {
       await fireAlertDeduped(db, {
         serverId: server.id,
         message: `DNS zone "${z.zone_name}" on ${server.hostname} is behind (serial ${serial} < ${peerMax}) — ${behind} revision${behind === 1 ? '' : 's'} behind${estStr}`,
+        dedupeKey: `DNS zone "${z.zone_name}" on ${server.hostname} is behind%`,
         severity: 'warning',
       });
+    } else {
+      // Zone caught up with its peers — auto-resolve any open replication-lag alert.
+      await resolveAlerts(db, { pattern: `DNS zone "${z.zone_name}" on ${server.hostname} is behind%`, reason: 'replication-caught-up' });
     }
     checked++;
   }
@@ -230,8 +253,12 @@ async function pollHealth(db, ps, server, auth) {
     await fireAlertDeduped(db, {
       serverId: server.id,
       message: `Server "${server.hostname}" health score dropped to ${score}/100${breakdown}`,
+      dedupeKey: `Server "${server.hostname}" health score dropped to%`,
       severity: score < 70 ? 'critical' : 'warning',
     });
+  } else {
+    // Server healthy again (score >= 80) — auto-resolve any open health alert for it.
+    await resolveAlerts(db, { pattern: `Server "${server.hostname}" health score dropped to%`, reason: 'server-recovered' });
   }
   log(`[Health] ${ip} — score ${score}/100 (winrm=${winrmOk}, query=${queryMs ?? '—'}ms)`);
 }
