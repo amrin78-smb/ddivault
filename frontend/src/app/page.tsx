@@ -22,6 +22,12 @@ import CapacityForecast from '@/components/CapacityForecast';
 import SiteHealth from '@/components/SiteHealth';
 import SecurityOverview from '@/components/SecurityOverview';
 import DeviceDonut from '@/components/DeviceDonut';
+import CommandBar from '@/components/dashboard/CommandBar';
+import PriorityActionCenter from '@/components/dashboard/PriorityActionCenter';
+import PillarScorecards from '@/components/dashboard/PillarScorecards';
+import InfraRedundancy from '@/components/dashboard/InfraRedundancy';
+import DnsAnalyticsCard from '@/components/dashboard/DnsAnalyticsCard';
+import ActivityFeed from '@/components/dashboard/ActivityFeed';
 import { ApiKeysSection } from '@/components/ApiKeysSection';
 import {
   PageHeader, EmptyState, UtilBar, Trend, TableSkeleton, Skeleton, pctColor,
@@ -406,49 +412,49 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
   const [stats, setStats]   = useState<any>(null);
   const [scopes, setScopes] = useState<Scope[]>([]);
   const [scopeHistory, setScopeHistory] = useState<ScopeHistory[]>([]);
-  const [events, setEvents] = useState<DhcpEvent[]>([]);
-  const [infra, setInfra]   = useState<any>(null);
   const [ipDist, setIpDist] = useState<Record<string, number> | null>(null);
   const [leaseTrend, setLeaseTrend] = useState<{ day: string; leases: number }[]>([]);
-  const [audit, setAudit]   = useState<any[]>([]);
-  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // ── Operations Center controls ──────────────────────────────
+  // Global time range drives every trend on the page; refreshNonce fans a refresh
+  // out to all self-fetching child widgets; paused stops the 30s auto-refresh.
+  const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d'>('7d');
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+
+  const range = timeRange === '24h' ? { days: 1, hours: 24 } : timeRange === '30d' ? { days: 30, hours: 720 } : { days: 7, hours: 168 };
 
   const load = useCallback(async () => {
     const results = await Promise.allSettled([
       api('/dashboard/stats'),
       api('/scopes'),
-      api('/dashboard/recent-events?limit=20'),
-      api('/scopes/history/all?hours=168'),
-      api('/infrastructure/health'),
+      api(`/scopes/history/all?hours=${range.hours}`),
       api('/dashboard/ip-distribution'),
-      api('/dashboard/lease-trend?days=7'),
-      api('/audit?limit=10'),
-      api('/alerts?limit=10'),
+      api(`/dashboard/lease-trend?days=${range.days}`),
     ]);
-    const [s, sc, ev, hist, inf, dist, lt, au, al] = results;
+    const [s, sc, hist, dist, lt] = results;
     if (s.status  === 'fulfilled') setStats(s.value);
     if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
-    if (ev.status === 'fulfilled') setEvents(ev.value.data || []);
     if (hist.status === 'fulfilled') setScopeHistory(hist.value.data || []);
-    if (inf.status === 'fulfilled') setInfra(inf.value);
     if (dist.status === 'fulfilled') setIpDist(dist.value.data || null);
     if (lt.status === 'fulfilled') setLeaseTrend((lt.value.data || []).map((d: any) => ({ day: d.day, leases: parseInt(d.leases) || 0 })));
-    if (au.status === 'fulfilled') setAudit(au.value.data || []);
-    if (al.status === 'fulfilled') setAlerts((al.value.data || []).filter((a: AlertEvent) => !a.acknowledged));
     setLoading(false);
-  }, []);
+    setLastUpdated(Date.now());
+  }, [range.hours, range.days]);
 
-  const ackAlert = useCallback(async (id: number) => {
-    await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) }).catch(() => {});
-    setAlerts(prev => prev.filter(a => a.id !== id));
-  }, []);
+  // Reload inline data on time-range change and on every refresh tick (manual or
+  // auto). Skeletons only show on the very first load — refreshes swap silently.
+  useEffect(() => { load(); }, [load, refreshNonce]);
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 30000);
+    if (paused) return;
+    const t = setInterval(() => setRefreshNonce(n => n + 1), 30000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [paused]);
+
+  const navStr = useCallback((t: string, opts?: { anomalyType?: string }) => onNavigate(t as Tab, opts), [onNavigate]);
 
   // Trends derived from real history (start vs end of window)
   const trends = useMemo(() => {
@@ -489,65 +495,34 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
   ] : [];
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <UpdatedNotice />
-      <PageHeader title="Operations Center" subtitle="Live DDI health — scope exhaustion, recent activity, and utilization trends. Refreshes every 30s." />
+      <PageHeader title="Operations Center" subtitle="Live DDI health, triage, and trends. Auto-refreshes every 30s." />
 
-      {/* Real-time status strip */}
-      {(() => {
-        const ov = infra?.overall || 'healthy';
-        const c = ov === 'critical' ? 'var(--red)' : ov === 'warning' ? 'var(--yellow)' : 'var(--green)';
-        const txt = ov === 'critical' ? 'Critical issues detected' : ov === 'warning' ? 'Warnings present' : 'All systems healthy';
-        const srvCount = infra?.data?.length ?? 0;
-        return (
-          <div onClick={() => onNavigate('infra')} className="clickable" style={{ borderRadius: 'var(--radius)', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 14, background: c, color: '#fff', cursor: 'pointer', boxShadow: 'var(--shadow-sm)' }}>
-            <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#fff', boxShadow: '0 0 0 4px rgba(255,255,255,0.3)' }} />
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{txt}</span>
-            <span style={{ opacity: 0.9, fontSize: 12.5 }}>{srvCount} server{srvCount === 1 ? '' : 's'} monitored{infra?.worst_score != null && ` · lowest health ${infra.worst_score}/100`}</span>
-            <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 12.5, opacity: 0.9 }}>Infrastructure →</span>
-          </div>
-        );
-      })()}
+      {/* Command bar — posture, collector heartbeat, time range, live/refresh */}
+      <CommandBar
+        timeRange={timeRange}
+        onTimeRange={setTimeRange}
+        lastUpdated={lastUpdated}
+        onRefresh={() => setRefreshNonce(n => n + 1)}
+        paused={paused}
+        onTogglePause={() => setPaused(p => !p)}
+        refreshNonce={refreshNonce}
+        onNavigate={navStr}
+      />
 
-      {/* Infrastructure status — server health cards */}
-      {(infra?.data?.length ?? 0) > 0 && (
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={TITLE}>Infrastructure Status</div>
-            <span style={MUTED}>{infra.data.length} servers</span>
-          </div>
-          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
-            {infra.data.map((s: any) => {
-              const score = s.health_score;
-              const col = score == null ? 'var(--text-muted)' : score >= 90 ? 'var(--green)' : score >= 70 ? 'var(--yellow)' : 'var(--red)';
-              return (
-                <div key={s.id} onClick={() => onNavigate('infra')} className="clickable" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderLeft: `4px solid ${col}`, borderRadius: 10, padding: 12, cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.hostname}</div>
-                      <div style={{ ...MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{s.ip}</div>
-                    </div>
-                    <div style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1 }}>{score ?? '—'}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                    <span className="badge badge-gray">{(s.role || '').toUpperCase()}</span>
-                    <span className={`badge ${s.winrm_test_ok === false ? 'badge-red' : s.winrm_test_ok ? 'badge-green' : 'badge-gray'}`}>WinRM</span>
-                  </div>
-                  <div style={{ ...MUTED, marginTop: 8 }}>{s.scope_count} scopes · {s.zone_count} zones</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Priority Action Center — unified, ranked triage queue */}
+      <PriorityActionCenter refreshNonce={refreshNonce} onNavigate={navStr} onFocusScope={onFocusScope} />
 
-      {/* Row 2 — KPI tiles (6 across, compact) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+      {/* Four pillar scorecards — DHCP / DNS / IPAM / Security */}
+      <PillarScorecards timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+
+      {/* KPI strip (6 across, compact) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0,1fr))', gap: 12 }}>
         {loading && !stats
           ? Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="kpi-card" style={{ borderLeftColor: 'var(--border)', padding: '12px 16px' }}>
-                <Skeleton height={28} width="45%" /><div style={{ height: 6 }} /><Skeleton height={12} width="75%" />
+                <Skeleton height={22} width="45%" /><div style={{ height: 6 }} /><Skeleton height={12} width="75%" />
               </div>
             ))
           : kpis.map((k, i) => (
@@ -556,7 +531,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
                   <Trend delta={k.delta} invert={k.invert} />
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>
@@ -565,9 +540,12 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
             ))}
       </div>
 
-      {/* Row 3 — DHCP Overview: attention table (60%) + lease trend (40%) */}
+      {/* Infrastructure & redundancy — server health trend + HA/failover */}
+      <InfraRedundancy timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+
+      {/* Capacity & trends */}
       <div>
-        <SectionHeader>DHCP Overview</SectionHeader>
+        <SectionHeader>Capacity &amp; Trends</SectionHeader>
         <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}>
           <div style={CARD}>
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -602,7 +580,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
           <div style={CARD}>
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={TITLE}>Active Lease Trend</div>
-              <span style={MUTED}>last 7 days</span>
+              <span style={MUTED}>last {timeRange}</span>
             </div>
             <div style={{ padding: '12px 16px' }}>
               {loading ? <Skeleton height={140} /> : <LineChart points={leaseTrend.map(d => d.leases)} labels={leaseTrend.map(d => d.day)} height={140} />}
@@ -611,77 +589,14 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
         </div>
       </div>
 
-      {/* Row 4 — Recent activity + capacity forecast */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={TITLE}>Recent Activity</div>
-            <button onClick={() => onNavigate('events')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>
-              View all →
-            </button>
-          </div>
-          {loading ? <TableSkeleton rows={8} cols={4} /> : events.length === 0 ? (
-            <EmptyState title="No recent activity" message="DHCP log events will appear here as they are collected." />
-          ) : (
-            <div style={{ maxHeight: 200, overflow: 'auto' }}>
-              <table className="data-table">
-                <thead><tr><th>Type</th><th>IP Address</th><th>Hostname</th><th>Time</th></tr></thead>
-                <tbody>
-                  {events.map(e => (
-                    <tr key={e.id}>
-                      <td style={{ padding: '6px 10px' }}><EventTypeBadge type={e.event_type} /></td>
-                      <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5 }}>{e.ip_address || '—'}</td>
-                      <td style={{ padding: '6px 10px', fontSize: 12.5, color: 'var(--text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.hostname || '—'}</td>
-                      <td className="mono" style={{ ...MUTED, padding: '6px 10px', whiteSpace: 'nowrap' }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-        <CapacityForecast onViewAll={() => onNavigate('scopes')} onRowClick={(id) => onFocusScope(id)} />
-      </div>
-
-      {/* Row 5 — Intelligence & Security */}
-      <div>
-        <SectionHeader>Intelligence &amp; Security</SectionHeader>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-          <SecurityOverview onViewAll={() => onNavigate('intelligence')} onTypeClick={(t) => onNavigate('intelligence', { anomalyType: t })} />
-          <SiteHealth onSiteClick={() => onNavigate('infra')} />
-          <DnsHealthCard data={stats?.dns_health} onClick={() => onNavigate('dns')} />
-        </div>
-      </div>
-
-      {/* Row 6 — IPAM Overview: IP distribution donut (40%) + device mix (60%) */}
-      <div>
-        <SectionHeader>IPAM Overview</SectionHeader>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16 }}>
-          <div style={CARD}>
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
-            <div style={{ padding: '12px 16px' }}>
-              {loading ? <Skeleton height={110} /> : (
-                <Donut dim={110}
-                  onSegmentClick={(label) => onNavigate(label === 'DHCP' ? 'scopes' : 'ipam')}
-                  data={[
-                  { label: 'Available', value: ipDist?.available ?? 0, color: 'var(--green)' },
-                  { label: 'DHCP', value: ipDist?.dhcp ?? 0, color: 'var(--blue)' },
-                  { label: 'Reserved', value: ipDist?.reserved ?? 0, color: 'var(--teal)' },
-                  { label: 'Unknown', value: ipDist?.unknown ?? 0, color: 'var(--yellow)' },
-                  { label: 'Offline', value: ipDist?.offline ?? 0, color: 'var(--text-muted)' },
-                ]} />
-              )}
-            </div>
-          </div>
-          <DeviceDonut />
-        </div>
-      </div>
+      {/* Capacity forecast (full width) */}
+      <CapacityForecast onViewAll={() => onNavigate('scopes')} onRowClick={(id) => onFocusScope(id)} />
 
       {/* Utilization trends — top 6 scopes by utilization */}
       <div style={CARD}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={TITLE}>Utilization Trends</div>
-          <span style={MUTED}>Top 6 scopes · last 7 days</span>
+          <span style={MUTED}>Top 6 scopes · last {timeRange}</span>
         </div>
         <div style={{ padding: '12px 16px' }}>
           {loading ? (
@@ -718,54 +633,37 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
         </div>
       </div>
 
-      {/* Row 7 — Open Alerts (primary) + Recent Changes, full width at bottom */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={TITLE}>Open Alerts</div>
-            <button onClick={() => onNavigate('events')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>View all →</button>
-          </div>
-          {loading ? <TableSkeleton rows={4} cols={2} /> : alerts.length === 0 ? (
-            <EmptyState title="No open alerts" message="All fired alerts have been acknowledged." />
-          ) : (
-            <table className="data-table">
-              <tbody>
-                {alerts.slice(0, 3).map(a => (
-                  <tr key={a.id}>
-                    <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>{a.severity}</span></td>
-                    <td style={{ padding: '6px 10px', fontSize: 12.5 }}>
-                      <div>{a.message}{a.occurrence_count && a.occurrence_count > 1 ? <span className="badge badge-gray" style={{ fontSize: 10, marginLeft: 6 }}>fired {a.occurrence_count}×</span> : null}</div>
-                      {a.explanation && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.35 }}>{a.explanation}</div>}
-                    </td>
-                    <td style={{ padding: '6px 10px', width: 50 }}><button onClick={() => ackAlert(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      {/* DNS, IPAM & Security */}
+      <div>
+        <SectionHeader>DNS, IPAM &amp; Security</SectionHeader>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 16 }}>
+          <DnsAnalyticsCard refreshNonce={refreshNonce} onNavigate={navStr} />
+          <SecurityOverview onViewAll={() => onNavigate('intelligence')} onTypeClick={(t) => onNavigate('intelligence', { anomalyType: t })} />
+          <SiteHealth onSiteClick={() => onNavigate('infra')} />
         </div>
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={TITLE}>Recent Changes</div>
-            <button onClick={() => onNavigate('audit')} style={{ ...MUTED, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600 }}>Audit log →</button>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16, marginTop: 12 }}>
+          <div style={CARD}>
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
+            <div style={{ padding: '12px 16px' }}>
+              {loading ? <Skeleton height={110} /> : (
+                <Donut dim={110}
+                  onSegmentClick={(label) => onNavigate(label === 'DHCP' ? 'scopes' : 'ipam')}
+                  data={[
+                  { label: 'Available', value: ipDist?.available ?? 0, color: 'var(--green)' },
+                  { label: 'DHCP', value: ipDist?.dhcp ?? 0, color: 'var(--blue)' },
+                  { label: 'Reserved', value: ipDist?.reserved ?? 0, color: 'var(--teal)' },
+                  { label: 'Unknown', value: ipDist?.unknown ?? 0, color: 'var(--yellow)' },
+                  { label: 'Offline', value: ipDist?.offline ?? 0, color: 'var(--text-muted)' },
+                ]} />
+              )}
+            </div>
           </div>
-          {loading ? <TableSkeleton rows={4} cols={3} /> : audit.length === 0 ? (
-            <EmptyState title="No changes yet" message="Configuration changes will appear here as they happen." />
-          ) : (
-            <table className="data-table">
-              <tbody>
-                {audit.slice(0, 3).map((a: any) => (
-                  <tr key={a.id} className="clickable" onClick={() => onNavigate('audit')}>
-                    <td style={{ padding: '6px 10px', width: 70 }}><span className={`badge ${a.action === 'create' ? 'badge-green' : a.action === 'delete' ? 'badge-red' : a.action === 'modify' ? 'badge-yellow' : 'badge-gray'}`}>{(a.action || '').toUpperCase()}</span></td>
-                    <td style={{ padding: '6px 10px', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{a.change_summary || `${a.action} ${a.entity_type}`}<div style={MUTED}>{a.username}</div></td>
-                    <td style={{ ...MUTED, padding: '6px 10px', whiteSpace: 'nowrap', width: 90 }}>{a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DeviceDonut />
         </div>
       </div>
+
+      {/* Unified activity feed — DHCP events / config changes / fired alerts */}
+      <ActivityFeed refreshNonce={refreshNonce} onNavigate={navStr} />
     </div>
   );
 }

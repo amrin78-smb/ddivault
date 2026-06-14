@@ -101,6 +101,13 @@ const releaseNotes = {
     'Inline forwarder Test and scavenging Enable actions; stale-record bulk cleanup via the Manage console',
     'Locked placeholders for Top Queried Domains and Zone Growth Trend (require future DNS query-log collection)',
   ],
+  '1.10.0': [
+    'Operations Center redesigned as a triage-first enterprise dashboard',
+    'New Command Bar: global time range (24h/7d/30d), live/pause, manual refresh, and a collector heartbeat',
+    'New Priority Action Center — one ranked queue merging critical scopes, exhaustion forecasts, open alerts, security anomalies, replication/forwarder issues, and failover health',
+    'New four-pillar scorecards (DHCP/DNS/IPAM/Security) with trend sparklines, infrastructure health trends + HA/failover, DNS query analytics, and a unified activity feed',
+    'New read APIs: /api/dashboard/collector-status, /api/dashboard/pillars, /api/infrastructure/health-history',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
@@ -3817,6 +3824,152 @@ app.get('/api/dashboard/lease-trend', async (req, res) => {
     res.json({ data: r.rows });
   } catch (err) {
     console.error('[API] lease-trend error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Collector liveness derived from ddi_servers.last_polled
+app.get('/api/dashboard/collector-status', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT
+         MAX(last_polled) AS last_poll,
+         COUNT(*) AS servers_total,
+         COUNT(*) FILTER (WHERE last_polled > NOW() - INTERVAL '15 minutes') AS servers_recent,
+         EXTRACT(EPOCH FROM (NOW() - MAX(last_polled))) AS seconds_since
+       FROM ddi_servers
+       WHERE is_active = TRUE`);
+    const row = r.rows[0] || {};
+    const lastPoll = row.last_poll ? new Date(row.last_poll).toISOString() : null;
+    const secondsSince = row.seconds_since != null ? Math.round(parseFloat(row.seconds_since)) : null;
+    let status;
+    if (lastPoll == null || secondsSince == null) status = 'down';
+    else if (secondsSince <= 900) status = 'active';
+    else if (secondsSince <= 3600) status = 'stale';
+    else status = 'down';
+    res.json({
+      data: {
+        last_poll: lastPoll,
+        seconds_since: secondsSince,
+        servers_total: parseInt(row.servers_total) || 0,
+        servers_recent: parseInt(row.servers_recent) || 0,
+        status,
+      },
+    });
+  } catch (err) {
+    console.error('[API] collector-status error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Per-server health history sparklines (uptime, avg query, score points)
+app.get('/api/infrastructure/health-history', async (req, res) => {
+  try {
+    const hours = safeInt(req.query.hours, 168, 2160);
+    const r = await db.query(
+      `SELECT h.server_id, s.hostname, h.health_score, h.winrm_ok, h.query_ms, h.recorded_at
+         FROM server_health_history h
+         JOIN ddi_servers s ON s.id = h.server_id
+        WHERE h.recorded_at > NOW() - ($1 || ' hours')::interval
+        ORDER BY h.server_id, h.recorded_at ASC`, [hours]);
+    const byServer = new Map();
+    for (const row of r.rows) {
+      let entry = byServer.get(row.server_id);
+      if (!entry) {
+        entry = { server_id: row.server_id, hostname: row.hostname, _all: [] };
+        byServer.set(row.server_id, entry);
+      }
+      entry._all.push(row);
+    }
+    const data = [];
+    for (const entry of byServer.values()) {
+      const all = entry._all;
+      const total = all.length;
+      // uptime: prefer winrm_ok boolean when present, else health_score >= 50
+      const upCount = all.filter(x =>
+        x.winrm_ok != null ? x.winrm_ok === true : (x.health_score != null && x.health_score >= 50)
+      ).length;
+      const uptime_pct = total ? Math.round((100 * upCount) / total) : null;
+      const qmsVals = all.map(x => x.query_ms).filter(v => v != null);
+      const avg_query_ms = qmsVals.length
+        ? Math.round(qmsVals.reduce((a, b) => a + b, 0) / qmsVals.length)
+        : null;
+      // most recent ~200 points, ascending
+      const recent = all.slice(-200);
+      const points = recent
+        .filter(x => x.health_score != null)
+        .map(x => ({ t: new Date(x.recorded_at).toISOString(), score: parseInt(x.health_score) }));
+      data.push({
+        server_id: entry.server_id,
+        hostname: entry.hostname,
+        uptime_pct,
+        avg_query_ms,
+        points,
+      });
+    }
+    res.json({ data });
+  } catch (err) {
+    console.error('[API] infra health-history error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Dashboard pillar scores (overall + DHCP/DNS/IPAM/Security) with hourly trend
+app.get('/api/dashboard/pillars', async (req, res) => {
+  try {
+    // Latest row per site, averaged across sites
+    const latest = await db.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON (site_id) site_id, calculated_at,
+                overall_score, dhcp_score, ipam_score, dns_score, security_score
+           FROM site_health_scores
+          ORDER BY site_id, calculated_at DESC
+       )
+       SELECT
+         ROUND(AVG(overall_score))  AS overall,
+         ROUND(AVG(dhcp_score))     AS dhcp,
+         ROUND(AVG(ipam_score))     AS ipam,
+         ROUND(AVG(dns_score))      AS dns,
+         ROUND(AVG(security_score)) AS security,
+         MAX(calculated_at)         AS as_of,
+         COUNT(*)                   AS sites
+       FROM latest`);
+    const row = latest.rows[0] || {};
+    const sites = parseInt(row.sites) || 0;
+
+    // Hourly trend across all sites — last ~24 buckets, ascending
+    const trendRows = await db.query(
+      `SELECT bucket,
+              ROUND(AVG(dhcp_score))     AS dhcp,
+              ROUND(AVG(ipam_score))     AS ipam,
+              ROUND(AVG(dns_score))      AS dns,
+              ROUND(AVG(security_score)) AS security
+         FROM (
+           SELECT date_trunc('hour', calculated_at) AS bucket,
+                  dhcp_score, ipam_score, dns_score, security_score
+             FROM site_health_scores
+            WHERE calculated_at > NOW() - INTERVAL '24 hours'
+         ) t
+        GROUP BY bucket
+        ORDER BY bucket ASC
+        LIMIT 24`);
+    const trend = (col) =>
+      trendRows.rows.map(r => (r[col] != null ? parseInt(r[col]) : 0));
+    const num = (v) => (v != null ? parseInt(v) : null);
+
+    res.json({
+      data: {
+        overall: num(row.overall),
+        dhcp:     { score: num(row.dhcp),     trend: sites ? trend('dhcp') : [] },
+        dns:      { score: num(row.dns),      trend: sites ? trend('dns') : [] },
+        ipam:     { score: num(row.ipam),     trend: sites ? trend('ipam') : [] },
+        security: { score: num(row.security), trend: sites ? trend('security') : [] },
+        as_of: row.as_of ? new Date(row.as_of).toISOString() : null,
+        sites,
+      },
+    });
+  } catch (err) {
+    console.error('[API] dashboard/pillars error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
