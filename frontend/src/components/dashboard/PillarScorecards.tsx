@@ -32,7 +32,10 @@ function scoreColor(n: number | null): string {
 }
 
 // ── Tiny inline SVG sparkline ─────────────────────────────────
-function Sparkline({ data, color }: { data: number[]; color: string }) {
+// `area` renders a filled area variant (used as a faint card background).
+function Sparkline({
+  data, color, area = false, height = 24,
+}: { data: number[]; color: string; area?: boolean; height?: number | string }) {
   if (!data || data.length < 2) return null;
   const W = 100, H = 24, PAD = 2;
   const min = Math.min(...data);
@@ -44,14 +47,18 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
     const y = PAD + (H - PAD * 2) * (1 - (v - min) / span);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
+  const areaPts = `${PAD},${H} ${pts.join(' ')} ${(W - PAD).toFixed(1)},${H}`;
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
       width="100%"
-      height={H}
+      height={height as any}
       style={{ display: 'block', overflow: 'visible' }}
     >
+      {area && (
+        <polygon points={areaPts} fill={color} fillOpacity={0.6} stroke="none" />
+      )}
       <polyline
         points={pts.join(' ')}
         fill="none"
@@ -111,18 +118,18 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
             style={{
               background: 'var(--bg-card)', border: '1px solid var(--border)',
               borderLeft: '4px solid var(--border)', borderRadius: 'var(--radius)',
-              boxShadow: 'var(--shadow-sm)', padding: '12px 16px', minHeight: 120,
+              boxShadow: 'var(--shadow-sm)', padding: '10px 14px', minHeight: 104,
             }}
           >
             <Skeleton height={12} width="50%" />
-            <div style={{ height: 10 }} />
-            <Skeleton height={26} width={60} />
-            <div style={{ height: 10 }} />
-            <Skeleton height={24} width="100%" />
-            <div style={{ height: 10 }} />
-            <Skeleton height={10} width="80%" />
-            <div style={{ height: 6 }} />
-            <Skeleton height={10} width="65%" />
+            <div style={{ height: 8 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Skeleton height={28} width={42} />
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Skeleton height={10} width="80%" />
+                <Skeleton height={10} width="65%" />
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -231,8 +238,8 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
               borderLeft: `4px solid ${color}`,
               borderRadius: 'var(--radius)',
               boxShadow: 'var(--shadow-sm)',
-              padding: '12px 16px',
-              maxHeight: 150,
+              padding: '10px 14px',
+              maxHeight: 104,
               cursor: 'pointer',
               transition: 'transform 0.12s ease, box-shadow 0.12s ease',
               display: 'flex',
@@ -247,44 +254,54 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
               <span style={{ fontSize: 16, color: 'var(--text-muted)', lineHeight: 1 }}>›</span>
             </div>
 
-            {/* Score */}
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              {c.score == null ? (
-                <>
-                  <span style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-muted)' }}>—</span>
+            {/* Body — score + metrics side by side, sparkline faint behind */}
+            <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+              {/* Faint sparkline background */}
+              <div
+                aria-hidden
+                style={{
+                  position: 'absolute', inset: 0, opacity: 0.14,
+                  pointerEvents: 'none', display: 'flex', alignItems: 'stretch',
+                }}
+              >
+                <Sparkline data={c.trend} color={color} area height="100%" />
+              </div>
+
+              {/* Score */}
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'baseline', gap: 4, minWidth: 42 }}>
+                {c.score == null ? (
+                  <span style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-muted)' }}>—</span>
+                ) : (
+                  <span style={{ fontSize: 26, fontWeight: 800, color }}>{c.score}</span>
+                )}
+              </div>
+
+              {/* Sub-metrics */}
+              <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 10 }}>
+                {c.score == null ? (
                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>score pending</span>
-                </>
-              ) : (
-                <span style={{ fontSize: 24, fontWeight: 800, color }}>{c.score}</span>
-              )}
-            </div>
-
-            {/* Sparkline */}
-            <div style={{ height: 24 }}>
-              <Sparkline data={c.trend} color={color} />
-            </div>
-
-            {/* Sub-metrics */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {c.metrics.map((m, i) => (
-                <div
-                  key={i}
-                  style={{
-                    fontSize: 11, display: 'flex', gap: 6, justifyContent: 'space-between',
-                    whiteSpace: 'nowrap', overflow: 'hidden',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-muted)' }}>{m.label}</span>
-                  <span
-                    style={{
-                      color: 'var(--text-primary)', fontWeight: 600,
-                      overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {m.value}
-                  </span>
-                </div>
-              ))}
+                ) : (
+                  c.metrics.map((m, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        fontSize: 11, display: 'flex', gap: 6, justifyContent: 'space-between',
+                        whiteSpace: 'nowrap', overflow: 'hidden',
+                      }}
+                    >
+                      <span style={{ color: 'var(--text-muted)' }}>{m.label}</span>
+                      <span
+                        style={{
+                          color: 'var(--text-primary)', fontWeight: 600,
+                          overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {m.value}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         );

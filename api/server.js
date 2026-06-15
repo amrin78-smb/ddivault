@@ -130,6 +130,11 @@ const releaseNotes = {
     'Anomaly detection continues running in the background collector and feeds alerts as before — no monitoring capability was removed',
     'Security cards and anomaly items on the Dashboard now link to Events & Alerts instead of the retired tab',
   ],
+  '1.12.2': [
+    'Compacted the Dashboard DHCP / DNS / IPAM / Security scorecards — about a third shorter',
+    'Score number and its sub-metrics now sit side by side instead of stacked',
+    'Trend sparkline moved to a faint area fill behind the score, removing its own row',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
