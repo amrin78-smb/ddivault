@@ -135,6 +135,11 @@ const releaseNotes = {
     'Score number and its sub-metrics now sit side by side instead of stacked',
     'Trend sparkline moved to a faint area fill behind the score, removing its own row',
   ],
+  '1.12.3': [
+    'Fixed the Infrastructure & Redundancy card intermittently showing "No servers" on first load',
+    'Added a dhcp_leases(server_id) index so per-server lease counts no longer scan the whole table',
+    'The card now keeps its data on a transient fetch hiccup and retries instead of flashing empty',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

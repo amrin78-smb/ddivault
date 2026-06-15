@@ -100,10 +100,13 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
   const [pairs, setPairs] = useState<NormalPair[]>([]);
   const [failoverAvailable, setFailoverAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
   const firstLoad = useRef(true);
+  const loadedOk = useRef(false);   // a health fetch has succeeded at least once
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     if (firstLoad.current) setLoading(true);
     const hours = rangeToHours(timeRange);
 
@@ -115,23 +118,23 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
       if (cancelled) return;
       const [healthR, histR, foR] = results;
 
-      // health
+      // health — only overwrite on success. A transient failure must NOT clear
+      // servers (that flips the card to a sticky "No servers" until next refresh).
+      let healthOk = false;
       if (healthR.status === 'fulfilled') {
         const d = healthR.value?.data;
         setServers(Array.isArray(d) ? d : []);
-      } else {
-        setServers([]);
+        healthOk = true;
+        loadedOk.current = true;
       }
 
-      // history
+      // history — only overwrite on success
       if (histR.status === 'fulfilled') {
         const d = histR.value?.data;
         setHistory(Array.isArray(d) ? d : []);
-      } else {
-        setHistory([]);
       }
 
-      // failover (defensive)
+      // failover (defensive) — only overwrite on success
       if (foR.status === 'fulfilled') {
         try {
           const np = normalizePairs(foR.value);
@@ -141,17 +144,21 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
           setPairs([]);
           setFailoverAvailable(false);
         }
-      } else {
-        setPairs([]);
-        setFailoverAvailable(false);
       }
 
-      setLoading(false);
-      firstLoad.current = false;
+      // Drop the loading skeleton only once health has loaded at least once.
+      // If the very first load failed, keep the skeleton and retry shortly
+      // instead of showing a misleading "No servers".
+      if (loadedOk.current) {
+        setLoading(false);
+        firstLoad.current = false;
+      } else if (!healthOk) {
+        retryTimer = setTimeout(() => { if (!cancelled) setRetry((r) => r + 1); }, 3000);
+      }
     });
 
-    return () => { cancelled = true; };
-  }, [timeRange, refreshNonce]);
+    return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
+  }, [timeRange, refreshNonce, retry]);
 
   // index history by server_id for quick merge
   const histById = useMemo(() => {

@@ -86,6 +86,9 @@ CREATE INDEX IF NOT EXISTS idx_leases_mac     ON dhcp_leases(mac_address);
 CREATE INDEX IF NOT EXISTS idx_leases_scope   ON dhcp_leases(scope_id);
 CREATE INDEX IF NOT EXISTS idx_leases_state   ON dhcp_leases(address_state);
 CREATE INDEX IF NOT EXISTS idx_leases_expiry  ON dhcp_leases(lease_expiry);
+-- Per-server lease count (dashboard Infrastructure & Redundancy card) — without
+-- this, COUNT(*) WHERE server_id = ? seq-scans the whole leases table per server.
+CREATE INDEX IF NOT EXISTS idx_leases_server  ON dhcp_leases(server_id);
 
 -- ── Lease History ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS lease_history (
