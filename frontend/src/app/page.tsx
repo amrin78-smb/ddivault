@@ -6,7 +6,6 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
 import { useLicense, LicenseDisabledScreen } from '@/components/LicenseGuard';
-import { useTheme } from '@/components/ThemeContext';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -1227,25 +1226,6 @@ function SettingsPill({ label, active, onClick, badge }: { label: string; active
   );
 }
 
-// ── Appearance (theme) card — General tab ─────────────────────
-function AppearanceCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
-  const { theme, toggle } = useTheme();
-  return (
-    <div style={{ ...CARD, padding: 20 }}>
-      <div style={titleStyle}>Appearance</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Theme</div>
-          <div style={{ ...MUTED, marginTop: 2 }}>Switch between light and dark appearance. Saved on this device.</div>
-        </div>
-        <button className="btn" onClick={toggle} style={{ whiteSpace: 'nowrap' }}>
-          {theme === 'dark' ? '☀ Switch to Light' : '🌙 Switch to Dark'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── NocVault hub integration card — Integrations tab ──────────
 function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
@@ -1343,7 +1323,7 @@ function SettingsTab() {
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
-    { id: 'general',       label: 'General',      subtitle: 'Appearance, IPAM scan, and data retention' },
+    { id: 'general',       label: 'General',      subtitle: 'IPAM scan and data retention' },
     { id: 'notifications', label: 'Email Alerts', subtitle: 'Email delivery, alert recipients, and alert rules' },
     { id: 'integrations',  label: 'Integrations', subtitle: 'NocVault hub connection and REST API keys' },
     { id: 'updates',       label: 'Updates',      subtitle: 'Software version and update management' },
@@ -1366,7 +1346,6 @@ function SettingsTab() {
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {subTab === 'general' && (
           <div style={grid}>
-            <AppearanceCard titleStyle={sectionTitle} />
             <div style={{ ...CARD, padding: 20 }}>
               <div style={sectionTitle}>IPAM Scan Settings</div>
               <SettingField label="DNS Server for Scans" value={settings.scan_dns_server || ''} settingKey="scan_dns_server" placeholder="e.g. 192.168.1.10 (leave blank for system default)" helpText="Used for PTR / reverse DNS lookups during IPAM subnet scans." onSave={save} />

@@ -163,6 +163,9 @@ const releaseNotes = {
   '1.12.8': [
     'About tab rows now use the same left-aligned two-column layout as the other suite apps',
   ],
+  '1.12.9': [
+    'Removed the redundant Appearance/theme card from Settings (dark mode toggle lives in the top bar)',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
