@@ -68,7 +68,7 @@ export default function UpdateNotifier() {
         <span>🔄</span>
         <span>DDIVault v{info.latest} is available</span>
         <span style={{ opacity: 0.7 }}>→</span>
-        <a href="/?tab=settings&settingsTab=system"
+        <a href="/?tab=settings&settingsTab=updates"
           style={{ color: '#fff', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
           Go to Settings
         </a>

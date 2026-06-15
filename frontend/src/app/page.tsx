@@ -1353,7 +1353,7 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   );
 }
 
-type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'security' | 'system';
+type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'security' | 'updates' | 'about';
 
 function SettingsTab() {
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -1363,7 +1363,7 @@ function SettingsTab() {
 
   useEffect(() => { api('/settings').then(d => setSettings(d.data || {})).catch(() => {}); }, []);
 
-  // Red dot on the System pill when an update is available (matches the banner).
+  // Red dot on the Updates tab when an update is available (matches the banner).
   useEffect(() => {
     fetch('/api/system/update-available')
       .then(r => r.json())
@@ -1371,10 +1371,10 @@ function SettingsTab() {
       .catch(() => {});
   }, []);
 
-  // Deep-link from the update-notifier banner: /?settingsTab=system.
+  // Deep-link from the update-notifier banner: /?settingsTab=updates.
   useEffect(() => {
     const st = new URLSearchParams(window.location.search).get('settingsTab');
-    if (st && ['general', 'notifications', 'integrations', 'security', 'system'].includes(st)) {
+    if (st && ['general', 'notifications', 'integrations', 'security', 'updates', 'about'].includes(st)) {
       setSubTab(st as SettingsSubTab);
     }
   }, []);
@@ -1389,11 +1389,12 @@ function SettingsTab() {
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
-    { id: 'general',       label: 'General',       subtitle: 'Branding, appearance, and IPAM scan preferences' },
-    { id: 'notifications', label: 'Notifications', subtitle: 'Email delivery, alert recipients, and alert rules' },
-    { id: 'integrations',  label: 'Integrations',  subtitle: 'NocVault hub connection and REST API keys' },
-    { id: 'security',      label: 'Security',      subtitle: 'Roles, access, and session information' },
-    { id: 'system',        label: 'System',        subtitle: 'Updates, data retention, and system status' },
+    { id: 'general',       label: 'General',      subtitle: 'Branding, appearance, IPAM scan, and data retention' },
+    { id: 'notifications', label: 'Email Alerts', subtitle: 'Email delivery, alert recipients, and alert rules' },
+    { id: 'integrations',  label: 'Integrations', subtitle: 'NocVault hub connection and REST API keys' },
+    { id: 'security',      label: 'Security',     subtitle: 'Roles, access, and session information' },
+    { id: 'updates',       label: 'Updates',      subtitle: 'Software version and update management' },
+    { id: 'about',         label: 'About',        subtitle: 'Application and system information' },
   ];
   const activeSubtitle = TABS.find(t => t.id === subTab)?.subtitle || '';
 
@@ -1404,7 +1405,7 @@ function SettingsTab() {
       {/* Sub-tab underline bar (NocVault suite standard) */}
       <div className="settings-tabs">
         {TABS.map(t => (
-          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
+          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'updates' && updateAvail} />
         ))}
       </div>
 
@@ -1424,7 +1425,10 @@ function SettingsTab() {
               <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
               <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
             </div>
-            <AboutCard titleStyle={sectionTitle} />
+            <div style={{ ...CARD, padding: 20 }}>
+              <div style={sectionTitle}>Data Retention</div>
+              <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
+            </div>
           </div>
         )}
 
@@ -1457,20 +1461,18 @@ function SettingsTab() {
           <SecurityInfoCard titleStyle={sectionTitle} />
         )}
 
-        {subTab === 'system' && (
-          <>
-            <div style={grid}>
-              <div style={{ ...CARD, padding: 20 }}>
-                <div style={sectionTitle}>Data Retention</div>
-                <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
-              </div>
-              <SystemInfoCard titleStyle={sectionTitle} />
-            </div>
-            <div style={{ ...CARD, padding: 20 }}>
-              <div style={sectionTitle}>System Updates</div>
-              <SystemUpdates />
-            </div>
-          </>
+        {subTab === 'updates' && (
+          <div style={{ ...CARD, padding: 20 }}>
+            <div style={sectionTitle}>System Updates</div>
+            <SystemUpdates />
+          </div>
+        )}
+
+        {subTab === 'about' && (
+          <div style={grid}>
+            <SystemInfoCard titleStyle={sectionTitle} />
+            <AboutCard titleStyle={sectionTitle} />
+          </div>
         )}
       </div>
     </div>

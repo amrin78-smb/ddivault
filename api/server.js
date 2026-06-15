@@ -145,6 +145,12 @@ const releaseNotes = {
     'Settings sub-tabs now use the shared underline tab style',
     'Section headers and form inputs aligned to the suite spec',
   ],
+  '1.12.5': [
+    'Standardized Settings menu (dissolved System; added Updates and About tabs; Notifications→Email Alerts)',
+    'Data Retention moved into the General tab',
+    'System Updates now lives in its own Updates tab (with the update-available indicator)',
+    'System Information and About combined under a new About tab',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
