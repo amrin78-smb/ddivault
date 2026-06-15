@@ -151,6 +151,9 @@ const releaseNotes = {
     'System Updates now lives in its own Updates tab (with the update-available indicator)',
     'System Information and About combined under a new About tab',
   ],
+  '1.12.6': [
+    'Removed Branding section from Settings (no longer needed)',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

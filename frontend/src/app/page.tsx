@@ -1389,7 +1389,7 @@ function SettingsTab() {
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
-    { id: 'general',       label: 'General',      subtitle: 'Branding, appearance, IPAM scan, and data retention' },
+    { id: 'general',       label: 'General',      subtitle: 'Appearance, IPAM scan, and data retention' },
     { id: 'notifications', label: 'Email Alerts', subtitle: 'Email delivery, alert recipients, and alert rules' },
     { id: 'integrations',  label: 'Integrations', subtitle: 'NocVault hub connection and REST API keys' },
     { id: 'security',      label: 'Security',     subtitle: 'Roles, access, and session information' },
@@ -1413,11 +1413,6 @@ function SettingsTab() {
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {subTab === 'general' && (
           <div style={grid}>
-            <div style={{ ...CARD, padding: 20 }}>
-              <div style={sectionTitle}>Branding</div>
-              <SettingField label="App Name" value={settings.app_name || ''} settingKey="app_name" placeholder="DDIVault" onSave={save} />
-              <SettingField label="Company Name" value={settings.company_name || ''} settingKey="company_name" placeholder="Your Company" onSave={save} />
-            </div>
             <AppearanceCard titleStyle={sectionTitle} />
             <div style={{ ...CARD, padding: 20 }}>
               <div style={sectionTitle}>IPAM Scan Settings</div>
