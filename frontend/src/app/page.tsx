@@ -1215,13 +1215,7 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, o
 // ── Settings sub-tab pill (mirrors the DNS tab pill style) ─────
 function SettingsPill({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: boolean }) {
   return (
-    <button onClick={onClick} className={active ? 'tab-pill active' : 'tab-pill'} style={{
-      padding: '8px 16px', borderRadius: 22, cursor: 'pointer', fontSize: 13, fontWeight: 600,
-      border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-      background: active ? 'var(--primary-light)' : 'var(--bg-card)',
-      color: active ? 'var(--primary)' : 'var(--text-primary)', fontFamily: 'inherit',
-      whiteSpace: 'nowrap', position: 'relative',
-    }}>
+    <button onClick={onClick} className={active ? 'settings-tab active' : 'settings-tab'}>
       {label}
       {badge && (
         <span title="Update available" style={{
@@ -1391,7 +1385,7 @@ function SettingsTab() {
     toast('Saved', 'success');
   }, [toast]);
 
-  const sectionTitle: React.CSSProperties = { fontSize: 13, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--border-light)' };
+  const sectionTitle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 14 };
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
@@ -1407,13 +1401,11 @@ function SettingsTab() {
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
       <PageHeader title="Settings" subtitle={activeSubtitle} />
 
-      {/* Sub-tab pill bar */}
-      <div className="sub-tab-bar">
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {TABS.map(t => (
-            <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
-          ))}
-        </div>
+      {/* Sub-tab underline bar (NocVault suite standard) */}
+      <div className="settings-tabs">
+        {TABS.map(t => (
+          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'system' && updateAvail} />
+        ))}
       </div>
 
       {/* Independently-scrolling content region */}

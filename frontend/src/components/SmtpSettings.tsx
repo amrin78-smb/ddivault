@@ -39,9 +39,9 @@ async function api(path: string, opts?: RequestInit) {
 // Shared style tokens
 // ════════════════════════════════════════════════════════════
 const INPUT: React.CSSProperties = {
-  width: '100%', padding: '8px 11px', border: '1px solid var(--border)',
+  width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
 };
 const LABEL: React.CSSProperties = {
   fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,

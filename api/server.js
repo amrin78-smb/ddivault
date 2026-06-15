@@ -140,6 +140,11 @@ const releaseNotes = {
     'Added a dhcp_leases(server_id) index so per-server lease counts no longer scan the whole table',
     'The card now keeps its data on a transient fetch hiccup and retries instead of flashing empty',
   ],
+  '1.12.4': [
+    'Standardized Settings page styling to match NocVault suite',
+    'Settings sub-tabs now use the shared underline tab style',
+    'Section headers and form inputs aligned to the suite spec',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],
