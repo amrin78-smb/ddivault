@@ -160,6 +160,9 @@ const releaseNotes = {
     'About tab now shows the standard product/tech-specs table (removed live API/DB status badges)',
     'Removed the Security tab — user management lives in the NocVault hub (Integrations)',
   ],
+  '1.12.8': [
+    'About tab rows now use the same left-aligned two-column layout as the other suite apps',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

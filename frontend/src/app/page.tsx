@@ -1276,7 +1276,7 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
       .catch(() => {});
   }, []);
   const v = ver || '1.0.0';
-  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 16, fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
   const ABOUT_ROWS: [string, React.ReactNode][] = [
     ['Product', 'DDIVault — DNS, DHCP & IPAM'],
     ['Family', 'NocVault Network Intelligence Suite'],
@@ -1293,8 +1293,8 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {ABOUT_ROWS.map(([label, value], i) => (
           <div key={label} style={i === ABOUT_ROWS.length - 1 ? { ...row, borderBottom: 'none' } : row}>
-            <span style={MUTED}>{label}</span>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right' }}>{value}</span>
+            <span style={{ ...MUTED, width: 160, flexShrink: 0 }}>{label}</span>
+            <span style={{ color: 'var(--text-primary)' }}>{value}</span>
           </div>
         ))}
       </div>
