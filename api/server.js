@@ -154,6 +154,12 @@ const releaseNotes = {
   '1.12.6': [
     'Removed Branding section from Settings (no longer needed)',
   ],
+  '1.12.7': [
+    'Standardized the Updates and About tabs to the NocVault suite spec',
+    'Updates tab renamed to "Software Updates" with unified restart/license wording',
+    'About tab now shows the standard product/tech-specs table (removed live API/DB status badges)',
+    'Removed the Security tab — user management lives in the NocVault hub (Integrations)',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

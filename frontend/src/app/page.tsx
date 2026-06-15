@@ -909,7 +909,7 @@ function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onC
       <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
-          Start update? Services will restart and you will lose connection for 30-60 seconds.
+          Services will restart and you&apos;ll lose connection for 30&ndash;60 seconds. The page reloads automatically when the update completes.
         </p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
           <button className="btn" onClick={onCancel}>Cancel</button>
@@ -1008,7 +1008,7 @@ function UpdatingOverlay() {
   }, [phase, countdown]);
 
   let statusLine = 'Starting update…';
-  if (phase === 'down') statusLine = 'Services restarting… ⟳';
+  if (phase === 'down') statusLine = 'Services restarting…';
   else if (phase === 'back_up') statusLine = `✓ Services are back online. Reloading in ${countdown} second${countdown === 1 ? '' : 's'}…`;
   else if (phase === 'timeout') statusLine = 'Update is taking longer than expected. Try refreshing the page manually.';
 
@@ -1167,7 +1167,7 @@ function SystemUpdates() {
             </div>
           )}
           <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 13, margin: '12px 0' }}>
-            ⚠ Services will restart (30-60 seconds)
+            ⚠ Services will restart during the update — you may lose connection for 30&ndash;60 seconds.
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-primary" onClick={() => setConfirming(true)}>Update Now</button>
@@ -1175,9 +1175,9 @@ function SystemUpdates() {
           </div>
           {licenseBlocked && (
             <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>
-              ⚠ {licenseBlocked}{' '}
+              ⚠ License expired — updates disabled. Renew your license to receive updates.{' '}
               <a href={`${hubUrl}/settings/license`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'underline' }}>
-                NetVault Hub →
+                Manage License →
               </a>
             </div>
           )}
@@ -1246,40 +1246,6 @@ function AppearanceCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   );
 }
 
-// ── Access control (RBAC) info — Security tab ─────────────────
-const ROLE_LABEL: Record<string, string> = {
-  super_admin: 'Super Admin', admin: 'Admin', site_admin: 'Site Admin', viewer: 'Viewer',
-};
-const ROLE_DESC: Record<string, string> = {
-  super_admin: 'Full access to all sites, plus system settings, SMTP, alert rules, API keys, and updates.',
-  admin: 'Manage DHCP, DNS, and IPAM across all sites. No system-level settings.',
-  site_admin: 'Manage resources for assigned sites only.',
-  viewer: 'Read-only access to dashboards and records.',
-};
-function SecurityInfoCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
-  const { role, canWrite } = useRBAC();
-  const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
-  return (
-    <div style={{ ...CARD, padding: 20 }}>
-      <div style={titleStyle}>Access Control</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={MUTED}>Your role</span>
-          <span style={{ fontWeight: 700, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>{ROLE_LABEL[role] || role}</span>
-          <span className={`badge ${canWrite ? 'badge-green' : 'badge-gray'}`}>{canWrite ? 'Read / Write' : 'Read only'}</span>
-        </div>
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{ROLE_DESC[role] || ''}</div>
-        <div style={{ ...MUTED, lineHeight: 1.6 }}>
-          User accounts, roles, and site assignments are managed centrally in the NocVault hub. Sessions use single sign-on (SSO) and inherit the role assigned there.
-        </div>
-        <div>
-          <a href={`${hub}/users`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Manage users in NocVault →</a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── NocVault hub integration card — Integrations tab ──────────
 function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
@@ -1300,38 +1266,7 @@ function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }
   );
 }
 
-// ── System information card — System tab ──────────────────────
-function SystemInfoCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
-  const [health, setHealth] = useState<{ status?: string; db?: string; version?: string } | null>(null);
-  const [healthErr, setHealthErr] = useState(false);
-  useEffect(() => {
-    fetch('/api/health', { cache: 'no-store' })
-      .then(r => (r.ok ? r.json() : Promise.reject(new Error('unreachable'))))
-      .then(d => setHealth(d))
-      .catch(() => setHealthErr(true));
-  }, []);
-  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
-  const dbOk = health?.db === 'connected';
-  return (
-    <div style={{ ...CARD, padding: 20 }}>
-      <div style={titleStyle}>System Information</div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={row}><span style={MUTED}>Application</span><span style={{ fontWeight: 600 }}>DDIVault v{health?.version || '1.0.0'}</span></div>
-        <div style={row}>
-          <span style={MUTED}>API status</span>
-          <span className={`badge ${healthErr ? 'badge-red' : health ? 'badge-green' : 'badge-gray'}`}>{healthErr ? 'Unreachable' : health ? 'Online' : 'Checking…'}</span>
-        </div>
-        <div style={row}>
-          <span style={MUTED}>Database</span>
-          <span className={`badge ${healthErr ? 'badge-gray' : dbOk ? 'badge-green' : health ? 'badge-yellow' : 'badge-gray'}`}>{healthErr ? '—' : dbOk ? 'Connected' : health ? 'Disconnected' : 'Checking…'}</span>
-        </div>
-        <div style={{ ...row, borderBottom: 'none' }}><span style={MUTED}>Suite</span><span style={{ color: 'var(--text-secondary)' }}>NocVault network intelligence</span></div>
-      </div>
-    </div>
-  );
-}
-
-// ── About card — General tab ──────────────────────────────────
+// ── About card — About tab (NocVault suite standard) ──────────
 function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   const [ver, setVer] = useState<string | null>(null);
   useEffect(() => {
@@ -1340,20 +1275,39 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
       .then(d => { if (d) setVer(d.version || null); })
       .catch(() => {});
   }, []);
+  const v = ver || '1.0.0';
+  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
+  const ABOUT_ROWS: [string, React.ReactNode][] = [
+    ['Product', 'DDIVault — DNS, DHCP & IPAM'],
+    ['Family', 'NocVault Network Intelligence Suite'],
+    ['Version', <code key="v">v{v}</code>],
+    ['App Port', '3006'],
+    ['API Port', '3007 (internal)'],
+    ['Collector', 'Background polling service'],
+    ['Database', 'PostgreSQL 16'],
+    ['Runtime', 'Node.js 20 · Next.js 14'],
+  ];
   return (
     <div style={{ ...CARD, padding: 20 }}>
       <div style={titleStyle}>About</div>
-      <div style={{ lineHeight: 1.8, fontSize: 13 }}>
-        <div style={{ fontWeight: 700 }}>DDIVault</div>
-        <div style={MUTED}>Version: <code>v{ver || '1.0.0'}</code></div>
-        <div style={MUTED}>Part of the NocVault Intelligence Suite</div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {ABOUT_ROWS.map(([label, value], i) => (
+          <div key={label} style={i === ABOUT_ROWS.length - 1 ? { ...row, borderBottom: 'none' } : row}>
+            <span style={MUTED}>{label}</span>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right' }}>{value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 14, lineHeight: 1.7, fontSize: 13 }}>
+        <div style={{ fontWeight: 700 }}>DDIVault v{v}</div>
+        <div style={MUTED}>Part of the NocVault Network Intelligence Suite</div>
         <div style={MUTED}>© 2026 NocVault</div>
       </div>
     </div>
   );
 }
 
-type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'security' | 'updates' | 'about';
+type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'updates' | 'about';
 
 function SettingsTab() {
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -1374,7 +1328,7 @@ function SettingsTab() {
   // Deep-link from the update-notifier banner: /?settingsTab=updates.
   useEffect(() => {
     const st = new URLSearchParams(window.location.search).get('settingsTab');
-    if (st && ['general', 'notifications', 'integrations', 'security', 'updates', 'about'].includes(st)) {
+    if (st && ['general', 'notifications', 'integrations', 'updates', 'about'].includes(st)) {
       setSubTab(st as SettingsSubTab);
     }
   }, []);
@@ -1392,7 +1346,6 @@ function SettingsTab() {
     { id: 'general',       label: 'General',      subtitle: 'Appearance, IPAM scan, and data retention' },
     { id: 'notifications', label: 'Email Alerts', subtitle: 'Email delivery, alert recipients, and alert rules' },
     { id: 'integrations',  label: 'Integrations', subtitle: 'NocVault hub connection and REST API keys' },
-    { id: 'security',      label: 'Security',     subtitle: 'Roles, access, and session information' },
     { id: 'updates',       label: 'Updates',      subtitle: 'Software version and update management' },
     { id: 'about',         label: 'About',        subtitle: 'Application and system information' },
   ];
@@ -1452,22 +1405,15 @@ function SettingsTab() {
           </>
         )}
 
-        {subTab === 'security' && (
-          <SecurityInfoCard titleStyle={sectionTitle} />
-        )}
-
         {subTab === 'updates' && (
           <div style={{ ...CARD, padding: 20 }}>
-            <div style={sectionTitle}>System Updates</div>
+            <div style={sectionTitle}>Software Updates</div>
             <SystemUpdates />
           </div>
         )}
 
         {subTab === 'about' && (
-          <div style={grid}>
-            <SystemInfoCard titleStyle={sectionTitle} />
-            <AboutCard titleStyle={sectionTitle} />
-          </div>
+          <AboutCard titleStyle={sectionTitle} />
         )}
       </div>
     </div>
