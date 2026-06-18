@@ -19,6 +19,30 @@ function DDIVaultLogo({ className }: { className?: string }) {
   );
 }
 
+function SunIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="5"/>
+      <line x1="12" y1="1" x2="12" y2="3"/>
+      <line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/>
+      <line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  );
+}
+
 interface HeaderProps {
   onNavigate?: (tab: any) => void;
   collectorOnline: boolean;
@@ -138,7 +162,7 @@ export function Header(props: HeaderProps) {
           onClick={() => setNotifOpen(o => !o)}
           title="Alerts"
           style={{
-            width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: notifOpen ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
             border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, cursor: 'pointer',
             color: 'rgba(255,255,255,0.7)', position: 'relative', transition: 'background 0.15s',
@@ -146,7 +170,7 @@ export function Header(props: HeaderProps) {
           onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
           onMouseLeave={e => { if (!notifOpen) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
           </svg>
           {alertTotal > 0 && (
@@ -212,20 +236,19 @@ export function Header(props: HeaderProps) {
         onClick={toggle}
         title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
         style={{
-          width: 36, height: 36,
+          width: 38, height: 38,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(255,255,255,0.06)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 8,
           cursor: 'pointer',
-          fontSize: 'var(--text-lg)',
           transition: 'background 0.15s',
           color: 'rgba(255,255,255,0.7)',
         }}
         onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
         onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
       >
-        {theme === 'dark' ? '☀️' : '🌙'}
+        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
       </button>
 
       {/* User avatar dropdown */}
@@ -246,8 +269,8 @@ export function Header(props: HeaderProps) {
         >
           {/* Avatar */}
           <div style={{
-            width: 32, height: 32, borderRadius: 8,
-            background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+            width: 34, height: 34, borderRadius: '50%',
+            background: 'var(--primary)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: '#fff', fontWeight: 700, fontSize: 'var(--text-base)',
             flexShrink: 0,

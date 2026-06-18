@@ -408,6 +408,12 @@ Progress is written to DB every 50 IPs — frontend polls `/api/ipam/scan-status
 --header-height: 72px
 ```
 
+### Suite-standard shell chrome (shared across the NocVault suite)
+- **Sidebar nav** uses colored icon CHIPS: each nav icon sits in a 28×28 rounded (radius 8) chip with a per-route color tint. Only the ACTIVE item is colored (per-route color from `ROUTE_CHIP` in `page.tsx`); inactive items show a neutral faint-white chip. Icons inherit chip color via `currentColor`.
+- **Header avatar** is a circular 34px badge on solid `var(--primary)`.
+- **Theme toggle** uses module-level SVG sun/moon icons (`Header.tsx`), not emoji.
+- **Sidebar collapse** state persists to `localStorage` key `ddivault-sidebar-collapsed`.
+
 ### Key design rules
 - Inter font (Google Fonts)
 - Rounded sidebar items (not full-width highlight)
