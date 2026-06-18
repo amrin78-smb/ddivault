@@ -905,7 +905,7 @@ const RELOAD_COUNTDOWN_SECONDS = 15;
 function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   return (
     <div className="modal-overlay" onMouseDown={onCancel}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
           Services will restart and you&apos;ll lose connection for 30&ndash;60 seconds. The page reloads automatically when the update completes.
@@ -1013,7 +1013,7 @@ function UpdatingOverlay() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.78)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.35)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
         {phase !== 'back_up' && phase !== 'timeout' && (
           <div style={{ fontSize: 44, lineHeight: 1, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
         )}

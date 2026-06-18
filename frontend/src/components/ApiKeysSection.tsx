@@ -55,7 +55,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', padding: 24, width: 480, maxWidth: '92%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 480, maxWidth: '92%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Generate New API Key</div>
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>Name *</label>
@@ -97,7 +97,7 @@ function RevealModal({ fullKey, onClose }: { fullKey: string; onClose: () => voi
   const copy = () => { navigator.clipboard.writeText(fullKey).then(() => toast('Copied to clipboard', 'success')).catch(() => toast('Copy failed', 'error')); };
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 12, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', padding: 24, width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>API Key Created</div>
         <div style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600, marginBottom: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>

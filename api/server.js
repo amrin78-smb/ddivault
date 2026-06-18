@@ -166,6 +166,12 @@ const releaseNotes = {
   '1.12.9': [
     'Removed the redundant Appearance/theme card from Settings (dark mode toggle lives in the top bar)',
   ],
+  '1.12.10': [
+    'Tightened card and panel corners for a cleaner operations-console look',
+    'Dialed elevation back to a subtle border-plus-shadow style, removing heavy floating drop shadows',
+    'Standardized control corners (buttons, inputs, dropdowns, search) to a crisp 6px radius',
+    'Calibrated the UI toward an enterprise network-operations console while keeping the modern aesthetic',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

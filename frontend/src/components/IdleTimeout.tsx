@@ -28,8 +28,8 @@ function WarningModal(props: WarningModalProps) {
       <div
         style={{
           background: '#fff',
-          borderRadius: 12,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          borderRadius: 8,
+          boxShadow: 'var(--shadow-md)',
           padding: 28,
           maxWidth: 420,
           width: '90%',

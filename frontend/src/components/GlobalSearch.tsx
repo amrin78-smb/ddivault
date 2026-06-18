@@ -108,7 +108,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
             padding: '8px 40px 8px 36px',
             background: 'rgba(255,255,255,0.08)',
             border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 10,
+            borderRadius: 6,
             color: '#fff',
             fontSize: 13,
             outline: 'none',
@@ -144,7 +144,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
         <div style={{
           position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
           background: '#fff', border: '1px solid var(--border)',
-          borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+          borderRadius: 6, boxShadow: 'var(--shadow-md)',
           zIndex: 9999, overflow: 'hidden', maxHeight: 420, overflowY: 'auto',
         }}>
           {loading && (

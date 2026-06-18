@@ -164,8 +164,8 @@ export function Header(props: HeaderProps) {
         {notifOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 340,
-            background: '#fff', border: '1px solid var(--border)', borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.15)', overflow: 'hidden', zIndex: 999, animation: 'fadeIn 0.15s ease',
+            background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
+            boxShadow: 'var(--shadow-md)', overflow: 'hidden', zIndex: 999, animation: 'fadeIn 0.15s ease',
           }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>Alerts</div>
@@ -280,8 +280,8 @@ export function Header(props: HeaderProps) {
             position: 'absolute', top: 'calc(100% + 8px)', right: 0,
             background: '#fff',
             border: '1px solid var(--border)',
-            borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+            borderRadius: 6,
+            boxShadow: 'var(--shadow-md)',
             minWidth: 220,
             overflow: 'hidden',
             zIndex: 999,
