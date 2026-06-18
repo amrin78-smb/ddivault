@@ -7,8 +7,7 @@ import { ToastProvider } from '@/components/Toast';
 import { FetchInterceptor } from '@/components/FetchInterceptor';
 import { IdleTimeout } from '@/components/IdleTimeout';
 import { AuditActor } from '@/components/AuditActor';
-import { LicenseProvider, LicenseBanner } from '@/components/LicenseGuard';
-import UpdateNotifier from '@/components/UpdateNotifier';
+import { LicenseProvider } from '@/components/LicenseGuard';
 
 export const metadata: Metadata = {
   title: 'DDIVault — DNS · DHCP · IPAM',
@@ -27,8 +26,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <ToastProvider>
                 <FetchInterceptor />
                 <LicenseProvider>
-                  <LicenseBanner />
-                  <UpdateNotifier />
                   {children}
                 </LicenseProvider>
               </ToastProvider>

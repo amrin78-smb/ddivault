@@ -5,7 +5,8 @@ import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
-import { useLicense, LicenseDisabledScreen } from '@/components/LicenseGuard';
+import { useLicense, LicenseDisabledScreen, LicenseBanner } from '@/components/LicenseGuard';
+import UpdateNotifier from '@/components/UpdateNotifier';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -1595,8 +1596,11 @@ export default function DDIVaultApp() {
           {!collapsed && <div style={{ padding: '6px 20px', fontSize: 'var(--text-xs)', color: 'rgba(255,255,255,0.2)' }}>DDIVault{appVersion ? ` v${appVersion}` : ''}</div>}
         </nav>
 
-        {/* Content area */}
+        {/* Content area — banners render here (content-width) instead of in the
+            root layout above the top bar, matching the rest of the NocVault suite. */}
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
+          <LicenseBanner />
+          <UpdateNotifier />
           <ErrorBoundary name={tab}>
             {tab === 'dashboard' && <DashboardTab onNavigate={navigate} onFocusScope={focusScopeNav} />}
             {tab === 'scopes'    && <DHCPTab focusScope={focusScope} />}

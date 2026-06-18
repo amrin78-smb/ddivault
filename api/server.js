@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.12.14': [
+    'Update-available and license banners now appear within the content area instead of above the top bar — matching the rest of the NocVault suite',
+  ],
   '1.12.13': [
     'Suite-standard colored nav icon chips in the sidebar (only the active item is colored)',
     'Header avatar is now a circular 34px badge on solid primary',
