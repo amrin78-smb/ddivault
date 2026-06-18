@@ -75,7 +75,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 function StatTile({ value, label, sub, color }: { value: React.ReactNode; label: string; sub?: string; color?: string }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: color || 'var(--navy)' }}>
-      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: color || 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
       <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
       {sub && <div style={{ ...MUTED, marginTop: 2 }}>{sub}</div>}
     </div>
@@ -163,7 +163,7 @@ export default function AuditTab() {
               <StatTile value={stats.today} label="Changes Today" sub="since midnight" color="var(--blue)" />
               <StatTile value={stats.week} label="This Week" sub="last 7 days" color="var(--teal)" />
               <StatTile value={stats.top_user} label="Most Active User" sub="past 7 days" color="var(--primary)" />
-              <StatTile value={stats.top_entity} label="Top Changed Entity" sub="past 7 days" color="var(--navy)" />
+              <StatTile value={stats.top_entity} label="Top Changed Entity" sub="past 7 days" />
             </>
           )}
       </div>

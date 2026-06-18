@@ -179,6 +179,10 @@ const releaseNotes = {
     'Replaced hardcoded colors that duplicated theme tokens, fixing several dark-mode rendering issues',
     'Aligned the design tokens with the NocVault suite-wide standard shared across all apps',
   ],
+  '1.12.12': [
+    'Fixed KPI/stat values that were unreadable in dark mode (navy text on dark cards)',
+    'Top Subnets list now scrolls within its panel instead of clipping long lists',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

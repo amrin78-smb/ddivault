@@ -178,7 +178,7 @@ export default function ReportsTab() {
             <div style={{ display: 'flex', gap: 12, padding: '14px 18px', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)' }}>
               {preview.summary.map((s, i) => (
                 <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 120 }}>
-                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--navy)', lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--text-primary)', lineHeight: 1 }}>{s.value}</div>
                   <div style={{ ...MUTED, marginTop: 4 }}>{s.label}</div>
                 </div>
               ))}

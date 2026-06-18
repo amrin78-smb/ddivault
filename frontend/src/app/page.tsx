@@ -486,7 +486,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
   }, [scopeHistory]);
 
   const kpis = stats ? [
-    { label: 'Managed IPs',     value: stats.ips?.total ?? 0,       sub: 'across all scopes',         color: 'var(--navy)',  delta: 0,            invert: false, onClick: () => onNavigate('ipam') },
+    { label: 'Managed IPs',     value: stats.ips?.total ?? 0,       sub: 'across all scopes',         color: 'var(--navy)',  textColor: 'var(--text-primary)', delta: 0,            invert: false, onClick: () => onNavigate('ipam') },
     { label: 'Active Leases',   value: stats.active_leases ?? 0,    sub: 'live DHCP clients',         color: 'var(--blue)',  delta: trends.used,  invert: true,  onClick: () => onNavigate('scopes') },
     { label: 'DNS Zones',       value: stats.dns_zones ?? 0,        sub: 'forward & reverse',         color: 'var(--teal)',  delta: 0,            invert: false, onClick: () => onNavigate('dns') },
     { label: 'Critical Scopes', value: stats.scopes?.critical ?? 0, sub: '≥ 90% utilization',         color: (stats.scopes?.critical ?? 0) > 0 ? 'var(--red)' : 'var(--green)',    delta: trends.crit, invert: false, onClick: () => onNavigate('scopes') },
@@ -525,7 +525,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
+                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: (k as { textColor?: string }).textColor || k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
                   <Trend delta={k.delta} invert={k.invert} />
                 </div>
                 <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>

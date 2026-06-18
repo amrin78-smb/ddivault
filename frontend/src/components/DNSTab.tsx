@@ -610,12 +610,12 @@ function SectionHead({ title, right }: { title: string; right?: React.ReactNode 
 // ════════════════════════════════════════════════════════════
 // KPI tile (module scope)
 // ════════════════════════════════════════════════════════════
-function KpiTile({ label, value, sub, color, alert }: {
-  label: string; value: React.ReactNode; sub?: string; color: string; alert?: boolean;
+function KpiTile({ label, value, sub, color, textColor, alert }: {
+  label: string; value: React.ReactNode; sub?: string; color: string; textColor?: string; alert?: boolean;
 }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color }}>
-      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: alert ? 'var(--red)' : (textColor || color), letterSpacing: '-0.5px' }}>{value}</div>
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
       {sub && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 1 }}>{sub}</div>}
     </div>
@@ -861,7 +861,7 @@ function HealthOverviewPanel() {
           alert={(health?.servers_total ?? 0) > 0 && (health?.servers_online ?? 0) < (health?.servers_total ?? 0)} />
         <KpiTile label="Zones In Sync" color="var(--blue)"
           value={`${inSync}/${inSync + outSync}`} />
-        <KpiTile label="Replication Issues" color="var(--navy)"
+        <KpiTile label="Replication Issues" color="var(--navy)" textColor="var(--text-primary)"
           value={health?.replication_issues ?? 0} alert={(health?.replication_issues ?? 0) > 0} />
         <KpiTile label="Stale Records" color="var(--orange)" value={(health?.stale_records ?? 0).toLocaleString()} />
         <KpiTile label="Forwarders Down" color="var(--teal)"
@@ -1238,13 +1238,13 @@ function ZonesRecordsPanel() {
       {/* ── KPI tiles ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
         {[
-          { l: 'DNS Servers',   v: servers.length,             c: 'var(--navy)' },
+          { l: 'DNS Servers',   v: servers.length,             c: 'var(--navy)', tc: 'var(--text-primary)' },
           { l: 'Total Zones',   v: serverFilteredZones.length, c: 'var(--blue)' },
           { l: 'Forward Zones', v: fwdCount,                   c: 'var(--green)' },
           { l: 'Total Records', v: totalRecords,               c: 'var(--purple)' },
         ].map((t, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: t.c }}>
-            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: (t as { tc?: string }).tc || t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{t.l}</div>
           </div>
         ))}
@@ -2019,10 +2019,10 @@ function compactNum(n: number): string {
 }
 
 // Compact KPI tile — number 20px, label 11px, 70px tall
-function InsightKpi({ label, value, color, alert }: { label: string; value: React.ReactNode; color: string; alert?: boolean }) {
+function InsightKpi({ label, value, color, textColor, alert }: { label: string; value: React.ReactNode; color: string; textColor?: string; alert?: boolean }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color, padding: '12px 16px', minHeight: 70 }}>
-      <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: alert ? 'var(--red)' : (textColor || color), letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
     </div>
   );
@@ -2256,7 +2256,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
         <InsightKpi label="Active Servers" color="var(--green)"
           value={`${health?.servers_online ?? 0}/${health?.servers_total ?? 0}`}
           alert={(health?.servers_total ?? 0) > 0 && (health?.servers_online ?? 0) < (health?.servers_total ?? 0)} />
-        <InsightKpi label="Zones In Sync" color="var(--navy)"
+        <InsightKpi label="Zones In Sync" color="var(--navy)" textColor="var(--text-primary)"
           value={`${inSync}/${syncTotal}`}
           alert={(health?.zones_out_of_sync ?? 0) > 0} />
         <InsightKpi label="Open Alerts" color={anomalies.length > 0 ? 'var(--red)' : 'var(--green)'}

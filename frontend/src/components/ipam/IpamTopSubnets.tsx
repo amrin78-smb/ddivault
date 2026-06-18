@@ -26,9 +26,12 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
         padding: '12px 16px',
         display: 'flex',
         flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexShrink: 0 }}>
         <div style={{ fontSize: 'var(--text-base)', fontWeight: 700 }}>Top Subnets by Utilization</div>
         <button
           onClick={onViewAll}
@@ -43,7 +46,8 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
           No subnet utilization data yet.
         </div>
       ) : (
-        subnets.map((s, i) => (
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {subnets.map((s, i) => (
           <div
             key={s.id}
             style={{
@@ -78,7 +82,8 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
               {s.used.toLocaleString()}/{s.total.toLocaleString()}
             </div>
           </div>
-        ))
+        ))}
+        </div>
       )}
     </div>
   );

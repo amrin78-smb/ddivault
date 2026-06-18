@@ -16,6 +16,9 @@ interface TileConfig {
   label: string;
   value: number;
   color: string;
+  /** Optional override for the big value text (falls back to `color`).
+   *  Used when `color` is an accent that's unreadable as text (e.g. navy on dark cards). */
+  textColor?: string;
   pct?: number;
 }
 
@@ -32,7 +35,7 @@ export function IpamKpiTiles({
   const freePct = totalIps > 0 ? (freeIps / totalIps) * 100 : 0;
 
   const tiles: TileConfig[] = [
-    { label: 'Supernets', value: supernetCount, color: 'var(--navy)' },
+    { label: 'Supernets', value: supernetCount, color: 'var(--navy)', textColor: 'var(--text-primary)' },
     { label: 'Subnets', value: subnetCount, color: 'var(--blue)' },
     { label: 'Total IP Addresses', value: totalIps, color: 'var(--purple)' },
     { label: 'Used IPs', value: usedIps, color: pctColor(usedPct), pct: usedPct },
@@ -51,7 +54,7 @@ export function IpamKpiTiles({
           {loading ? (
             <Skeleton height={28} width={60} />
           ) : (
-            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: tile.color }}>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: tile.textColor || tile.color }}>
               {tile.value.toLocaleString()}
             </div>
           )}

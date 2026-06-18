@@ -1029,7 +1029,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
   }, [scopes]);
 
   const kpis = [
-    { label: 'Total Scopes',   value: stats.total,      color: 'var(--navy)' },
+    { label: 'Total Scopes',   value: stats.total,      color: 'var(--navy)', textColor: 'var(--text-primary)' },
     { label: 'Warning 80–90%', value: stats.warning,    color: 'var(--yellow)' },
     { label: 'Critical ≥90%',  value: stats.critical,   color: 'var(--red)' },
     { label: 'Total IPs',      value: stats.totalIPs,   color: 'var(--blue)' },
@@ -1060,7 +1060,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {kpis.map((k, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: k.color }}>
-            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: k.color }}>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: (k as { textColor?: string }).textColor || k.color }}>
               {k.value.toLocaleString()}
             </div>
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 6, fontWeight: 500 }}>{k.label}</div>
