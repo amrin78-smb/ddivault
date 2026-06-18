@@ -250,8 +250,8 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
           >
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{c.name}</span>
-              <span style={{ fontSize: 16, color: 'var(--text-muted)', lineHeight: 1 }}>›</span>
+              <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>{c.name}</span>
+              <span style={{ fontSize: 'var(--text-lg)', color: 'var(--text-muted)', lineHeight: 1 }}>›</span>
             </div>
 
             {/* Body — score + metrics side by side, sparkline faint behind */}
@@ -270,22 +270,22 @@ export default function PillarScorecards(props: PillarScorecardsProps) {
               {/* Score */}
               <div style={{ position: 'relative', display: 'flex', alignItems: 'baseline', gap: 4, minWidth: 42 }}>
                 {c.score == null ? (
-                  <span style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-muted)' }}>—</span>
+                  <span style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--text-muted)' }}>—</span>
                 ) : (
-                  <span style={{ fontSize: 26, fontWeight: 800, color }}>{c.score}</span>
+                  <span style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color }}>{c.score}</span>
                 )}
               </div>
 
               {/* Sub-metrics */}
               <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 10 }}>
                 {c.score == null ? (
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>score pending</span>
+                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>score pending</span>
                 ) : (
                   c.metrics.map((m, i) => (
                     <div
                       key={i}
                       style={{
-                        fontSize: 11, display: 'flex', gap: 6, justifyContent: 'space-between',
+                        fontSize: 'var(--text-xs)', display: 'flex', gap: 6, justifyContent: 'space-between',
                         whiteSpace: 'nowrap', overflow: 'hidden',
                       }}
                     >

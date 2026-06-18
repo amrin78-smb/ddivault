@@ -42,7 +42,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             padding: '10px 16px',
             borderRadius: 8,
             borderLeft: `4px solid ${colors[t.type]}`,
-            fontSize: 13,
+            fontSize: 'var(--text-base)',
             maxWidth: 340,
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             animation: 'fadeIn 0.2s ease',

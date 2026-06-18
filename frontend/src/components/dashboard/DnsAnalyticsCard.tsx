@@ -50,7 +50,7 @@ function compactNum(n: number): string {
 
 // ── Local Sparkline (full width, height 32) ───────────────────
 function Sparkline({ points, color = 'var(--blue)', height = 32 }: { points: number[]; color?: string; height?: number }) {
-  if (points.length < 2) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>insufficient data</span>;
+  if (points.length < 2) return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>insufficient data</span>;
   const W = 100, H = height, pad = 2;
   const max = Math.max(...points), min = Math.min(...points);
   const span = max - min || 1;
@@ -71,8 +71,8 @@ function Sparkline({ points, color = 'var(--blue)', height = 32 }: { points: num
 function MiniStat({ label, value, color }: { label: string; value: React.ReactNode; color: string }) {
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
+      <div style={{ fontSize: 'var(--text-lg)', fontWeight: 800, color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
     </div>
   );
 }
@@ -160,12 +160,12 @@ export default function DnsAnalyticsCard(props: { refreshNonce?: number; onNavig
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 16px', borderBottom: '1px solid var(--border)',
       }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>DNS Query Analytics</span>
+        <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>DNS Query Analytics</span>
         <button
           onClick={() => onNavigate?.('dns')}
           style={{
             background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-            fontSize: 12, fontWeight: 600, color: 'var(--primary)', fontFamily: 'inherit',
+            fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--primary)', fontFamily: 'inherit',
           }}
         >
           DNS Insights →
@@ -218,18 +218,18 @@ export default function DnsAnalyticsCard(props: { refreshNonce?: number; onNavig
 
             {/* Sparkline */}
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Query rate · 24h</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>Query rate · 24h</div>
               {series.length >= 2 ? (
                 <Sparkline points={series} color="var(--blue)" height={32} />
               ) : (
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', height: 32, display: 'flex', alignItems: 'center' }}>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', height: 32, display: 'flex', alignItems: 'center' }}>
                   Query stats collecting…
                 </div>
               )}
             </div>
 
             {/* Footer */}
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 10 }}>
               {serversOnline}/{serversTotal} servers online · {forwardersDown} forwarders down · {staleRecords} stale records
             </div>
           </>

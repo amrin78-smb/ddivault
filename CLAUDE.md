@@ -416,6 +416,37 @@ Progress is written to DB every 50 IPs — frontend polls `/api/ipam/scan-status
 - Tables: zebra hover, sticky headers
 - No bullet points in UI copy
 
+## Typography & design tokens (suite standard)
+Styling is a custom CSS design system in `frontend/src/app/globals.css` (CSS custom
+properties in `:root` + `[data-theme="dark"]`) — NOT Tailwind.
+
+- **Body font:** Inter (loaded via Google Fonts in globals.css). Base body size is `var(--text-md)` (14px).
+- **Monospace:** `var(--font-mono)` = `'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace`. One mono stack everywhere — never hardcode a mono font-family. (The Rubik logo SVG font is the only exception and is left alone.)
+
+**7-step type scale** (defined once in `:root`; sizes do NOT change per theme):
+
+| Token         | px   | Use |
+|---------------|------|-----|
+| `--text-xs`   | 11px | table headers, badges, micro-labels |
+| `--text-sm`   | 12px | secondary labels, captions |
+| `--text-base` | 13px | buttons, inputs, table body |
+| `--text-md`   | 14px | body text, card titles (base body size) |
+| `--text-lg`   | 16px | section / panel headings |
+| `--text-xl`   | 20px | page titles |
+| `--text-2xl`  | 28px | stat numbers / display |
+
+**Rule:** NEVER hardcode font sizes or colors that duplicate a token. Always use
+`var(--text-*)` for type and the color tokens (`--text-primary/-secondary/-muted`,
+`--bg-primary/-card`, `--border`, `--border-light`, `--primary`, `--primary-dark`, etc.).
+Hardcoded hex that duplicates a token breaks dark mode (hex doesn't flip themes).
+Display/hero sizes >= 34px (e.g. the connection-lost glyphs ~44px, the big countdown
+number ~40px, the license-disabled 🔒 ~64px, the IPAM import success ✅ ~48px) may stay
+literal — they are intentional display sizes, not body type.
+
+This is the **NocVault SUITE-WIDE standard** — the same scale and rule apply to
+spanvault, logvault, and netvault. SpanVault is the reference implementation; this
+scale matches it exactly.
+
 ## License Enforcement
 DDIVault enforces a NocVault license fetched from `GET {NOCVAULT_HUB_URL}/api/license` (no auth).
 - **Backend** (`api/licenseCheck.js`): `getLicense()` caches for 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). `api/server.js` checks on startup + every 24h, exposes `GET /api/license-status`, and applies `enforceLicense` middleware (registered before all business routes).

@@ -82,7 +82,7 @@ export function ReadOnlyBanner({ show, label }: { show?: boolean; label?: string
   return (
     <div style={{
       background: '#fefce8', border: '1px solid #fde047', color: '#854d0e',
-      padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+      padding: '8px 14px', borderRadius: 8, fontSize: 'var(--text-base)', fontWeight: 500,
       display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14,
     }}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

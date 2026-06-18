@@ -36,6 +36,16 @@
   --sidebar-width:  240px;
   --header-height:  72px;
 
+  /* Type scale (suite standard — sizes do not change per theme) */
+  --text-xs:   11px;  /* table headers, badges, micro-labels */
+  --text-sm:   12px;  /* secondary labels, captions */
+  --text-base: 13px;  /* buttons, inputs, table body */
+  --text-md:   14px;  /* body text, card titles (current base) */
+  --text-lg:   16px;  /* section / panel headings */
+  --text-xl:   20px;  /* page titles */
+  --text-2xl:  28px;  /* stat numbers / display */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
+
   /* Status */
   --green:   #16a34a;
   --yellow:  #d97706;
@@ -61,7 +71,7 @@
 html, body {
   height: 100%;
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 1.5;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -80,7 +90,7 @@ table { border-collapse: collapse; width: 100%; }
 th {
   background: var(--bg-primary);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -94,7 +104,7 @@ td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
-  font-size: 13.5px;
+  font-size: var(--text-base);
 }
 tr:last-child td { border-bottom: none; }
 tbody tr { transition: background 0.1s; }
@@ -107,7 +117,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   align-items: center;
   padding: 3px 9px;
   border-radius: 20px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -148,8 +158,8 @@ tbody tr:hover td { background: var(--bg-primary); }
 
 /* ── Monospace ─────────────────────────────────────────────── */
 .mono {
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
-  font-size: 12.5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   letter-spacing: -0.01em;
 }
 
@@ -162,14 +172,14 @@ tbody tr:hover td { background: var(--bg-primary); }
   margin-bottom: 12px;
 }
 .page-title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.3px;
   line-height: 1.2;
 }
 .page-subtitle {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 /* Inline title · subtitle separator (compact single-line headers) */
@@ -182,7 +192,7 @@ tbody tr:hover td { background: var(--bg-primary); }
 .page-head-sep {
   color: var(--border);
   font-weight: 400;
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 /* ── Stat card ─────────────────────────────────────────────── */
@@ -199,19 +209,19 @@ tbody tr:hover td { background: var(--bg-primary); }
   transform: translateY(-1px);
 }
 .stat-value {
-  font-size: 32px;
+  font-size: var(--text-2xl);
   font-weight: 800;
   line-height: 1;
   letter-spacing: -1px;
 }
 .stat-label {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--text-secondary);
   margin-top: 6px;
 }
 .stat-sub {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   margin-top: 3px;
 }
@@ -231,7 +241,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   justify-content: space-between;
 }
 .card-title {
-  font-size: 14px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -244,7 +254,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   gap: 6px;
   padding: 8px 16px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
@@ -273,7 +283,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 13.5px;
+  font-size: var(--text-base);
   font-family: inherit;
   transition: border-color 0.15s, box-shadow 0.15s;
   outline: none;
@@ -311,7 +321,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   flex-wrap: wrap;
 }
@@ -334,8 +344,8 @@ tbody tr:hover td { background: var(--bg-primary); }
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
-  font-size: 11px;
-  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
   color: var(--text-muted);
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -351,7 +361,7 @@ tbody tr:hover td { background: var(--bg-primary); }
 /* ── Data table (dense, consistent) ────────────────────────── */
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table thead th { position: sticky; top: 0; z-index: 2; }
-.data-table td { padding: 9px 14px; font-size: 13px; }
+.data-table td { padding: 9px 14px; font-size: var(--text-base); }
 .data-table tbody tr { cursor: default; }
 .data-table tbody tr.clickable { cursor: pointer; }
 
@@ -393,7 +403,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
@@ -425,7 +435,7 @@ tbody tr:hover td { background: var(--bg-primary); }
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
@@ -443,7 +453,7 @@ tbody tr:hover td { background: var(--bg-primary); }
 }
 .settings-tab {
   padding: 10px 18px;
-  font-size: 14px;
+  font-size: var(--text-md);
   background: none;
   border: none;
   border-bottom: 2px solid transparent;

@@ -142,11 +142,11 @@ const STATUS_TINT: Record<string, string> = {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '8px 12px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)',
-  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-base)', fontFamily: 'inherit', outline: 'none',
 };
 
-const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)' };
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace" };
+const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 'var(--text-base)', color: 'var(--text-primary)' };
+const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 
 function fmtDate(d?: string) { return d ? new Date(d).toLocaleString() : '—'; }
 function fmtDay(d?: string)  { return d ? new Date(d).toLocaleDateString() : '—'; }
@@ -179,7 +179,7 @@ function ScanProgressBar({ job }: { job: any }) {
   const eta = scanEta(pct, job.elapsed_seconds || 0);
   return (
     <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-light)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-sm)', marginBottom: 6 }}>
         <span style={{ fontWeight: 600 }}>🔍 Scanning {cleanNetwork(job.network)}/{job.prefix_length}{job.name ? ` — ${job.name}` : ''}</span>
         <span style={{ color: 'var(--text-muted)' }}>{pct}%</span>
       </div>
@@ -189,7 +189,7 @@ function ScanProgressBar({ job }: { job: any }) {
           transition: 'width 0.4s ease', animation: 'pulse 1.5s ease-in-out infinite',
         }} />
       </div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, ...MONO }}>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 5, ...MONO }}>
         {scanned}/{total} hosts · {job.hosts_up || 0} alive · {job.elapsed_seconds || 0}s elapsed{eta ? ` · ${eta}` : ''}
       </div>
     </div>
@@ -255,7 +255,7 @@ function RowMenu({ items }: { items: MenuItem[] }) {
         title="Actions"
         style={{
           background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-          cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '2px 8px', color: 'var(--text-muted)',
+          cursor: 'pointer', fontSize: 'var(--text-lg)', lineHeight: 1, padding: '2px 8px', color: 'var(--text-muted)',
         }}
       >⋯</button>
       {open && (
@@ -272,7 +272,7 @@ function RowMenu({ items }: { items: MenuItem[] }) {
                 onClick={e => { e.stopPropagation(); setOpen(false); it.onClick(); }}
                 style={{
                   display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
-                  fontSize: 12.5, background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 'var(--text-sm)', background: 'none', border: 'none', cursor: 'pointer',
                   color: it.danger ? 'var(--red)' : 'var(--text-primary)',
                 }}
                 onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-primary)')}
@@ -292,7 +292,7 @@ function RowMenu({ items }: { items: MenuItem[] }) {
 function Field({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
   return (
     <div style={{ marginBottom: 10, ...(full ? { gridColumn: '1/-1' } : {}) }}>
-      <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>{label}</label>
+      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>{label}</label>
       {children}
     </div>
   );
@@ -337,10 +337,10 @@ function ModalShell({ title, subtitle, width = 540, onClose, children }: {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>{title}</div>
-            {subtitle && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 3 }}>{subtitle}</div>}
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>{title}</div>
+            {subtitle && <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 3 }}>{subtitle}</div>}
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
         </div>
         {children}
       </div>
@@ -560,7 +560,7 @@ function EditSubnetModal({ subnet, sites, onClose, onSaved }: {
         <Field label="Description" full><input value={form.description} onChange={e => set('description', e.target.value)} style={INPUT} /></Field>
         <Field label="Site (from NetVault)" full><SiteIdSelect value={form.site_id} onChange={v => set('site_id', v)} sites={sites} /></Field>
         <Field label="Security" full>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
             <input
               type="checkbox"
               checked={form.is_sensitive}
@@ -741,10 +741,10 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 'var(--text-lg)' }}>
               {subnet.name || `${cleanNetwork(subnet.network)}/${subnet.prefix_length}`}
             </div>
-            <div style={{ ...MONO, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
+            <div style={{ ...MONO, color: 'rgba(255,255,255,0.5)', fontSize: 'var(--text-xs)' }}>
               {cleanNetwork(subnet.network)}/{subnet.prefix_length} · {subnet.gateway ? `GW ${subnet.gateway}` : 'No gateway'}
               {siteName(subnet.site_id, sites, subnet.site) ? ` · ${siteName(subnet.site_id, sites, subnet.site)}` : ''}
             </div>
@@ -752,7 +752,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
           <div style={{ flex: 1 }} />
           {Object.entries(counts).map(([s, n]) => (
             <div key={s} style={{
-              padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+              padding: '3px 10px', borderRadius: 12, fontSize: 'var(--text-xs)', fontWeight: 600,
               background: STATUS_TINT[s] || 'rgba(255,255,255,0.08)',
               border: `1px solid ${STATUS_COLOR[s] || 'var(--text-muted)'}55`,
               color: '#fff',
@@ -760,7 +760,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
               <span style={{ color: STATUS_COLOR[s] || '#fff', filter: 'brightness(1.6)' }}>●</span> {n} {s}
             </div>
           ))}
-          <button className="btn" onClick={nextIp} style={{ fontSize: 12 }}>Next Available IP</button>
+          <button className="btn" onClick={nextIp} style={{ fontSize: 'var(--text-sm)' }}>Next Available IP</button>
           {canWrite && (
             <button className="btn btn-primary" onClick={startScan} disabled={scanning} style={{ opacity: scanning ? 0.7 : 1 }}>
               {scanning ? <><Spinner color="#fff" /> Scanning…</> : '⟳ Scan Now'}
@@ -781,7 +781,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
           <option value="unknown">Unknown</option>
           <option value="offline">Offline</option>
         </select>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
           {filtered.length} / {addresses.length} IPs
           {subnet.last_scanned ? ` · Last scanned ${fmtDate(subnet.last_scanned)}` : ''}
         </span>
@@ -821,25 +821,25 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
                 <tr key={addr.ip_address} style={{ background: STATUS_TINT[addr.status] || 'transparent' }}>
                   <td style={{ ...TD, ...MONO, fontWeight: 600 }}>{addr.ip_address}</td>
                   <td style={TD}><span className={`badge ${STATUS_BADGE[addr.status] || 'badge-gray'}`}>{addr.status}</span></td>
-                  <td style={{ ...TD, fontSize: 12 }}>
+                  <td style={{ ...TD, fontSize: 'var(--text-sm)' }}>
                     {addr.device_type || addr.device_vendor
                       ? <span>{deviceIcon(addr.device_type)} <span style={{ color: 'var(--text-muted)' }}>{addr.device_vendor || addr.device_type || ''}</span></span>
                       : '—'}
                   </td>
                   <td style={TD}>{addr.hostname || '—'}</td>
-                  <td style={{ ...TD, ...MONO, fontSize: 11 }}>{addr.mac_address || '—'}</td>
-                  <td style={{ ...TD, fontSize: 11 }}>{fmtDate(addr.last_seen)}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 'var(--text-xs)' }}>{addr.mac_address || '—'}</td>
+                  <td style={{ ...TD, fontSize: 'var(--text-xs)' }}>{fmtDate(addr.last_seen)}</td>
                   <td style={TD}>{addr.ping_ms != null ? `${addr.ping_ms}` : '—'}</td>
-                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>
+                  <td style={{ ...TD, fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                     {addr.description || ''}{addr.owner ? ` (${addr.owner})` : ''}
                     {addr.is_reserved && addr.reserved_by ? <span style={{ color: 'var(--purple)', marginLeft: 4 }}>· {addr.reserved_by}</span> : ''}
                   </td>
                   <td style={TD}>
                     {!canWrite ? '—'
                       : addr.is_reserved ? (
-                      <button onClick={() => release(addr.ip_address)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Release</button>
+                      <button onClick={() => release(addr.ip_address)} style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Release</button>
                     ) : (addr.status === 'available' || addr.status === 'unknown') ? (
-                      <button onClick={() => setReserveIp(addr.ip_address)} style={{ fontSize: 11, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Reserve</button>
+                      <button onClick={() => setReserveIp(addr.ip_address)} style={{ fontSize: 'var(--text-xs)', color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Reserve</button>
                     ) : '—'}
                   </td>
                 </tr>
@@ -1077,15 +1077,15 @@ export default function IPAMTab() {
           border: '1px solid rgba(220,38,38,0.3)', borderRadius: 'var(--radius)', padding: '14px 18px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 16 }}>⚠</span>
-            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--red)' }}>
+            <span style={{ fontSize: 'var(--text-lg)' }}>⚠</span>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', color: 'var(--red)' }}>
               {conflicts.length} overlapping subnet{conflicts.length > 1 ? 's' : ''} detected
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {conflicts.map((c, i) => (
               <div key={i} style={{
-                ...MONO, fontSize: 12, fontWeight: 600, color: 'var(--red)',
+                ...MONO, fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--red)',
                 background: 'var(--bg-card)', border: '1px solid rgba(220,38,38,0.3)',
                 borderRadius: 'var(--radius-sm)', padding: '5px 10px',
               }}>
@@ -1148,7 +1148,7 @@ export default function IPAMTab() {
             <option value="critical">Critical</option>
           </select>
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
             {supernets.length} supernet{supernets.length === 1 ? '' : 's'} · {subnets.length} subnet{subnets.length === 1 ? '' : 's'}
           </span>
         </div>
@@ -1162,7 +1162,7 @@ export default function IPAMTab() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 14px 10px' }}>
             <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--primary)', animation: 'pulse 1s infinite' }} />
-            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--primary)' }}>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', color: 'var(--primary)' }}>
               Scanning {scanStatus.jobs.length} subnet{scanStatus.jobs.length > 1 ? 's' : ''}…
             </div>
           </div>
@@ -1175,17 +1175,17 @@ export default function IPAMTab() {
       {/* ── Recently completed scan results ── */}
       {scanStatus && !(scanStatus.jobs?.length > 0) && scanStatus.subnets?.some((s: any) => s.scan_status === 'done' && s.last_scanned) && (
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 16px' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>Last Scan Results</div>
+          <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>Last Scan Results</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {scanStatus.subnets?.filter((s: any) => s.scan_status === 'done' && s.last_scanned).map((s: any) => (
-              <div key={s.id} style={{ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 11 }}>
+              <div key={s.id} style={{ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 'var(--text-xs)' }}>
                 <div style={{ ...MONO, fontWeight: 600 }}>{cleanNetwork(s.network)}/{s.prefix_length}</div>
                 <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                   {s.used_hosts}/{s.total_hosts || 0} used · {s.unknown_hosts > 0
                     ? <span style={{ color: 'var(--orange)' }}>⚠ {s.unknown_hosts} unknown</span>
                     : <span style={{ color: 'var(--green)' }}>✓ clean</span>}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(s.last_scanned)}</div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(s.last_scanned)}</div>
               </div>
             ))}
           </div>
@@ -1326,24 +1326,24 @@ function TreeView({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
             <div>
-              <div style={{ ...MONO, fontSize: 13, fontWeight: 600 }}>
+              <div style={{ ...MONO, fontSize: 'var(--text-base)', fontWeight: 600 }}>
                 {sub.is_sensitive && <span title="Sensitive subnet" style={{ marginRight: 5 }}>🔒</span>}
                 {cleanNetwork(sub.network)}/{sub.prefix_length}
               </div>
-              {sub.name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.name}</div>}
+              {sub.name && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{sub.name}</div>}
             </div>
           </div>
         </td>
         <td style={TD}><span className="badge badge-gray">Subnet</span></td>
         <td style={{ ...TD, color: 'var(--text-muted)' }}>—</td>
-        <td style={{ ...TD, ...MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sub.network, sub.prefix_length)}</td>
+        <td style={{ ...TD, ...MONO, fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sub.network, sub.prefix_length)}</td>
         <td style={{ ...TD, minWidth: 150 }}><UtilBar pct={utilPct(used, total)} /></td>
         <td style={{ ...TD, ...MONO, whiteSpace: 'nowrap' }}>{used.toLocaleString()} / {total.toLocaleString()}</td>
         <td style={TD}>
           <span className={`badge ${st.badge}`}>{st.label}</span>
           {sub.unknown_hosts > 0 && <span className="badge badge-orange" style={{ marginLeft: 6 }}>⚠ {sub.unknown_hosts}</span>}
         </td>
-        <td style={{ ...TD, fontSize: 11, color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <td style={{ ...TD, fontSize: 'var(--text-xs)', color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           {sub.scan_status === 'error' ? '⚠ Error' : relTime(sub.last_scanned)}
         </td>
         <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
@@ -1391,20 +1391,20 @@ function TreeView({
                 <tr className="clickable" onClick={() => onToggle(sn.id)} style={{ background: 'var(--bg-primary)' }}>
                   <td style={TD}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'inline-block', width: 12, transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
+                      <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'inline-block', width: 12, transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--navy)', flexShrink: 0 }} />
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-primary)' }}>
+                        <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
                           {sn.name || `${cleanNetwork(sn.network)}/${sn.prefix_length}`}
-                          <span style={{ ...MONO, fontSize: 11.5, color: 'var(--text-muted)', marginLeft: 9, fontWeight: 400 }}>{cleanNetwork(sn.network)}/{sn.prefix_length}</span>
+                          <span style={{ ...MONO, fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginLeft: 9, fontWeight: 400 }}>{cleanNetwork(sn.network)}/{sn.prefix_length}</span>
                         </div>
-                        {snSite && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>📍 {snSite}</div>}
+                        {snSite && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>📍 {snSite}</div>}
                       </div>
                     </div>
                   </td>
                   <td style={TD}><span className="badge badge-blue">Supernet</span></td>
                   <td style={{ ...TD, ...MONO }}>{children.length}</td>
-                  <td style={{ ...TD, ...MONO, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sn.network, sn.prefix_length)}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{ipRange(sn.network, sn.prefix_length)}</td>
                   <td style={{ ...TD, minWidth: 150 }}>{totalAll > 0 ? <UtilBar pct={utilPct(totalUsed, totalAll)} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                   <td style={{ ...TD, ...MONO, whiteSpace: 'nowrap' }}>{totalUsed.toLocaleString()} / {totalAll.toLocaleString()}</td>
                   <td style={{ ...TD, color: 'var(--text-muted)' }}>—</td>
@@ -1415,13 +1415,13 @@ function TreeView({
                         value={prefix}
                         onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
                         title="Prefix for next free subnet"
-                        style={{ fontSize: 11, padding: '3px 5px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                        style={{ fontSize: 'var(--text-xs)', padding: '3px 5px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
                       >
                         {PREFIX_OPTIONS.map(p => <option key={p} value={p}>/{p}</option>)}
                       </select>
-                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => onFindNextSubnet(sn)}>Next Free</button>
+                      <button className="btn" style={{ fontSize: 'var(--text-xs)', padding: '3px 8px' }} onClick={() => onFindNextSubnet(sn)}>Next Free</button>
                       {nextSubnetResult[sn.id] && (
-                        <span style={{ ...MONO, fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
+                        <span style={{ ...MONO, fontSize: 'var(--text-xs)', color: 'var(--blue)', fontWeight: 600 }}>{nextSubnetResult[sn.id]}</span>
                       )}
                       {snMenu.length > 0 && <RowMenu items={snMenu} />}
                     </div>
@@ -1430,7 +1430,7 @@ function TreeView({
                 {isOpen && matchedKids.map(sub => subnetRow(sub))}
                 {isOpen && matchedKids.length === 0 && (
                   <tr>
-                    <td colSpan={9} style={{ ...TD, paddingLeft: 40, color: 'var(--text-muted)', fontSize: 13 }}>
+                    <td colSpan={9} style={{ ...TD, paddingLeft: 40, color: 'var(--text-muted)', fontSize: 'var(--text-base)' }}>
                       {filterActive ? 'No matching subnets' : 'No subnets yet — use the ··· menu to add one'}
                     </td>
                   </tr>
@@ -1443,7 +1443,7 @@ function TreeView({
           {showUnassigned && (!filterActive || filteredOrphans.length > 0) && (
             <>
               <tr style={{ background: 'var(--bg-primary)' }}>
-                <td colSpan={9} style={{ ...TD, fontWeight: 600, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                <td colSpan={9} style={{ ...TD, fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', display: 'inline-block' }} />
                     Unassigned Subnets ({filterActive ? filteredOrphans.length : orphanSubnets.length})
@@ -1538,8 +1538,8 @@ function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
                     {cleanNetwork(sub.network)}/{sub.prefix_length}
                   </td>
                   <td style={TD}>{sub.name || '—'}</td>
-                  <td style={{ ...TD, fontSize: 11, color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${cleanNetwork(sub.supernet_network)}/${sub.supernet_prefix}` : '—')}</td>
-                  <td style={{ ...TD, ...MONO, fontSize: 11 }}>{sub.gateway || '—'}</td>
+                  <td style={{ ...TD, fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{sub.supernet_name || (sub.supernet_network ? `${cleanNetwork(sub.supernet_network)}/${sub.supernet_prefix}` : '—')}</td>
+                  <td style={{ ...TD, ...MONO, fontSize: 'var(--text-xs)' }}>{sub.gateway || '—'}</td>
                   <td style={TD}>{sub.vlan_id ? <span className="badge badge-blue">{sub.vlan_id}</span> : '—'}</td>
                   <td style={TD}>{siteName(sub.site_id, sites, sub.site) || '—'}</td>
                   <td style={{ ...TD, ...MONO }}>{sub.used_hosts || 0} / {total}</td>
@@ -1547,14 +1547,14 @@ function FlatView({ subnets, sites, onView, onScan, onDelete, onEdit }: {
                   <td style={TD}>{sub.unknown_hosts > 0
                     ? <span className="badge badge-orange">{sub.unknown_hosts}</span>
                     : <span style={{ color: 'var(--green)' }}>0</span>}</td>
-                  <td style={{ ...TD, fontSize: 11, color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)' }}>
+                  <td style={{ ...TD, fontSize: 'var(--text-xs)', color: sub.scan_status === 'error' ? 'var(--red)' : 'var(--text-muted)' }}>
                     {scanLabel(sub.scan_status, sub.last_scanned)}
                   </td>
                   <td style={TD} onClick={e => e.stopPropagation()}>
                     {canWrite && <>
-                      <button onClick={() => onScan(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
-                      <button onClick={() => onEdit(sub)} style={{ fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, marginLeft: 8 }}>Edit</button>
-                      <button onClick={() => onDelete(sub.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
+                      <button onClick={() => onScan(sub)} style={{ fontSize: 'var(--text-xs)', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Scan</button>
+                      <button onClick={() => onEdit(sub)} style={{ fontSize: 'var(--text-xs)', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, marginLeft: 8 }}>Edit</button>
+                      <button onClick={() => onDelete(sub.id)} style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8 }}>Del</button>
                     </>}
                   </td>
                 </tr>
@@ -1600,7 +1600,7 @@ function VlanView({ vlans, subnets, onAdd, onDelete }: {
                 <td style={TD}>{v.site || '—'}</td>
                 <td style={TD}>{subnets.filter(s => s.vlan_id === v.vlan_id).length}</td>
                 <td style={TD}>
-                  {canWrite && <button onClick={() => onDelete(v.id)} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
+                  {canWrite && <button onClick={() => onDelete(v.id)} style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>}
                 </td>
               </tr>
             ))}

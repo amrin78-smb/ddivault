@@ -307,15 +307,15 @@ export default function PriorityActionCenter({ refreshNonce, onNavigate, onFocus
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={{
-            fontSize: 11, color: 'var(--text-muted)', flexShrink: 0,
+            fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flexShrink: 0,
             display: 'inline-block', transition: 'transform 0.15s',
             transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
           }}>▾</span>
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)' }}>
             Priority Action Center
           </span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           <span style={{ color: counts.critical > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: counts.critical > 0 ? 700 : 400 }}>
             {counts.critical} critical
           </span>
@@ -370,7 +370,7 @@ function Row({ item }: { item: ActionItem }) {
 
       {/* source tag chip */}
       <span style={{
-        fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-primary)',
+        fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-primary)',
         border: '1px solid var(--border)', borderRadius: 4, padding: '1px 7px',
         flexShrink: 0, fontWeight: 600,
       }}>{item.source}</span>
@@ -378,12 +378,12 @@ function Row({ item }: { item: ActionItem }) {
       {/* title + detail */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8, overflow: 'hidden' }}>
         <span style={{
-          fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+          fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1,
         }}>{item.title}</span>
         {item.detail && (
           <span style={{
-            fontSize: 11, color: 'var(--text-muted)',
+            fontSize: 'var(--text-xs)', color: 'var(--text-muted)',
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 2,
           }}>{item.detail}</span>
         )}
@@ -391,8 +391,8 @@ function Row({ item }: { item: ActionItem }) {
 
       {/* age + chevron */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {age && <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{age}</span>}
-        {clickable && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>›</span>}
+        {age && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{age}</span>}
+        {clickable && <span style={{ fontSize: 'var(--text-base)', color: 'var(--text-muted)' }}>›</span>}
       </div>
     </div>
   );

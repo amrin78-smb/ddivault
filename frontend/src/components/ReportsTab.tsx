@@ -5,8 +5,8 @@ import { PageHeader, EmptyState, TableSkeleton } from '@/components/ui';
 import { useToast } from '@/components/Toast';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
-const TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
-const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
+const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
+const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
@@ -123,7 +123,7 @@ export default function ReportsTab() {
                 <div style={{ ...MUTED, marginTop: 2 }}>{r.filters.length ? `Filters: ${r.filters.join(', ')}` : 'No filters'}</div>
               </div>
             </div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.5, minHeight: 38 }}>{r.desc}</div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5, minHeight: 38 }}>{r.desc}</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { setFormat('view'); generate(r); }}>View</button>
               <button className="btn" onClick={() => { setActive(r); setFormat('pdf'); const p = buildParams(r); p.set('format', 'pdf'); window.open(`/api/reports/${r.key}?${p.toString()}`, '_blank'); logRecent(r, 'pdf', p.toString()); }}>PDF</button>
@@ -136,7 +136,7 @@ export default function ReportsTab() {
       {/* Filters for the active report */}
       {active && (active.filters.length > 0) && (
         <div style={{ ...CARD, padding: 14, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ ...TITLE, fontSize: 13 }}>{active.title} filters:</span>
+          <span style={{ ...TITLE, fontSize: 'var(--text-base)' }}>{active.title} filters:</span>
           {showSite && (
             <select className="input" value={siteId} onChange={e => setSiteId(e.target.value)}>
               <option value="">All sites</option>
@@ -178,7 +178,7 @@ export default function ReportsTab() {
             <div style={{ display: 'flex', gap: 12, padding: '14px 18px', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)' }}>
               {preview.summary.map((s, i) => (
                 <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 120 }}>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: s.color || 'var(--navy)', lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--navy)', lineHeight: 1 }}>{s.value}</div>
                   <div style={{ ...MUTED, marginTop: 4 }}>{s.label}</div>
                 </div>
               ))}
@@ -195,7 +195,7 @@ export default function ReportsTab() {
                   {preview.rows.map((row, ri) => (
                     <tr key={ri}>
                       {preview.columns.map(c => (
-                        <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
                           {String(row[c.key] ?? '—')}
                         </td>
                       ))}
@@ -225,7 +225,7 @@ export default function ReportsTab() {
                     <td style={{ ...MUTED }}>{r.at}</td>
                     <td>
                       {r.format !== 'view' && (
-                        <button style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}
+                        <button style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}
                           onClick={() => window.open(`/api/reports/${r.key}?${r.params}`, '_blank')}>Download again</button>
                       )}
                     </td>
@@ -242,7 +242,7 @@ export default function ReportsTab() {
             <div style={{ display: 'inline-flex', padding: 12, borderRadius: 12, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-muted)', marginBottom: 12 }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Coming soon</div>
+            <div style={{ fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' }}>Coming soon</div>
             <div style={{ ...MUTED, marginTop: 6, maxWidth: 280, marginLeft: 'auto', marginRight: 'auto' }}>
               Schedule any report to be generated and emailed on a recurring basis — daily, weekly or monthly.
             </div>

@@ -34,9 +34,9 @@ async function api(path: string, opts?: RequestInit) {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
 };
-const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)', verticalAlign: 'middle' };
+const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 'var(--text-base)', color: 'var(--text-primary)', verticalAlign: 'middle' };
 
 // Friendly name + description per known rule_type
 const RULE_INFO: Record<string, { name: string; desc: string }> = {
@@ -140,7 +140,7 @@ export default function AlertRules() {
 
       <ReadOnlyBanner />
 
-      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
         Rules are ordered by tier. Info-tier rules are low-signal and hidden from the default alert view.
       </div>
 
@@ -173,7 +173,7 @@ export default function AlertRules() {
                   <td style={{ ...TD, minWidth: 240 }}>
                     <div style={{ fontWeight: 600 }}>{ruleName(r.rule_type)}</div>
                     {ruleDesc(r.rule_type) && (
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ruleDesc(r.rule_type)}</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{ruleDesc(r.rule_type)}</div>
                     )}
                   </td>
                   <td style={TD}>
@@ -197,7 +197,7 @@ export default function AlertRules() {
                           onChange={e => update(r.rule_type, { threshold_value: e.target.value === '' ? null : Number(e.target.value) })}
                           style={{ ...INPUT, width: 80 }}
                         />
-                        {r.threshold_unit && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.threshold_unit}</span>}
+                        {r.threshold_unit && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{r.threshold_unit}</span>}
                       </div>
                     ) : (
                       <span style={{ color: 'var(--text-muted)' }}>—</span>
@@ -240,7 +240,7 @@ export default function AlertRules() {
                         className="btn btn-primary"
                         onClick={() => save(r)}
                         disabled={savingType === r.rule_type}
-                        style={{ fontSize: 12, opacity: savingType === r.rule_type ? 0.7 : 1 }}
+                        style={{ fontSize: 'var(--text-sm)', opacity: savingType === r.rule_type ? 0.7 : 1 }}
                       >
                         {savingType === r.rule_type ? <><Spinner size={12} color="#fff" /> Saving…</> : 'Save'}
                       </button>

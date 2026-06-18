@@ -64,11 +64,11 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
   const color = scoreColor(v);
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', width: 64, flexShrink: 0 }}>{label}</div>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', width: 64, flexShrink: 0 }}>{label}</div>
       <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
         <div style={{ width: `${Math.min(100, Math.max(0, v ?? 0))}%`, height: '100%', background: color }} />
       </div>
-      <div style={{ fontSize: 11, fontWeight: 600, color, width: 30, textAlign: 'right' }}>{v != null ? Math.round(v) : '—'}</div>
+      <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color, width: 30, textAlign: 'right' }}>{v != null ? Math.round(v) : '—'}</div>
     </div>
   );
 }
@@ -99,11 +99,11 @@ function SiteTile({ site, expanded, onToggle, onNavigate }: {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {site.site_name || `Site ${site.site_id}`}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>
+          <div style={{ fontSize: 'var(--text-lg)', fontWeight: 800, color, lineHeight: 1 }}>
             {overall != null ? Math.round(overall) : '—'}
           </div>
           <button
@@ -112,7 +112,7 @@ function SiteTile({ site, expanded, onToggle, onNavigate }: {
             onClick={e => { e.stopPropagation(); onToggle(); }}
             style={{
               background: 'none', border: 'none', cursor: 'pointer', padding: 2,
-              color: 'var(--text-muted)', fontSize: 12, lineHeight: 1,
+              color: 'var(--text-muted)', fontSize: 'var(--text-sm)', lineHeight: 1,
               display: 'flex', alignItems: 'center',
               transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.12s',
             }}
@@ -179,9 +179,9 @@ export default function SiteHealth({ onSiteClick }: { onSiteClick?: () => void }
         padding: '12px 16px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Site Health</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Site Health</div>
         {!loading && !error && rows.length > 0 && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
             <span style={{ color: 'var(--green)', fontWeight: 600 }}>{counts.green} healthy</span>
             {' · '}
             <span style={{ color: 'var(--orange)', fontWeight: 600 }}>{counts.amber} warning</span>

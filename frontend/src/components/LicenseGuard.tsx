@@ -101,7 +101,7 @@ export function LicenseBanner() {
     <div style={{
       background: banner.bg, color: banner.text,
       padding: '10px 20px', display: 'flex', alignItems: 'center',
-      justifyContent: 'space-between', fontSize: 13, fontWeight: 500,
+      justifyContent: 'space-between', fontSize: 'var(--text-base)', fontWeight: 500,
       flexShrink: 0, zIndex: 100,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -115,7 +115,7 @@ export function LicenseBanner() {
         href={`${hubUrl}/settings/license`}
         target="_blank"
         rel="noopener noreferrer"
-        style={{ color: '#fff', textDecoration: 'underline', fontSize: 12, whiteSpace: 'nowrap', marginLeft: 16 }}
+        style={{ color: '#fff', textDecoration: 'underline', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap', marginLeft: 16 }}
       >
         Manage License →
       </a>
@@ -128,22 +128,22 @@ export function LicenseDisabledScreen() {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', height: '100vh', background: '#f4f6f9',
+      justifyContent: 'center', height: '100vh', background: 'var(--bg-primary)',
       gap: 16, padding: 32, textAlign: 'center',
     }}>
       <div style={{ fontSize: 64 }}>🔒</div>
-      <h1 style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', margin: 0 }}>DDIVault License Expired</h1>
-      <p style={{ fontSize: 15, color: '#64748b', maxWidth: 480, margin: 0 }}>
+      <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>DDIVault License Expired</h1>
+      <p style={{ fontSize: 'var(--text-md)', color: 'var(--text-muted)', maxWidth: 480, margin: 0 }}>
         Your NocVault license has expired and the 30-day grace period has ended.
         Please renew your license to restore access to DDIVault.
       </p>
       <a
         href={`${hubUrl}/settings/license`}
-        style={{ background: '#C8102E', color: '#fff', padding: '12px 28px', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 15, marginTop: 8 }}
+        style={{ background: 'var(--primary)', color: '#fff', padding: '12px 28px', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 'var(--text-md)', marginTop: 8 }}
       >
         Renew License at NocVault Hub →
       </a>
-      <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>Need help? Contact your NocVault administrator.</p>
+      <p style={{ fontSize: 'var(--text-sm)', color: '#94a3b8', margin: 0 }}>Need help? Contact your NocVault administrator.</p>
     </div>
   );
 }

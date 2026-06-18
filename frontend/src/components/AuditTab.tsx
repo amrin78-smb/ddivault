@@ -32,8 +32,8 @@ interface AuditStats {
 }
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
-const TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
-const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
+const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
+const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
@@ -63,9 +63,9 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
     <div style={{ flex: 1, minWidth: 200 }}>
       <div style={{ ...MUTED, fontWeight: 600, marginBottom: 4 }}>{label}</div>
       <pre style={{
-        margin: 0, fontSize: 11, lineHeight: 1.5, padding: 10, borderRadius: 8, overflow: 'auto', maxHeight: 200,
+        margin: 0, fontSize: 'var(--text-xs)', lineHeight: 1.5, padding: 10, borderRadius: 8, overflow: 'auto', maxHeight: 200,
         background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-mono)',
       }}>{JSON.stringify(value, null, 2)}</pre>
     </div>
   );
@@ -75,8 +75,8 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 function StatTile({ value, label, sub, color }: { value: React.ReactNode; label: string; sub?: string; color?: string }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: color || 'var(--navy)' }}>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
+      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: color || 'var(--navy)', lineHeight: 1, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 8 }}>{label}</div>
       {sub && <div style={{ ...MUTED, marginTop: 2 }}>{sub}</div>}
     </div>
   );
@@ -210,11 +210,11 @@ export default function AuditTab() {
                   >
                     <div style={{
                       width: 32, height: 32, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: e.result === 'success' ? 'var(--navy)' : 'var(--red)', color: '#fff', fontWeight: 700, fontSize: 13,
+                      background: e.result === 'success' ? 'var(--navy)' : 'var(--red)', color: '#fff', fontWeight: 700, fontSize: 'var(--text-base)',
                     }}>{avatarInitial(e.username)}</div>
                     <div style={{ width: 92, flexShrink: 0 }}><ActionBadge action={e.action} /></div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 'var(--text-base)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {e.change_summary || `${e.action} ${e.entity_type}`}
                       </div>
                       <div style={{ ...MUTED, marginTop: 1 }}>
@@ -223,7 +223,7 @@ export default function AuditTab() {
                         {e.result !== 'success' && <span style={{ color: 'var(--red)', fontWeight: 600 }}> · {e.result}</span>}
                       </div>
                     </div>
-                    <div style={{ ...MUTED, whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+                    <div style={{ ...MUTED, whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
                       {new Date(e.timestamp).toLocaleString()}
                     </div>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}><polyline points="6 9 12 15 18 9"/></svg>
@@ -231,13 +231,13 @@ export default function AuditTab() {
                   {open && (
                     <div style={{ padding: '4px 18px 18px 64px', background: 'var(--bg-primary)' }}>
                       <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 12 }}>
-                        <div><span style={MUTED}>IP Address</span><div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{e.ip_address || '—'}</div></div>
-                        <div><span style={MUTED}>Role</span><div style={{ fontSize: 12 }}>{e.user_role || '—'}</div></div>
-                        <div><span style={MUTED}>Duration</span><div style={{ fontSize: 12 }}>{e.duration_ms != null ? `${e.duration_ms} ms` : '—'}</div></div>
-                        <div><span style={MUTED}>Entity ID</span><div style={{ fontSize: 12 }}>{e.entity_id || '—'}</div></div>
-                        <div style={{ maxWidth: 360 }}><span style={MUTED}>User Agent</span><div style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.user_agent || '—'}</div></div>
+                        <div><span style={MUTED}>IP Address</span><div style={{ fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)' }}>{e.ip_address || '—'}</div></div>
+                        <div><span style={MUTED}>Role</span><div style={{ fontSize: 'var(--text-sm)' }}>{e.user_role || '—'}</div></div>
+                        <div><span style={MUTED}>Duration</span><div style={{ fontSize: 'var(--text-sm)' }}>{e.duration_ms != null ? `${e.duration_ms} ms` : '—'}</div></div>
+                        <div><span style={MUTED}>Entity ID</span><div style={{ fontSize: 'var(--text-sm)' }}>{e.entity_id || '—'}</div></div>
+                        <div style={{ maxWidth: 360 }}><span style={MUTED}>User Agent</span><div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.user_agent || '—'}</div></div>
                       </div>
-                      {e.error_message && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>Error: {e.error_message}</div>}
+                      {e.error_message && <div style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', marginBottom: 12 }}>Error: {e.error_message}</div>}
                       {(e.old_value != null || e.new_value != null) && (
                         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                           <JsonBlock label="Before" value={e.old_value} />

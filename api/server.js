@@ -172,6 +172,13 @@ const releaseNotes = {
     'Standardized control corners (buttons, inputs, dropdowns, search) to a crisp 6px radius',
     'Calibrated the UI toward an enterprise network-operations console while keeping the modern aesthetic',
   ],
+  '1.12.11': [
+    'Standardized typography on a shared 7-step type scale (--text-xs through --text-2xl)',
+    'Snapped all ad-hoc font sizes across the app onto the scale for consistent, predictable text',
+    'Unified every monospace font to a single --font-mono token',
+    'Replaced hardcoded colors that duplicated theme tokens, fixing several dark-mode rendering issues',
+    'Aligned the design tokens with the NocVault suite-wide standard shared across all apps',
+  ],
   'default': [
     'Bug fixes and performance improvements',
   ],

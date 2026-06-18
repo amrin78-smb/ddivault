@@ -20,7 +20,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div style={{
           padding: 12, background: '#fee2e2', borderRadius: 8,
-          fontSize: 12, color: '#b91c1c', border: '1px solid #fecaca',
+          fontSize: 'var(--text-sm)', color: '#b91c1c', border: '1px solid #fecaca',
         }}>
           {this.props.name || 'Component'} error: {this.state.error}
         </div>

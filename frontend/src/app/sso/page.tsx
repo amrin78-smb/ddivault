@@ -81,18 +81,18 @@ function SSOHandler() {
           <div style={{
             width:          40,
             height:         40,
-            border:         '3px solid #C8102E',
+            border:         '3px solid var(--primary)',
             borderTopColor: 'transparent',
             borderRadius:   '50%',
             animation:      'spin 0.8s linear infinite',
           }} />
-          <div style={{ color: '#94a3b8', fontSize: 14 }}>{status}</div>
+          <div style={{ color: '#94a3b8', fontSize: 'var(--text-md)' }}>{status}</div>
         </>
       ) : (
         <>
-          <div style={{ color: '#dc2626', fontSize: 14, fontWeight: 600 }}>SSO Error</div>
-          <div style={{ color: '#94a3b8', fontSize: 12, maxWidth: 400, textAlign: 'center' }}>{error}</div>
-          <div style={{ color: '#64748b', fontSize: 11 }}>Redirecting to login...</div>
+          <div style={{ color: '#dc2626', fontSize: 'var(--text-md)', fontWeight: 600 }}>SSO Error</div>
+          <div style={{ color: '#94a3b8', fontSize: 'var(--text-sm)', maxWidth: 400, textAlign: 'center' }}>{error}</div>
+          <div style={{ color: '#64748b', fontSize: 'var(--text-xs)' }}>Redirecting to login...</div>
         </>
       )}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

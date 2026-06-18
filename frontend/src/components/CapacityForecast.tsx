@@ -36,8 +36,8 @@ async function api(path: string, opts?: RequestInit) {
 // ════════════════════════════════════════════════════════════
 // Styles / helpers
 // ════════════════════════════════════════════════════════════
-const TD: React.CSSProperties = { padding: '8px 12px', fontSize: 12.5, color: 'var(--text-primary)' };
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace" };
+const TD: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)' };
+const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 
 const CARD: React.CSSProperties = {
   background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -103,16 +103,16 @@ export default function CapacityForecast({ onViewAll, onRowClick }: { onViewAll?
         padding: '16px 20px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Capacity Forecast</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Capacity Forecast</div>
         {!loading && !error && visible.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {visible.length} scope{visible.length > 1 ? 's' : ''} trending up
             </div>
             {onViewAll && (
               <button
                 onClick={() => onViewAll?.()}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12 }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 'var(--text-sm)' }}
               >
                 View all →
               </button>
@@ -157,15 +157,15 @@ export default function CapacityForecast({ onViewAll, onRowClick }: { onViewAll?
                   >
                     <td style={TD}>
                       <div style={{ ...MONO, fontWeight: 600 }}>{r.scope_cidr || '—'}</div>
-                      {r.scope_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.scope_name}</div>}
+                      {r.scope_name && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{r.scope_name}</div>}
                     </td>
-                    <td style={{ ...TD, color: 'var(--text-muted)', fontSize: 12 }}>{r.site_id != null && r.site_id !== '' ? String(r.site_id) : '—'}</td>
+                    <td style={{ ...TD, color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>{r.site_id != null && r.site_id !== '' ? String(r.site_id) : '—'}</td>
                     <td style={{ ...TD, fontWeight: 600 }}>{cur != null ? `${cur.toFixed(1)}%` : '—'}</td>
                     <td style={{ ...TD, ...MONO }}>{growth != null ? growth.toFixed(2) : '—'}</td>
                     <td style={TD}>{fmtDays(days80)}</td>
                     <td style={{ ...TD, fontWeight: 700, color: daysToFullColor(daysFull) }}>{fmtDays(daysFull)}</td>
                     <td style={TD}><span className={`badge ${confidenceBadge(r.confidence)}`}>{r.confidence || 'unknown'}</span></td>
-                    <td style={{ ...TD, fontSize: 12, color: 'var(--text-muted)' }}>
+                    <td style={{ ...TD, fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                       <div title={r.recommendation || ''} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.recommendation || '—'}</div>
                     </td>
                   </tr>
@@ -174,11 +174,11 @@ export default function CapacityForecast({ onViewAll, onRowClick }: { onViewAll?
             </tbody>
           </table>
           {extra > 0 && (
-            <div style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-muted)' }}>
+            <div style={{ padding: '6px 12px', fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
               {onViewAll ? (
                 <button
                   onClick={() => onViewAll?.()}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 11 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 'var(--text-xs)' }}
                 >
                   +{extra} more — View all →
                 </button>

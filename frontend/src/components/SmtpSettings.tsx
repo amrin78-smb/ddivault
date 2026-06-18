@@ -41,13 +41,13 @@ async function api(path: string, opts?: RequestInit) {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
 };
 const LABEL: React.CSSProperties = {
-  fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
+  fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
 };
 const SECTION_HEADER: React.CSSProperties = {
-  fontSize: 11, fontWeight: 700, color: 'var(--text-muted)',
+  fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-muted)',
   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12,
 };
 
@@ -166,7 +166,7 @@ export default function SmtpSettings() {
         title="SMTP / Email"
         subtitle="Outbound mail server used to deliver alert notifications"
       >
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--text-sm)', fontWeight: 600 }}>
           <span style={{
             width: 10, height: 10, borderRadius: '50%',
             background: form.enabled ? 'var(--green)' : '#94a3b8',
@@ -185,7 +185,7 @@ export default function SmtpSettings() {
         borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', padding: 22, maxWidth: 720,
       }}>
         {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 'var(--text-base)' }}>
             <Spinner /> Loading SMTP settings…
           </div>
         ) : (
@@ -206,7 +206,7 @@ export default function SmtpSettings() {
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canWrite ? 'pointer' : 'default', fontSize: 13, color: 'var(--text-primary)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canWrite ? 'pointer' : 'default', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
                 <input type="checkbox" checked={form.secure} onChange={e => set('secure', e.target.checked)} disabled={!canWrite} />
                 Use TLS / SSL (secure connection)
               </label>
@@ -234,7 +234,7 @@ export default function SmtpSettings() {
                     disabled={!canWrite}
                   />
                   <button type="button" onClick={() => setShowPass(p => !p)}
-                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--blue)' }}>
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--blue)' }}>
                     {showPass ? 'Hide' : 'Show'}
                   </button>
                 </div>
@@ -256,7 +256,7 @@ export default function SmtpSettings() {
             </div>
 
             <div style={{ marginBottom: 18 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canWrite ? 'pointer' : 'default', fontSize: 13, color: 'var(--text-primary)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canWrite ? 'pointer' : 'default', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
                 <input type="checkbox" checked={form.enabled} onChange={e => set('enabled', e.target.checked)} disabled={!canWrite} />
                 Enable email alert delivery
               </label>

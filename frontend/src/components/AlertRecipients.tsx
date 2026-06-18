@@ -35,12 +35,12 @@ async function api(path: string, opts?: RequestInit) {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
 };
 const LABEL: React.CSSProperties = {
-  fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
+  fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
 };
-const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 13, color: 'var(--text-primary)' };
+const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 'var(--text-base)', color: 'var(--text-primary)' };
 
 // Severity mapping (role_filter value → friendly label)
 const SEVERITY_OPTIONS: { value: string; label: string }[] = [
@@ -107,8 +107,8 @@ function RecipientModal({ sites, onClose, onDone }: {
         width: 520, maxWidth: '92vw', maxHeight: '88vh', overflow: 'auto', padding: 24,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>Add Recipient</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>Add Recipient</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -138,7 +138,7 @@ function RecipientModal({ sites, onClose, onDone }: {
             </select>
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
               <input type="checkbox" checked={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} />
               Active
             </label>
@@ -248,14 +248,14 @@ export default function AlertRecipients() {
                   <td style={TD}>
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: canWrite ? 'pointer' : 'default' }}>
                       <input type="checkbox" checked={r.is_active} disabled={!canWrite} onChange={() => toggleActive(r)} />
-                      <span style={{ fontSize: 11.5, color: r.is_active ? 'var(--green)' : 'var(--text-muted)', fontWeight: 600 }}>
+                      <span style={{ fontSize: 'var(--text-xs)', color: r.is_active ? 'var(--green)' : 'var(--text-muted)', fontWeight: 600 }}>
                         {r.is_active ? 'Active' : 'Disabled'}
                       </span>
                     </label>
                   </td>
                   <td style={TD}>
                     {canWrite ? (
-                      <button onClick={() => del(r)} style={{ fontSize: 11.5, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                      <button onClick={() => del(r)} style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                         Delete
                       </button>
                     ) : '—'}

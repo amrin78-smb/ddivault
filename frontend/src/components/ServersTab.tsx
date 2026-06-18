@@ -51,13 +51,13 @@ async function api(path: string, opts?: RequestInit) {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '8px 11px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-base)', fontFamily: 'inherit', outline: 'none',
 };
 const LABEL: React.CSSProperties = {
-  fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
+  fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
 };
 const SECTION_HEADER: React.CSSProperties = {
-  fontSize: 11, fontWeight: 700, color: 'var(--text-muted)',
+  fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-muted)',
   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10,
 };
 
@@ -139,11 +139,11 @@ function ServerModal({ server, sites, onClose, onDone }: {
       >
         {/* Modal header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>
             {isEdit ? 'Edit Server' : 'Add Server to Monitor'}
           </div>
           <button onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-muted)' }}>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', lineHeight: 1, color: 'var(--text-muted)' }}>
             ×
           </button>
         </div>
@@ -209,11 +209,11 @@ function ServerModal({ server, sites, onClose, onDone }: {
                     background: selected ? info.color : 'transparent',
                     boxShadow: selected ? `inset 0 0 0 2px var(--bg-card)` : 'none',
                   }} />
-                  <div style={{ fontWeight: 600, fontSize: 13, color: selected ? info.color : 'var(--text-primary)' }}>
+                  <div style={{ fontWeight: 600, fontSize: 'var(--text-base)', color: selected ? info.color : 'var(--text-primary)' }}>
                     {info.label}
                   </div>
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', paddingLeft: 24, lineHeight: 1.5 }}>{info.desc}</div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', paddingLeft: 24, lineHeight: 1.5 }}>{info.desc}</div>
               </div>
             );
           })}
@@ -226,7 +226,7 @@ function ServerModal({ server, sites, onClose, onDone }: {
             background: 'color-mix(in srgb, var(--blue) 7%, var(--bg-card))',
             border: '1px solid color-mix(in srgb, var(--blue) 30%, var(--bg-card))',
           }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--blue)', marginBottom: 10 }}>Stored Credentials</div>
+            <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--blue)', marginBottom: 10 }}>Stored Credentials</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={LABEL}>Username</label>
@@ -244,13 +244,13 @@ function ServerModal({ server, sites, onClose, onDone }: {
                     placeholder={isEdit ? '••••••••' : 'Enter password'}
                   />
                   <button type="button" onClick={() => setShowPass(p => !p)}
-                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--blue)' }}>
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--blue)' }}>
                     {showPass ? 'Hide' : 'Show'}
                   </button>
                 </div>
               </div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--blue)', marginTop: 8 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', marginTop: 8 }}>
               🔒 Password is encrypted with AES-256-GCM before storage. Never stored in plaintext.
             </div>
           </div>
@@ -266,7 +266,7 @@ function ServerModal({ server, sites, onClose, onDone }: {
             </select>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', paddingBottom: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
               <input type="checkbox" checked={form.winrm_https} onChange={e => setForm(p => ({ ...p, winrm_https: e.target.checked }))} />
               Use HTTPS / SSL
             </label>
@@ -279,10 +279,10 @@ function ServerModal({ server, sites, onClose, onDone }: {
 
         {/* WinRM setup guide */}
         <details style={{ marginBottom: 18 }}>
-          <summary style={{ fontSize: 12, color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }}>
+          <summary style={{ fontSize: 'var(--text-sm)', color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }}>
             ▶ WinRM setup commands (run on the target server as Administrator)
           </summary>
-          <pre style={{ fontSize: 11, background: 'var(--navy)', color: '#e2e8f0', padding: 12, borderRadius: 'var(--radius-sm)', marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
+          <pre style={{ fontSize: 'var(--text-xs)', background: 'var(--navy)', color: '#e2e8f0', padding: 12, borderRadius: 'var(--radius-sm)', marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
 {`# On the DHCP/DNS server:
 Enable-PSRemoting -Force
 Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value "<NOCVAULT-SERVER-IP>" -Force
@@ -336,7 +336,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
           background: dotColor(ok),
           boxShadow: ok === true ? `0 0 7px ${dotColor(ok)}` : 'none',
         }} title={ok === true ? 'WinRM OK' : ok === false ? 'WinRM failed' : 'Not tested'} />
-        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{s.hostname || s.ip_address}</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{s.hostname || s.ip_address}</div>
         <code className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-primary)', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)' }}>
           {s.ip_address}
         </code>
@@ -346,7 +346,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
       </div>
 
       {/* Info grid */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--text-sm)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Auth mode</span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -377,7 +377,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
       {/* Poll error */}
       {s.poll_error && (
         <div style={{
-          fontSize: 11.5, color: 'var(--red)',
+          fontSize: 'var(--text-xs)', color: 'var(--red)',
           background: 'color-mix(in srgb, var(--red) 9%, var(--bg-card))',
           border: '1px solid color-mix(in srgb, var(--red) 25%, var(--bg-card))',
           padding: '7px 10px', borderRadius: 'var(--radius-sm)',
@@ -389,7 +389,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
       {/* Test result (inline) */}
       {testResult && (
         <div style={{
-          fontSize: 11.5, padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+          fontSize: 'var(--text-xs)', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
           background: testResult.ok
             ? 'color-mix(in srgb, var(--green) 12%, var(--bg-card))'
             : 'color-mix(in srgb, var(--red) 10%, var(--bg-card))',
@@ -403,7 +403,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
       )}
 
       {/* Timestamps */}
-      <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
         {s.last_polled ? `Last polled: ${new Date(s.last_polled).toLocaleString()}` : 'Never polled'}
         {s.winrm_tested_at ? ` · Last tested: ${new Date(s.winrm_tested_at).toLocaleString()}` : ''}
       </div>
@@ -414,18 +414,18 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
           className="btn btn-navy"
           onClick={() => onTest(s)}
           disabled={testing}
-          style={{ fontSize: 12.5, opacity: testing ? 0.8 : 1 }}
+          style={{ fontSize: 'var(--text-sm)', opacity: testing ? 0.8 : 1 }}
         >
           {testing ? <><Spinner size={13} color="#fff" /> Testing…</> : <>⚡ Test Connection</>}
         </button>
         {canWrite && (
-          <button className="btn" onClick={() => onEdit(s)} style={{ fontSize: 12.5 }}>Edit</button>
+          <button className="btn" onClick={() => onEdit(s)} style={{ fontSize: 'var(--text-sm)' }}>Edit</button>
         )}
         {canWrite && (
           <button
             className="btn"
             onClick={() => onDelete(s.id)}
-            style={{ fontSize: 12.5, color: 'var(--red)', marginLeft: 'auto' }}
+            style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', marginLeft: 'auto' }}
           >
             Remove
           </button>
@@ -510,19 +510,19 @@ export default function ServersTab() {
       {/* KPI tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--navy)' }}>
-          <div className="stat-value" style={{ fontSize: 24 }}>{total}</div>
+          <div className="stat-value" style={{ fontSize: 'var(--text-2xl)' }}>{total}</div>
           <div className="stat-label">Total Servers</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--green)' }}>
-          <div className="stat-value" style={{ fontSize: 24, color: 'var(--green)' }}>{okCount}</div>
+          <div className="stat-value" style={{ fontSize: 'var(--text-2xl)', color: 'var(--green)' }}>{okCount}</div>
           <div className="stat-label">WinRM OK</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: 'var(--red)' }}>
-          <div className="stat-value" style={{ fontSize: 24, color: 'var(--red)' }}>{failCount}</div>
+          <div className="stat-value" style={{ fontSize: 'var(--text-2xl)', color: 'var(--red)' }}>{failCount}</div>
           <div className="stat-label">WinRM Failed</div>
         </div>
         <div className="kpi-card" style={{ borderLeftColor: '#94a3b8' }}>
-          <div className="stat-value" style={{ fontSize: 24, color: 'var(--text-muted)' }}>{untestedCount}</div>
+          <div className="stat-value" style={{ fontSize: 'var(--text-2xl)', color: 'var(--text-muted)' }}>{untestedCount}</div>
           <div className="stat-label">Not Tested</div>
         </div>
       </div>
@@ -533,9 +533,9 @@ export default function ServersTab() {
         padding: '8px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)',
         borderRadius: 'var(--radius)',
       }}>
-        <span style={{ fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Auth methods</span>
+        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Auth methods</span>
         {Object.entries(AUTH_MODE_INFO).map(([mode, info]) => (
-          <span key={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+          <span key={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)' }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: info.color }} />
             <span style={{ color: info.color, fontWeight: 600 }}>{mode}</span>
             <span style={{ color: 'var(--text-muted)' }}>— {info.label}</span>

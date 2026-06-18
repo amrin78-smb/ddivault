@@ -174,7 +174,7 @@ function forecastColor(days?: number | null): string {
 // ── Shared inline styles (design-system aligned) ──────────────
 const INPUT: React.CSSProperties = {
   padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-  background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+  background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 'var(--text-base)', outline: 'none',
   fontFamily: 'inherit',
 };
 
@@ -226,25 +226,25 @@ function ReserveModal({ scope, lease, onClose, onDone }: {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>Reserve IP Address</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>Reserve IP Address</div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 2 }}>
               Scope <span className="mono">{scope.scope_id}</span>{scope.name ? ` · ${scope.name}` : ''}
             </div>
           </div>
           <button onClick={onClose} aria-label="Close"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
         </div>
 
         <div style={{
           background: 'var(--primary-light)', border: '1px solid #fde047',
-          borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 12, marginBottom: 16, color: 'var(--yellow)',
+          borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 16, color: 'var(--yellow)',
         }}>
           This runs <span className="mono">Add-DhcpServerv4Reservation</span> on your Windows DHCP server via PowerShell remoting.
         </div>
 
         {fields.map(f => (
           <div key={f.k} style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>{f.l}</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>{f.l}</label>
             <input
               value={form[f.k]}
               placeholder={f.ph}
@@ -339,20 +339,20 @@ function CreateScopeModal({ servers, onClose, onDone }: {
         maxWidth: '94vw', maxHeight: '90vh', overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>Create DHCP Scope</div>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>Create DHCP Scope</div>
           <button onClick={onClose} aria-label="Close"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
         </div>
 
         <div style={{
           background: 'var(--primary-light)', border: '1px solid #fde047',
-          borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 12, marginBottom: 16, color: 'var(--yellow)',
+          borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 16, color: 'var(--yellow)',
         }}>
           This runs <span className="mono">Add-DhcpServerv4Scope</span> on your Windows DHCP server via PowerShell remoting.
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>DHCP Server *</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>DHCP Server *</label>
           <select value={form.server_id} onChange={e => set('server_id', e.target.value ? Number(e.target.value) : '')} style={{ ...INPUT, width: '100%' }}>
             <option value="">Select server…</option>
             {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}{s.ip_address ? ` (${s.ip_address})` : ''}</option>)}
@@ -360,43 +360,43 @@ function CreateScopeModal({ servers, onClose, onDone }: {
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Scope Name *</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Scope Name *</label>
           <input value={form.name} placeholder="Office LAN" onChange={e => set('name', e.target.value)} style={{ ...INPUT, width: '100%' }} />
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Start Range *</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Start Range *</label>
             <input value={form.startRange} placeholder="172.24.4.10" onChange={e => set('startRange', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>End Range *</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>End Range *</label>
             <input value={form.endRange} placeholder="172.24.4.250" onChange={e => set('endRange', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Subnet Mask *</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Subnet Mask *</label>
           <select value={form.subnetMask} onChange={e => set('subnetMask', e.target.value)} style={{ ...INPUT, width: '100%' }}>
             {MASK_PRESETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Description</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Description</label>
           <input value={form.description} placeholder="Optional" onChange={e => set('description', e.target.value)} style={{ ...INPUT, width: '100%' }} />
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Lease Duration</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Lease Duration</label>
             <select value={form.leasePreset} onChange={e => set('leasePreset', e.target.value)} style={{ ...INPUT, width: '100%' }}>
               {LEASE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
               <option value="custom">Custom…</option>
             </select>
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>State</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>State</label>
             <select value={form.state} onChange={e => set('state', e.target.value as 'Active' | 'InActive')} style={{ ...INPUT, width: '100%' }}>
               <option value="Active">Active</option>
               <option value="InActive">Inactive</option>
@@ -406,29 +406,29 @@ function CreateScopeModal({ servers, onClose, onDone }: {
 
         {form.leasePreset === 'custom' && (
           <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Custom Lease (d.hh:mm:ss)</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Custom Lease (d.hh:mm:ss)</label>
             <input value={form.leaseCustom} placeholder="14.00:00:00" onChange={e => set('leaseCustom', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
         )}
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>DNS Servers (comma-separated IPs)</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>DNS Servers (comma-separated IPs)</label>
           <input value={form.dnsServers} placeholder="8.8.8.8, 8.8.4.4" onChange={e => set('dnsServers', e.target.value)} style={{ ...INPUT, width: '100%' }} />
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Default Gateway</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Default Gateway</label>
             <input value={form.gateway} placeholder="172.24.4.1" onChange={e => set('gateway', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Domain Name</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Domain Name</label>
             <input value={form.domainName} placeholder="corp.local" onChange={e => set('domainName', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
         </div>
 
         {error && (
-          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 12, marginBottom: 12 }}>
+          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
             {error}
           </div>
         )}
@@ -576,35 +576,35 @@ function EditScopeModal({ scope, onClose, onDone }: {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>Edit Scope</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>Edit Scope</div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 2 }}>
               <span className="mono">{scope.scope_id}</span> · {scope.server_hostname || scope.server_ip}
             </div>
           </div>
           <button onClick={onClose} aria-label="Close"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', lineHeight: 1, color: 'var(--text-muted)' }}>×</button>
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Scope Name *</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Scope Name *</label>
           <input value={form.name} onChange={e => set('name', e.target.value)} style={{ ...INPUT, width: '100%' }} />
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Description</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Description</label>
           <input value={form.description} placeholder="Optional" onChange={e => set('description', e.target.value)} style={{ ...INPUT, width: '100%' }} />
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Lease Duration</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Lease Duration</label>
             <select value={form.leasePreset} onChange={e => set('leasePreset', e.target.value)} style={{ ...INPUT, width: '100%' }}>
               {LEASE_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
               <option value="custom">Custom…</option>
             </select>
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>State</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>State</label>
             <select value={form.state} onChange={e => set('state', e.target.value as 'Active' | 'InActive')} style={{ ...INPUT, width: '100%' }}>
               <option value="Active">Active</option>
               <option value="InActive">Inactive</option>
@@ -614,13 +614,13 @@ function EditScopeModal({ scope, onClose, onDone }: {
 
         {form.leasePreset === 'custom' && (
           <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Custom Lease (d.hh:mm:ss)</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Custom Lease (d.hh:mm:ss)</label>
             <input value={form.leaseCustom} placeholder="14.00:00:00" onChange={e => set('leaseCustom', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
         )}
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>
             DNS Servers (comma-separated IPs) {optionsLoading && <span style={{ fontWeight: 400 }}>· loading…</span>}
           </label>
           <input value={form.dnsServers} placeholder="8.8.8.8, 8.8.4.4" onChange={e => set('dnsServers', e.target.value)} style={{ ...INPUT, width: '100%' }} />
@@ -628,24 +628,24 @@ function EditScopeModal({ scope, onClose, onDone }: {
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Default Gateway</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Default Gateway</label>
             <input value={form.gateway} placeholder="172.24.4.1" onChange={e => set('gateway', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Domain Name</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600 }}>Domain Name</label>
             <input value={form.domainName} placeholder="corp.local" onChange={e => set('domainName', e.target.value)} style={{ ...INPUT, width: '100%' }} />
           </div>
         </div>
 
         {/* Exclusion ranges */}
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginBottom: 14 }}>
-          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 8 }}>Exclusion Ranges</div>
+          <div style={{ fontWeight: 600, fontSize: 'var(--text-base)', color: 'var(--text-primary)', marginBottom: 8 }}>Exclusion Ranges</div>
           {exclusions.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>No exclusion ranges.</div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 8 }}>No exclusion ranges.</div>
           ) : (
             <div style={{ marginBottom: 8 }}>
               {exclusions.map((x, i) => (
-                <div key={i} className="mono" style={{ fontSize: 12, padding: '4px 0', color: 'var(--text-primary)' }}>
+                <div key={i} className="mono" style={{ fontSize: 'var(--text-sm)', padding: '4px 0', color: 'var(--text-primary)' }}>
                   {x.start} – {x.end}
                 </div>
               ))}
@@ -653,11 +653,11 @@ function EditScopeModal({ scope, onClose, onDone }: {
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Start IP</label>
+              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Start IP</label>
               <input value={exclStart} placeholder="172.24.4.1" onChange={e => setExclStart(e.target.value)} style={{ ...INPUT, width: '100%' }} />
             </div>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>End IP</label>
+              <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>End IP</label>
               <input value={exclEnd} placeholder="172.24.4.9" onChange={e => setExclEnd(e.target.value)} style={{ ...INPUT, width: '100%' }} />
             </div>
             <button className="btn" onClick={addExclusion} disabled={exclBusy} style={{ opacity: exclBusy ? 0.7 : 1 }}>
@@ -667,7 +667,7 @@ function EditScopeModal({ scope, onClose, onDone }: {
         </div>
 
         {error && (
-          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 12, marginBottom: 12 }}>
+          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
             {error}
           </div>
         )}
@@ -716,12 +716,12 @@ function ScopeDetail({ scope }: { scope: Scope }) {
     return () => { cancelled = true; };
   }, [scope.scope_id, scope.server_id]);
 
-  const cell: React.CSSProperties = { fontSize: 12 };
-  const lbl: React.CSSProperties = { fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 2 };
+  const cell: React.CSSProperties = { fontSize: 'var(--text-sm)' };
+  const lbl: React.CSSProperties = { fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 600, marginBottom: 2 };
 
   return (
     <div className="card" style={{ padding: 14, marginBottom: 12 }} onClick={e => e.stopPropagation()}>
-      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', marginBottom: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: 'var(--text-base)', color: 'var(--text-primary)', marginBottom: 10 }}>
         Scope Configuration {loading && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· loading…</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
@@ -1060,10 +1060,10 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {kpis.map((k, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: k.color }}>
-            <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: k.color }}>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, lineHeight: 1, letterSpacing: '-0.5px', color: k.color }}>
               {k.value.toLocaleString()}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, fontWeight: 500 }}>{k.label}</div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 6, fontWeight: 500 }}>{k.label}</div>
           </div>
         ))}
       </div>
@@ -1092,7 +1092,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
               <option value="Disabled">Disabled</option>
             </select>
             <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {filteredScopes.length} of {scopes.length} scopes · auto-refresh 30s
             </span>
             {canWrite && (
@@ -1186,7 +1186,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
               <option value="Reservation">Reservation</option>
             </select>
             <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{leaseTotal.toLocaleString()} total</span>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{leaseTotal.toLocaleString()} total</span>
             <a href="/api/leases/export" download className="btn" style={{ textDecoration: 'none' }}>⬇ Export CSV</a>
           </div>
           <div style={{ overflowX: 'auto' }}>
@@ -1211,21 +1211,21 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                     <tr key={l.id}>
                       <td className="mono" style={{ fontWeight: 600 }}>{l.ip_address}</td>
                       <td>{l.hostname || '—'}</td>
-                      <td style={{ fontSize: 13 }}>
+                      <td style={{ fontSize: 'var(--text-base)' }}>
                         <span title={l.device_type || 'unknown'}>{deviceIcon(l.device_type)}</span>{' '}
                         {l.device_vendor || '—'}
                         {l.device_os && (
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.device_os}</div>
+                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{l.device_os}</div>
                         )}
                       </td>
                       <td className="mono">{l.mac_address || '—'}</td>
                       <td className="mono">{l.scope_id || '—'}</td>
                       <td><span className={`badge ${stateBadge(l.address_state)}`}>{l.address_state}</span></td>
-                      <td style={{ fontSize: 12 }}>{fmtDate(l.lease_expiry)}</td>
+                      <td style={{ fontSize: 'var(--text-sm)' }}>{fmtDate(l.lease_expiry)}</td>
                       <td style={{ textAlign: 'right' }}>
                         {canWrite && canReserve && (
                           <button onClick={() => setReserveTarget({ scope: scope!, lease: l })}
-                            style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                            style={{ fontSize: 'var(--text-sm)', color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                             Reserve
                           </button>
                         )}
@@ -1239,7 +1239,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: 14, borderTop: '1px solid var(--border)' }}>
             <button className="btn" disabled={leasePage <= 1} onClick={() => setLeasePage(p => Math.max(1, p - 1))}
               style={{ opacity: leasePage <= 1 ? 0.5 : 1 }}>← Prev</button>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               Page {leasePage} of {Math.max(1, Math.ceil(leaseTotal / LEASE_LIMIT))} · {leaseTotal.toLocaleString()} leases
             </span>
             <button className="btn" disabled={allLeases.length < LEASE_LIMIT} onClick={() => setLeasePage(p => p + 1)}
@@ -1252,7 +1252,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
       {view === 'reservations' && (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', gap: 10, borderBottom: '1px solid var(--border)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>DHCP Reservations</div>
+            <div style={{ fontWeight: 600, fontSize: 'var(--text-md)' }}>DHCP Reservations</div>
             <div style={{ flex: 1 }} />
             <input
               placeholder="Search IP, hostname, MAC…"
@@ -1260,7 +1260,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
               onChange={e => { setReservationSearch(e.target.value); loadReservations(e.target.value); }}
               style={{ ...INPUT, width: 280 }}
             />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{reservations.length.toLocaleString()} reservations</span>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{reservations.length.toLocaleString()} reservations</span>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
@@ -1290,7 +1290,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
                       <td>{l.hostname || '—'}</td>
                       <td className="mono">{l.mac_address || '—'}</td>
                       <td className="mono">{l.scope_id || '—'}</td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{scope?.server_hostname || scope?.server_ip || '—'}</td>
+                      <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{scope?.server_hostname || scope?.server_ip || '—'}</td>
                     </tr>
                   );
                 })}
@@ -1380,8 +1380,8 @@ function ScopeRow({
           {scope.scope_id}
         </td>
         <td>{scope.name || '—'}</td>
-        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{scope.server_hostname || scope.server_ip || '—'}</td>
-        <td className="mono" style={{ fontSize: 12 }}>{scope.start_range} – {scope.end_range}</td>
+        <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{scope.server_hostname || scope.server_ip || '—'}</td>
+        <td className="mono" style={{ fontSize: 'var(--text-sm)' }}>{scope.start_range} – {scope.end_range}</td>
         <td style={{ textAlign: 'right' }}>{(scope.total_ips ?? 0).toLocaleString()}</td>
         <td style={{ textAlign: 'right' }}>{(scope.in_use ?? 0).toLocaleString()}</td>
         <td style={{ textAlign: 'right', color: lowFree ? 'var(--red)' : undefined, fontWeight: lowFree ? 700 : 400 }}>
@@ -1389,7 +1389,7 @@ function ScopeRow({
         </td>
         <td><UtilBar pct={pct} /></td>
         <td style={{
-          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+          fontSize: 'var(--text-sm)', fontWeight: 600, whiteSpace: 'nowrap',
           color: isEmptyScope(scope) || !forecast || forecast.status === 'insufficient_data'
             ? 'var(--text-secondary)'
             : forecast.status === 'stable'
@@ -1428,20 +1428,20 @@ function ScopeRow({
             <span style={{ display: 'inline-flex', gap: 12, alignItems: 'center' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); onReserve(); }}
-                style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                style={{ fontSize: 'var(--text-sm)', color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
               >
                 Reserve
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                style={{ fontSize: 12, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                style={{ fontSize: 'var(--text-sm)', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
               >
                 Edit
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(); }}
                 disabled={busy}
-                style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: busy ? 'default' : 'pointer', fontWeight: 600, opacity: busy ? 0.6 : 1 }}
+                style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', background: 'none', border: 'none', cursor: busy ? 'default' : 'pointer', fontWeight: 600, opacity: busy ? 0.6 : 1 }}
               >
                 Delete
               </button>
@@ -1463,7 +1463,7 @@ function ScopeRow({
                   onClick={e => e.stopPropagation()}
                   style={{ ...INPUT, width: 280 }}
                 />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                   {leasesLoading ? 'Loading…' : `${leases.length} lease${leases.length === 1 ? '' : 's'}`}
                 </span>
                 <div style={{ flex: 1 }} />
@@ -1495,11 +1495,11 @@ function ScopeRow({
                           <td>{l.hostname || '—'}</td>
                           <td className="mono">{l.mac_address || '—'}</td>
                           <td><span className={`badge ${stateBadge(l.address_state)}`}>{l.address_state}</span></td>
-                          <td style={{ fontSize: 12 }}>{fmtDate(l.lease_expiry)}</td>
+                          <td style={{ fontSize: 'var(--text-sm)' }}>{fmtDate(l.lease_expiry)}</td>
                           <td style={{ textAlign: 'right' }}>
                             {canWrite && canReserve && (
                               <button onClick={(e) => { e.stopPropagation(); onReserveLease(l); }}
-                                style={{ fontSize: 12, color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                                style={{ fontSize: 'var(--text-sm)', color: 'var(--purple)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                                 Reserve
                               </button>
                             )}

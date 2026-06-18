@@ -27,7 +27,7 @@ function WarningModal(props: WarningModalProps) {
     >
       <div
         style={{
-          background: '#fff',
+          background: 'var(--bg-card)',
           borderRadius: 8,
           boxShadow: 'var(--shadow-md)',
           padding: 28,
@@ -48,16 +48,16 @@ function WarningModal(props: WarningModalProps) {
             margin: '0 auto 16px',
           }}
         >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C8102E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="6" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
         </div>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: '0 0 8px' }}>
+        <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>
           Session expiring
         </h2>
-        <p style={{ fontSize: 14, color: '#64748b', margin: '0 0 24px', lineHeight: 1.5 }}>
+        <p style={{ fontSize: 'var(--text-md)', color: 'var(--text-muted)', margin: '0 0 24px', lineHeight: 1.5 }}>
           You will be logged out in 60 seconds due to inactivity
         </p>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
@@ -68,9 +68,9 @@ function WarningModal(props: WarningModalProps) {
               padding: '11px 16px',
               borderRadius: 8,
               border: 'none',
-              background: '#C8102E',
+              background: 'var(--primary)',
               color: '#fff',
-              fontSize: 14,
+              fontSize: 'var(--text-md)',
               fontWeight: 600,
               cursor: 'pointer',
             }}
@@ -84,9 +84,9 @@ function WarningModal(props: WarningModalProps) {
               padding: '11px 16px',
               borderRadius: 8,
               border: '1px solid var(--border, #e2e8f0)',
-              background: '#fff',
-              color: '#334155',
-              fontSize: 14,
+              background: 'var(--bg-card)',
+              color: 'var(--text-secondary)',
+              fontSize: 'var(--text-md)',
               fontWeight: 600,
               cursor: 'pointer',
             }}

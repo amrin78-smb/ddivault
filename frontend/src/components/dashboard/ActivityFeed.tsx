@@ -75,7 +75,7 @@ function SegButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       style={{
-        padding: '3px 11px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+        padding: '3px 11px', fontSize: 'var(--text-xs)', fontWeight: 600, cursor: 'pointer',
         borderRadius: 'var(--radius-sm)', fontFamily: 'inherit', lineHeight: 1.6,
         border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
         background: active ? 'var(--primary-light)' : 'var(--bg-card)',
@@ -129,7 +129,7 @@ export default function ActivityFeed(props: Props) {
         display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
         padding: '12px 14px', borderBottom: '1px solid var(--border)',
       }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Recent Activity</div>
+        <div style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>Recent Activity</div>
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
           <SegButton active={tab === 'activity'} onClick={() => setTab('activity')}>Activity</SegButton>
           <SegButton active={tab === 'changes'} onClick={() => setTab('changes')}>Changes</SegButton>
@@ -138,7 +138,7 @@ export default function ActivityFeed(props: Props) {
         <button
           onClick={viewAll}
           style={{
-            fontSize: 11.5, fontWeight: 600, color: 'var(--primary)', cursor: 'pointer',
+            fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--primary)', cursor: 'pointer',
             background: 'none', border: 'none', padding: 0, fontFamily: 'inherit',
           }}
         >
@@ -154,7 +154,7 @@ export default function ActivityFeed(props: Props) {
           events.length === 0 ? (
             <EmptyState title="No recent activity" message="DHCP lease events will appear here as they happen." />
           ) : (
-            <table className="data-table" style={{ fontSize: 12 }}>
+            <table className="data-table" style={{ fontSize: 'var(--text-sm)' }}>
               <thead>
                 <tr><th>Type</th><th>IP</th><th>Hostname</th><th>Time</th></tr>
               </thead>
@@ -162,7 +162,7 @@ export default function ActivityFeed(props: Props) {
                 {events.map((e: any) => (
                   <tr key={e.id}>
                     <td><EventTypeBadge type={e.event_type} /></td>
-                    <td style={{ fontFamily: 'var(--font-mono, monospace)' }}>{e.ip_address || '—'}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{e.ip_address || '—'}</td>
                     <td title={e.hostname || ''}>{truncate(e.hostname, 28)}</td>
                     <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtDateTime(e.event_time)}</td>
                   </tr>
@@ -174,7 +174,7 @@ export default function ActivityFeed(props: Props) {
           changes.length === 0 ? (
             <EmptyState title="No recent changes" message="Configuration changes and edits will be logged here." />
           ) : (
-            <table className="data-table" style={{ fontSize: 12 }}>
+            <table className="data-table" style={{ fontSize: 'var(--text-sm)' }}>
               <thead>
                 <tr><th>Action</th><th>Summary</th><th>User</th><th>Time</th></tr>
               </thead>
@@ -197,7 +197,7 @@ export default function ActivityFeed(props: Props) {
           alerts.length === 0 ? (
             <EmptyState title="No active alerts" message="Fired alerts will show up here when thresholds are crossed." />
           ) : (
-            <table className="data-table" style={{ fontSize: 12 }}>
+            <table className="data-table" style={{ fontSize: 'var(--text-sm)' }}>
               <thead>
                 <tr><th>Severity</th><th>Message</th><th>Fired</th></tr>
               </thead>
@@ -213,7 +213,7 @@ export default function ActivityFeed(props: Props) {
                       {truncate(a.message, 48)}
                       {a.acknowledged && (
                         <span style={{
-                          marginLeft: 6, fontSize: 9, fontWeight: 700, color: 'var(--text-muted)',
+                          marginLeft: 6, fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-muted)',
                           border: '1px solid var(--border)', borderRadius: 4, padding: '0 4px',
                           verticalAlign: 'middle',
                         }}>ACK</span>

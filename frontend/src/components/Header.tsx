@@ -104,7 +104,7 @@ export function Header(props: HeaderProps) {
       <div style={{ width: 1, height: 28, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
 
       {/* App subtitle */}
-      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', fontWeight: 500 }}>
+      <div style={{ fontSize: 'var(--text-sm)', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', fontWeight: 500 }}>
         DNS · DHCP · IPAM
       </div>
 
@@ -127,7 +127,7 @@ export function Header(props: HeaderProps) {
           boxShadow: collectorOnline ? '0 0 6px #16a34a' : 'none',
           animation: collectorOnline ? 'pulse 2s infinite' : 'none',
         }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: collectorOnline ? '#86efac' : '#fca5a5', letterSpacing: '0.03em' }}>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: collectorOnline ? '#86efac' : '#fca5a5', letterSpacing: '0.03em' }}>
           {collectorOnline ? 'COLLECTOR' : 'OFFLINE'}
         </span>
       </div>
@@ -152,7 +152,7 @@ export function Header(props: HeaderProps) {
           {alertTotal > 0 && (
             <span style={{
               position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, padding: '0 4px',
-              background: '#C8102E', color: '#fff', borderRadius: 9, fontSize: 10, fontWeight: 700,
+              background: 'var(--primary)', color: '#fff', borderRadius: 9, fontSize: 'var(--text-xs)', fontWeight: 700,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: '2px solid #1a2744', boxShadow: '0 0 0 1px rgba(200,16,46,0.4)',
             }}>
@@ -164,15 +164,15 @@ export function Header(props: HeaderProps) {
         {notifOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 340,
-            background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6,
             boxShadow: 'var(--shadow-md)', overflow: 'hidden', zIndex: 999, animation: 'fadeIn 0.15s ease',
           }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>Alerts</div>
-              <span style={{ fontSize: 11, color: '#64748b' }}>{alertTotal} unacknowledged</span>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 600, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Alerts</div>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{alertTotal} unacknowledged</span>
             </div>
             {alerts.length === 0 ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 13, color: '#16a34a', fontWeight: 500 }}>
+              <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 'var(--text-base)', color: '#16a34a', fontWeight: 500 }}>
                 ✓ No active alerts
               </div>
             ) : (
@@ -180,14 +180,14 @@ export function Header(props: HeaderProps) {
                 {alerts.map(a => (
                   <div key={a.id}
                     onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
-                    style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', gap: 10 }}
+                    style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', gap: 10 }}
                     onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: SEVERITY_COLOR[a.severity] || '#64748b', marginTop: 5, flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, color: '#0f172a', lineHeight: 1.4 }}>{a.message}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', lineHeight: 1.4 }}>{a.message}</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: '#94a3b8', marginTop: 2 }}>
                         {a.scope_id ? `${a.scope_id} · ` : ''}{new Date(a.fired_at).toLocaleString()}
                       </div>
                     </div>
@@ -197,9 +197,9 @@ export function Header(props: HeaderProps) {
             )}
             <button
               onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
-              style={{ width: '100%', padding: '11px 16px', background: '#fff', border: 'none', borderTop: '1px solid #f1f5f9', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#C8102E', textAlign: 'center' }}
+              style={{ width: '100%', padding: '11px 16px', background: 'var(--bg-card)', border: 'none', borderTop: '1px solid var(--border-light)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--primary)', textAlign: 'center' }}
               onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
             >
               View all alerts →
             </button>
@@ -218,7 +218,7 @@ export function Header(props: HeaderProps) {
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 8,
           cursor: 'pointer',
-          fontSize: 16,
+          fontSize: 'var(--text-lg)',
           transition: 'background 0.15s',
           color: 'rgba(255,255,255,0.7)',
         }}
@@ -247,19 +247,19 @@ export function Header(props: HeaderProps) {
           {/* Avatar */}
           <div style={{
             width: 32, height: 32, borderRadius: 8,
-            background: 'linear-gradient(135deg, #C8102E, #a00d24)',
+            background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontWeight: 700, fontSize: 13,
+            color: '#fff', fontWeight: 700, fontSize: 'var(--text-base)',
             flexShrink: 0,
             boxShadow: '0 2px 6px rgba(200,16,46,0.4)',
           }}>
             {userInitial}
           </div>
           <div style={{ textAlign: 'left' }}>
-            <div style={{ color: '#fff', fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>
+            <div style={{ color: '#fff', fontSize: 'var(--text-base)', fontWeight: 600, lineHeight: 1.2 }}>
               {userName.split(' ')[0]}
             </div>
-            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, lineHeight: 1.2 }}>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 'var(--text-xs)', lineHeight: 1.2 }}>
               {(session?.user as any)?.role || 'admin'}
             </div>
           </div>
@@ -278,7 +278,7 @@ export function Header(props: HeaderProps) {
         {dropdownOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-            background: '#fff',
+            background: 'var(--bg-card)',
             border: '1px solid var(--border)',
             borderRadius: 6,
             boxShadow: 'var(--shadow-md)',
@@ -288,16 +288,16 @@ export function Header(props: HeaderProps) {
             animation: 'fadeIn 0.15s ease',
           }}>
             {/* User info header */}
-            <div style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-light)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{userName}</div>
+                <div style={{ fontWeight: 600, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{userName}</div>
                 {(() => {
                   const meta = ROLE_META[role] || ROLE_META.viewer;
                   return (
                     <span style={{
                       padding: '2px 8px',
                       borderRadius: 6,
-                      fontSize: 11,
+                      fontSize: 'var(--text-xs)',
                       fontWeight: 600,
                       color: meta.color,
                       background: meta.color + '1a',
@@ -308,7 +308,7 @@ export function Header(props: HeaderProps) {
                   );
                 })()}
               </div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{userEmail}</div>
+              <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 2 }}>{userEmail}</div>
             </div>
 
             {/* Menu items */}
@@ -318,7 +318,7 @@ export function Header(props: HeaderProps) {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '10px 16px',
-                  color: '#334155', fontSize: 13, fontWeight: 500,
+                  color: 'var(--text-secondary)', fontSize: 'var(--text-base)', fontWeight: 500,
                   textDecoration: 'none',
                   transition: 'background 0.1s',
                   cursor: 'pointer',
@@ -326,7 +326,7 @@ export function Header(props: HeaderProps) {
                 onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#64748b' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
                   <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                   <polyline points="9 22 9 12 15 12 15 22"/>
                 </svg>
@@ -338,7 +338,7 @@ export function Header(props: HeaderProps) {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '10px 16px', width: '100%',
-                  color: '#334155', fontSize: 13, fontWeight: 500,
+                  color: 'var(--text-secondary)', fontSize: 'var(--text-base)', fontWeight: 500,
                   background: 'none', border: 'none', cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'background 0.1s',
@@ -346,7 +346,7 @@ export function Header(props: HeaderProps) {
                 onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#64748b' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
                   <circle cx="12" cy="12" r="5"/>
                   <line x1="12" y1="1" x2="12" y2="3"/>
                   <line x1="12" y1="21" x2="12" y2="23"/>
@@ -360,7 +360,7 @@ export function Header(props: HeaderProps) {
                 {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
               </button>
 
-              <div style={{ height: 1, background: '#f1f5f9', margin: '4px 0' }} />
+              <div style={{ height: 1, background: 'var(--border-light)', margin: '4px 0' }} />
 
               <button
                 onClick={async () => {
@@ -379,7 +379,7 @@ export function Header(props: HeaderProps) {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '10px 16px', width: '100%',
-                  color: '#dc2626', fontSize: 13, fontWeight: 500,
+                  color: '#dc2626', fontSize: 'var(--text-base)', fontWeight: 500,
                   background: 'none', border: 'none', cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'background 0.1s',

@@ -217,7 +217,7 @@ function dnsStatusColor(s: DnsServerStatus): string {
 const INPUT: React.CSSProperties = {
   width: '100%', padding: '7px 11px', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)',
-  color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  color: 'var(--text-primary)', fontSize: 'var(--text-base)', fontFamily: 'inherit', outline: 'none',
 };
 
 const CARD: React.CSSProperties = {
@@ -232,7 +232,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 const PS_WARNING: React.CSSProperties = {
   background: '#fef9c3', border: '1px solid #fde047', borderRadius: 'var(--radius-sm)',
-  padding: '8px 12px', fontSize: 12, marginBottom: 14, color: '#a16207',
+  padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 14, color: '#a16207',
 };
 
 // ════════════════════════════════════════════════════════════
@@ -243,7 +243,7 @@ function TypeBadge({ type, small }: { type: string; small?: boolean }) {
   return (
     <span style={{
       display: 'inline-block', padding: small ? '1px 6px' : '2px 8px', borderRadius: 4,
-      background: color + '22', color, fontSize: small ? 10 : 11, fontWeight: 700,
+      background: color + '22', color, fontSize: small ? 'var(--text-xs)' : 'var(--text-xs)', fontWeight: 700,
       letterSpacing: '0.02em',
     }}>{type}</span>
   );
@@ -333,13 +333,13 @@ function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', padding: 24, width: 480, maxWidth: '94vw' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{isEdit ? 'Edit DNS Record' : 'Add DNS Record'}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              Zone: <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{zone.zone_name}</span>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{isEdit ? 'Edit DNS Record' : 'Add DNS Record'}</div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
+              Zone: <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{zone.zone_name}</span>
               {' · '}Server: {servers.find(s => s.id === zone.server_id)?.hostname || zone.server_id}
             </div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)' }}>×</button>
         </div>
 
         <div style={PS_WARNING}>
@@ -348,14 +348,14 @@ function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
         </div>
 
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Record Type</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Record Type</label>
           <select value={form.record_type} onChange={e => setForm(p => ({ ...p, record_type: e.target.value }))} style={INPUT}>
             {typeOptions.map(t => <option key={t} value={t}>{t}{TYPE_LABELS[t] ? ` — ${TYPE_LABELS[t]}` : ''}</option>)}
           </select>
         </div>
 
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
             Hostname {form.record_type !== 'PTR' ? '(e.g. "server1" or "@" for root)' : '(e.g. "100" for .100)'}
           </label>
           <input value={form.hostname} placeholder={form.record_type === 'PTR' ? '100' : 'hostname'}
@@ -363,7 +363,7 @@ function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
         </div>
 
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
             {form.record_type === 'A' ? 'IPv4 Address' : form.record_type === 'MX' ? 'Mail Server' : 'Record Data'}
           </label>
           <input value={form.record_data} placeholder={placeholders[form.record_type] || ''}
@@ -372,13 +372,13 @@ function RecordModal({ zone, servers, editRecord, onClose, onDone }: {
 
         {form.record_type === 'MX' && (
           <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Priority</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Priority</label>
             <input value={form.preference} type="number" onChange={e => setForm(p => ({ ...p, preference: e.target.value }))} style={INPUT} />
           </div>
         )}
 
         <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>TTL (seconds)</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>TTL (seconds)</label>
           <select value={form.ttl} onChange={e => setForm(p => ({ ...p, ttl: e.target.value }))} style={INPUT}>
             {ttlOptions.map(v => <option key={v} value={v}>{ttlLabel(v)}</option>)}
           </select>
@@ -427,8 +427,8 @@ function AddZoneModal({ servers, onClose, onDone }: {
     <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', padding: 24, width: 440, maxWidth: '94vw' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>Create DNS Zone</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>×</button>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Create DNS Zone</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)' }}>×</button>
         </div>
 
         <div style={PS_WARNING}>
@@ -436,17 +436,17 @@ function AddZoneModal({ servers, onClose, onDone }: {
         </div>
 
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>DNS Server</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>DNS Server</label>
           <select value={form.server_id} onChange={e => setForm(p => ({ ...p, server_id: parseInt(e.target.value) }))} style={INPUT}>
             {servers.map(s => <option key={s.id} value={s.id}>{s.hostname} ({s.ip_address})</option>)}
           </select>
         </div>
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Zone Name (e.g. company.local)</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Zone Name (e.g. company.local)</label>
           <input value={form.zone_name} onChange={e => setForm(p => ({ ...p, zone_name: e.target.value }))} style={INPUT} placeholder="company.local" />
         </div>
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Zone Type</label>
+          <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Zone Type</label>
           <select value={form.zone_type} onChange={e => setForm(p => ({ ...p, zone_type: e.target.value }))} style={INPUT}>
             <option value="Primary">Primary — authoritative zone</option>
             <option value="Secondary">Secondary — read-only replica</option>
@@ -455,7 +455,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
         </div>
         {form.zone_type === 'Primary' && (
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>AD Replication Scope</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>AD Replication Scope</label>
             <select value={form.replication_scope} onChange={e => setForm(p => ({ ...p, replication_scope: e.target.value }))} style={INPUT}>
               <option value="Domain">Domain — all DCs in domain</option>
               <option value="Forest">Forest — all DCs in forest</option>
@@ -465,7 +465,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
         )}
         {form.zone_type === 'Forwarder' && (
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Forward to (DNS server IPs)</label>
+            <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Forward to (DNS server IPs)</label>
             <input value={form.forwarder_ips} onChange={e => setForm(p => ({ ...p, forwarder_ips: e.target.value }))} style={INPUT} placeholder="8.8.8.8, 8.8.4.4" />
           </div>
         )}
@@ -489,15 +489,15 @@ function ServerPill({ server, active, onClick }: {
   const status = dnsServerStatus(server.health_score, server.winrm_test_ok);
   return (
     <button onClick={onClick} style={{
-      padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 12,
+      padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 'var(--text-sm)',
       border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
       display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: 'inherit',
     }}>
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: dnsStatusColor(status), flexShrink: 0 }} />
       <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{server.hostname}</span>
-      <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: 11 }}>{server.ip_address}</span>
-      <span className={`badge ${server.role === 'both' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9 }}>{server.role}</span>
+      <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>{server.ip_address}</span>
+      <span className={`badge ${server.role === 'both' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 'var(--text-xs)' }}>{server.role}</span>
     </button>
   );
 }
@@ -538,19 +538,19 @@ function ZoneRow({ zone, selected, onSelect, onDelete }: {
         {/* Prominent record-count badge — green when records exist, gray when empty */}
         <span
           className={`badge ${count > 0 ? 'badge-green' : 'badge-gray'}`}
-          style={{ fontSize: 10, fontWeight: 700, minWidth: 22, textAlign: 'center', flexShrink: 0 }}
+          style={{ fontSize: 'var(--text-xs)', fontWeight: 700, minWidth: 22, textAlign: 'center', flexShrink: 0 }}
           title={`${count} ${count === 1 ? 'record' : 'records'}`}
         >{count}</span>
-        <span style={{ fontWeight: 600, fontSize: 12.5, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {zone.zone_name}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{shortTime(zone.last_updated)}</span>
-        {zone.is_ds_integrated && <span className="badge badge-green" style={{ fontSize: 8, flexShrink: 0 }}>AD</span>}
+        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flexShrink: 0 }}>{shortTime(zone.last_updated)}</span>
+        {zone.is_ds_integrated && <span className="badge badge-green" style={{ fontSize: 'var(--text-xs)', flexShrink: 0 }}>AD</span>}
         {canWrite && (
           <button
             onClick={e => { e.stopPropagation(); onDelete(); }}
             title="Delete zone"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: 0, lineHeight: 1, flexShrink: 0 }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 'var(--text-md)', padding: 0, lineHeight: 1, flexShrink: 0 }}
             onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
             onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
           >×</button>
@@ -578,13 +578,13 @@ function ZoneSection({ title, zones, selectedZone, onSelect, onDelete, collapsed
       <div
         onClick={onToggle}
         style={{
-          padding: '7px 13px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+          padding: '7px 13px', fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase',
           letterSpacing: '0.06em', color: 'var(--text-muted)', background: 'var(--bg-primary)',
           position: 'sticky', top: 0, zIndex: 1, borderBottom: '1px solid var(--border-light)',
           display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none',
         }}
       >
-        <span style={{ display: 'inline-block', transition: 'transform 0.12s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', fontSize: 9 }}>▼</span>
+        <span style={{ display: 'inline-block', transition: 'transform 0.12s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', fontSize: 'var(--text-xs)' }}>▼</span>
         {title} <span style={{ color: 'var(--border)' }}>·</span> {zones.length}
       </div>
       {!collapsed && zones.map(z => (
@@ -601,7 +601,7 @@ function ZoneSection({ title, zones, selectedZone, onSelect, onDelete, collapsed
 function SectionHead({ title, right }: { title: string; right?: React.ReactNode }) {
   return (
     <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>{title}</div>
+      <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{title}</div>
       {right}
     </div>
   );
@@ -615,9 +615,9 @@ function KpiTile({ label, value, sub, color, alert }: {
 }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color }}>
-      <div style={{ fontSize: 24, fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px' }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{sub}</div>}
+      <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px' }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
+      {sub && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }
@@ -635,7 +635,7 @@ function ScoreGauge({ score }: { score: number }) {
       <circle cx={24} cy={24} r={r} fill="none" stroke={col} strokeWidth={5}
         strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round"
         transform="rotate(-90 24 24)" />
-      <text x={24} y={28} textAnchor="middle" fontSize={13} fontWeight={800} fill={col}>{s}</text>
+      <text x={24} y={28} textAnchor="middle" fontSize="var(--text-base)" fontWeight={800} fill={col}>{s}</text>
     </svg>
   );
 }
@@ -648,7 +648,7 @@ function ForwarderPill({ ip, status }: { ip: string; status: 'up' | 'down' | 'un
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 10,
-      background: col + '18', color: col, fontSize: 10.5, fontWeight: 600, fontFamily: 'monospace',
+      background: col + '18', color: col, fontSize: 'var(--text-xs)', fontWeight: 600, fontFamily: 'var(--font-mono)',
     }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: col }} />
       {ip}
@@ -673,31 +673,31 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
         <ScoreGauge score={srv.health_score} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>{srv.hostname}</span>
-            {srv.is_pdc_emulator && <span title="PDC Emulator" style={{ fontSize: 13 }}>👑</span>}
-            <span className={`badge ${srv.is_dns_primary ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9 }}>
+            <span style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{srv.hostname}</span>
+            {srv.is_pdc_emulator && <span title="PDC Emulator" style={{ fontSize: 'var(--text-base)' }}>👑</span>}
+            <span className={`badge ${srv.is_dns_primary ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 'var(--text-xs)' }}>
               {srv.is_dns_primary ? 'PRIMARY' : 'SECONDARY'}
             </span>
             {(() => {
               const st = dnsServerStatus(srv.health_score, srv.winrm_test_ok);
               if (st === 'online') return null;
-              return <span className="badge badge-gray" style={{ fontSize: 9, color: dnsStatusColor(st) }}>{st === 'degraded' ? 'DEGRADED' : 'OFFLINE'}</span>;
+              return <span className="badge badge-gray" style={{ fontSize: 'var(--text-xs)', color: dnsStatusColor(st) }}>{st === 'degraded' ? 'DEGRADED' : 'OFFLINE'}</span>;
             })()}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 2 }}>{srv.ip}</div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>{srv.ip}</div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
             <span><strong style={{ color: scoreColor(srv.health_score) }}>{srv.health_score}</strong> health</span>
             <span><strong style={{ color: 'var(--text-primary)' }}>{srv.query_ms ?? 0}ms</strong> query</span>
             <span><strong style={{ color: 'var(--text-primary)' }}>{srv.zone_count ?? myZones.length}</strong> zones</span>
             <span><strong style={{ color: 'var(--text-primary)' }}>{(srv.record_count ?? 0).toLocaleString()}</strong> records</span>
           </div>
         </div>
-        <span style={{ fontSize: 15, color: 'var(--text-muted)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>›</span>
+        <span style={{ fontSize: 'var(--text-md)', color: 'var(--text-muted)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>›</span>
       </div>
 
       {srv.dns_forwarders && srv.dns_forwarders.length > 0 && (
         <div style={{ padding: '0 14px 12px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          <span style={{ fontSize: 10.5, color: 'var(--text-muted)', alignSelf: 'center' }}>Forwarders:</span>
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', alignSelf: 'center' }}>Forwarders:</span>
           {srv.dns_forwarders.map((ip, i) => <ForwarderPill key={i} ip={ip} status={fwdStatus(ip)} />)}
         </div>
       )}
@@ -705,13 +705,13 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
       {expanded && (
         <div style={{ borderTop: '1px solid var(--border)', padding: '8px 14px', maxHeight: 240, overflow: 'auto' }} onClick={e => e.stopPropagation()}>
           {myZones.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>No zones hosted on this server.</div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', padding: '8px 0' }}>No zones hosted on this server.</div>
           ) : myZones.map(z => (
-            <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 12, borderBottom: '1px solid var(--border-light)' }}>
+            <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 'var(--text-sm)', borderBottom: '1px solid var(--border-light)' }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
-              <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.zone_name}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.zone_name}</span>
               <span style={{ color: 'var(--text-muted)' }}>{z.record_count || 0} rec</span>
-              {z.soa_serial != null && <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>SOA {z.soa_serial}</span>}
+              {z.soa_serial != null && <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>SOA {z.soa_serial}</span>}
             </div>
           ))}
         </div>
@@ -742,12 +742,12 @@ function TopologyDiagram({ servers, onSelect }: {
       <g key={s.id} style={{ cursor: 'pointer' }} onClick={() => onSelect(s.id)}>
         <title>{`${s.hostname} (${s.ip})\nHealth ${s.health_score} · ${s.query_ms ?? 0}ms · ${s.zone_count} zones · ${(s.record_count ?? 0).toLocaleString()} records\n${s.domain || ''} · ${s.replication_type || ''}`}</title>
         <rect x={x} y={y} width={nodeW} height={nodeH} rx={10} fill={col + '14'} stroke={col} strokeWidth={2} />
-        <text x={x + 12} y={y + 20} fontSize={12} fontWeight={700} fill="var(--text-primary)">
+        <text x={x + 12} y={y + 20} fontSize="var(--text-sm)" fontWeight={700} fill="var(--text-primary)">
           {crown ? '👑 ' : ''}{s.hostname.length > 16 ? s.hostname.slice(0, 15) + '…' : s.hostname}
         </text>
-        <text x={x + 12} y={y + 37} fontSize={10} fill="var(--text-muted)" fontFamily="monospace">{s.ip}</text>
-        <text x={x + 12} y={y + 55} fontSize={10} fill={col} fontWeight={700}>{s.health_score} health</text>
-        <text x={x + nodeW - 12} y={y + 55} fontSize={10} fill="var(--text-muted)" textAnchor="end">{s.zone_count} zones</text>
+        <text x={x + 12} y={y + 37} fontSize="var(--text-xs)" fill="var(--text-muted)" fontFamily="var(--font-mono)">{s.ip}</text>
+        <text x={x + 12} y={y + 55} fontSize="var(--text-xs)" fill={col} fontWeight={700}>{s.health_score} health</text>
+        <text x={x + nodeW - 12} y={y + 55} fontSize="var(--text-xs)" fill="var(--text-muted)" textAnchor="end">{s.zone_count} zones</text>
       </g>
     );
   };
@@ -900,7 +900,7 @@ function HealthOverviewPanel() {
       {/* Zone Sync Matrix */}
       <div style={CARD}>
         <SectionHead title="Zone Sync Matrix"
-          right={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{inSync} zones healthy, {outSync} out of sync</span>} />
+          right={<span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{inSync} zones healthy, {outSync} out of sync</span>} />
         {!sync || sync.zones.length === 0 ? (
           <EmptyState title="No sync data" message="No multi-server zone replication data collected yet." />
         ) : (
@@ -915,7 +915,7 @@ function HealthOverviewPanel() {
               <tbody>
                 {sync.zones.map((z, i) => (
                   <tr key={i}>
-                    <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: z.in_sync ? 'var(--green)' : 'var(--red)' }} />
                         {z.zone_name}
@@ -925,7 +925,7 @@ function HealthOverviewPanel() {
                       const c = cellInfo(z, s.id);
                       return (
                         <td key={s.id} title={c.title} style={{
-                          textAlign: 'center', fontFamily: 'monospace', fontSize: 11.5,
+                          textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)',
                           background: c.bg, color: c.muted ? 'var(--text-muted)' : 'var(--text-primary)', fontWeight: 600,
                         }}>{c.serial}</td>
                       );
@@ -1223,7 +1223,7 @@ function ZonesRecordsPanel() {
       {servers.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSelectedServer(null)} style={{
-            padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 'var(--text-sm)', fontWeight: 600,
             border: `2px solid ${selectedServer === null ? 'var(--primary)' : 'var(--border)'}`,
             background: selectedServer === null ? 'var(--primary-light)' : 'var(--bg-card)',
             color: 'var(--text-primary)', fontFamily: 'inherit',
@@ -1244,8 +1244,8 @@ function ZonesRecordsPanel() {
           { l: 'Total Records', v: totalRecords,               c: 'var(--purple)' },
         ].map((t, i) => (
           <div key={i} className="kpi-card" style={{ borderLeftColor: t.c }}>
-            <div style={{ fontSize: 24, fontWeight: 800, color: t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{t.l}</div>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: t.c, letterSpacing: '-0.5px' }}>{t.v}</div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3 }}>{t.l}</div>
           </div>
         ))}
       </div>
@@ -1279,7 +1279,7 @@ function ZonesRecordsPanel() {
                   const active = zoneTypeFilter === key;
                   return (
                     <button key={key} onClick={() => setZoneTypeFilter(key)} style={{
-                      padding: '3px 10px', borderRadius: 14, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                      padding: '3px 10px', borderRadius: 14, cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600,
                       border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
                       color: active ? 'var(--primary)' : 'var(--text-muted)', fontFamily: 'inherit',
@@ -1289,7 +1289,7 @@ function ZonesRecordsPanel() {
               </div>
               {/* Sort dropdown (Fix 5) */}
               <select value={zoneSort} onChange={e => setZoneSort(e.target.value as typeof zoneSort)}
-                style={{ ...INPUT, fontSize: 12, padding: '6px 8px' }}>
+                style={{ ...INPUT, fontSize: 'var(--text-sm)', padding: '6px 8px' }}>
                 <option value="records">Records (High–Low)</option>
                 <option value="name">Name (A–Z)</option>
                 <option value="updated">Last Updated</option>
@@ -1323,7 +1323,7 @@ function ZonesRecordsPanel() {
                       style={{
                         width: '100%', textAlign: 'left', padding: '9px 13px', cursor: 'pointer',
                         background: 'var(--bg-primary)', border: 'none', borderTop: '1px solid var(--border-light)',
-                        color: 'var(--primary)', fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                        color: 'var(--primary)', fontSize: 'var(--text-xs)', fontWeight: 600, fontFamily: 'inherit',
                       }}
                     >
                       {showForwarders
@@ -1338,7 +1338,7 @@ function ZonesRecordsPanel() {
             {breakdown.length > 0 && (
               <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {breakdown.map((b, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--text-xs)' }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: RECORD_COLORS[b.record_type] || '#6b7280' }} />
                     <span style={{ color: 'var(--text-muted)' }}>{b.record_type}</span>
                     <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{b.count}</span>
@@ -1377,17 +1377,17 @@ function ZonesRecordsPanel() {
                 <button onClick={() => setShowAddRecord(true)} disabled={!selectedZone} className="btn btn-primary"
                   style={{ opacity: selectedZone ? 1 : 0.5, whiteSpace: 'nowrap' }}>+ Add Record</button>
               )}
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                 {recordTotal.toLocaleString()} {recordTotal === 1 ? 'record' : 'records'}
               </span>
             </div>
 
             {/* Context line */}
-            <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-light)', fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--border-light)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {globalSearch
                 ? <span>Searching all zones for “<span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{recordSearch}</span>”</span>
                 : selectedZone
-                  ? <span>Zone <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>{selectedZone.zone_name}</span>{' · '}{selectedZone.server_hostname || '—'}</span>
+                  ? <span>Zone <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>{selectedZone.zone_name}</span>{' · '}{selectedZone.server_hostname || '—'}</span>
                   : <span>Select a zone from the list, or search above.</span>}
             </div>
 
@@ -1442,20 +1442,20 @@ function ZonesRecordsPanel() {
                                 style={{ cursor: 'pointer' }} />
                             </td>
                           )}
-                          <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.hostname}</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{r.hostname}</td>
                           <td><TypeBadge type={r.record_type} /></td>
-                          <td style={{ fontFamily: 'monospace', fontSize: 12, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.record_data}>{r.record_data}</td>
-                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.ttl}s</td>
-                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.zone_name}</td>
-                          {hasTimestamps && <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(r.last_updated || r.last_seen)}</td>}
-                          {hasTimestamps && <td style={{ fontSize: 12, color: stale ? 'var(--orange)' : 'var(--text-muted)', fontWeight: stale ? 700 : 400 }}>{age != null ? `${age}d` : '—'}</td>}
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.record_data}>{r.record_data}</td>
+                          <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{r.ttl}s</td>
+                          <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{r.zone_name}</td>
+                          {hasTimestamps && <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{shortTime(r.last_updated || r.last_seen)}</td>}
+                          {hasTimestamps && <td style={{ fontSize: 'var(--text-sm)', color: stale ? 'var(--orange)' : 'var(--text-muted)', fontWeight: stale ? 700 : 400 }}>{age != null ? `${age}d` : '—'}</td>}
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {canWrite && (
                               <>
                                 <button onClick={() => setEditRecord(r)}
-                                  style={{ fontSize: 12, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', marginRight: 10 }}>Edit</button>
+                                  style={{ fontSize: 'var(--text-sm)', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', marginRight: 10 }}>Edit</button>
                                 <button onClick={() => deleteRecord(r)}
-                                  style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                                  style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
                               </>
                             )}
                           </td>
@@ -1473,7 +1473,7 @@ function ZonesRecordsPanel() {
                 <button className="btn" disabled={recordPage <= 1}
                   style={{ opacity: recordPage <= 1 ? 0.5 : 1 }}
                   onClick={() => { const p = recordPage - 1; setRecordPage(p); loadRecords(p); }}>← Prev</button>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Page {recordPage} of {totalPages}</span>
+                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>Page {recordPage} of {totalPages}</span>
                 <button className="btn" disabled={recordPage >= totalPages}
                   style={{ opacity: recordPage >= totalPages ? 0.5 : 1 }}
                   onClick={() => { const p = recordPage + 1; setRecordPage(p); loadRecords(p); }}>Next →</button>
@@ -1728,9 +1728,9 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Back to Insights */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={onBack} className="btn" style={{ padding: '6px 12px', fontSize: 12 }}>← Back to Insights</button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>DNS Management Console</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Stale records · forwarders · scavenging</span>
+        <button onClick={onBack} className="btn" style={{ padding: '6px 12px', fontSize: 'var(--text-sm)' }}>← Back to Insights</button>
+        <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>DNS Management Console</span>
+        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>Stale records · forwarders · scavenging</span>
       </div>
 
       {/* Stale Records */}
@@ -1738,7 +1738,7 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
         <SectionHead title="Stale Records"
           right={
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Min days stale</label>
+              <label style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>Min days stale</label>
               <input type="number" value={minDays} min={1}
                 onChange={e => setMinDays(Math.max(1, parseInt(e.target.value) || 1))}
                 style={{ ...INPUT, width: 80 }} />
@@ -1757,7 +1757,7 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
               )}
             </div>
           } />
-        <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-light)' }}>
+        <div style={{ padding: '8px 16px', fontSize: 'var(--text-sm)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-light)' }}>
           {visibleStale.length.toLocaleString()} stale record{visibleStale.length === 1 ? '' : 's'} in {staleGroups.length.toLocaleString()} unique entr{staleGroups.length === 1 ? 'y' : 'ies'} across {staleZoneNames.length} zone{staleZoneNames.length === 1 ? '' : 's'}
         </div>
         {staleLoading ? <TableSkeleton rows={6} cols={8} /> : visibleStale.length === 0 ? (
@@ -1797,15 +1797,15 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                         <td>
                           {multi && (
                             <button onClick={() => setExpanded(p => ({ ...p, [g.key]: !p[g.key] }))}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, width: 18 }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 'var(--text-sm)', padding: 0, width: 18 }}
                               title={isOpen ? 'Collapse' : 'Expand'}>{isOpen ? '▾' : '▸'}</button>
                           )}
                         </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{g.zone_name}</td>
-                        <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>{g.zone_name}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                           {g.hostname}
                           {multi && (
-                            <span style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                            <span style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 'var(--text-xs)', fontWeight: 600,
                               color: 'var(--text-muted)', background: 'var(--bg-primary)', border: '1px solid var(--border)',
                               borderRadius: 10, padding: '1px 8px' }}>
                               × {g.records.length} server{g.records.length === 1 ? '' : 's'}
@@ -1813,12 +1813,12 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                           )}
                         </td>
                         <td><TypeBadge type={g.record_type} small /></td>
-                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{multi ? '—' : shortTime(g.oldest)}</td>
+                        <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{multi ? '—' : shortTime(g.oldest)}</td>
                         <td style={{ fontWeight: 700, color: g.maxDays > 180 ? 'var(--red)' : 'var(--orange)' }}>{g.maxDays}d</td>
                         {canWrite && (
                           <td style={{ textAlign: 'right' }}>
                             <button onClick={() => requestDelete(g.records)}
-                              style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                              style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>
                               {multi ? `Delete all (${g.records.length})` : 'Delete'}
                             </button>
                           </td>
@@ -1831,17 +1831,17 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                               onChange={e => toggleRecord(r.id, e.target.checked)} />
                           </td>
                           <td></td>
-                          <td style={{ fontSize: 12, color: 'var(--text-muted)', paddingLeft: 12 }}>
+                          <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', paddingLeft: 12 }}>
                             ↳ {serverHostnameForRecord(r)}
                           </td>
-                          <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{r.record_data || '—'}</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{r.record_data || '—'}</td>
                           <td><TypeBadge type={r.record_type} small /></td>
-                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(r.last_updated)}</td>
+                          <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{shortTime(r.last_updated)}</td>
                           <td style={{ fontWeight: 700, color: r.days_stale > 180 ? 'var(--red)' : 'var(--orange)' }}>{r.days_stale}d</td>
                           {canWrite && (
                             <td style={{ textAlign: 'right' }}>
                               <button onClick={() => requestDelete([r])}
-                                style={{ fontSize: 12, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                                style={{ fontSize: 'var(--text-sm)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
                             </td>
                           )}
                         </tr>
@@ -1877,9 +1877,9 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                 {forwarders.map(f => (
                   <tr key={f.id}>
                     <td style={{ fontWeight: 600 }}>{f.hostname}</td>
-                    <td style={{ fontFamily: 'monospace' }}>{f.forwarder_ip}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{f.forwarder_ip}</td>
                     <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12,
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)',
                         color: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%',
                           background: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }} />
@@ -1889,11 +1889,11 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                     <td style={{ fontWeight: 600, color: respColor(f.response_time_ms, f.is_reachable) }}>
                       {f.response_time_ms != null ? `${f.response_time_ms}ms` : '—'}
                     </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(f.last_checked)}</td>
+                    <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{shortTime(f.last_checked)}</td>
                     {canWrite && (
                       <td style={{ textAlign: 'right' }}>
                         <button className="btn" disabled={testing === f.id} onClick={() => testForwarder(f)}
-                          style={{ padding: '4px 10px', fontSize: 12 }}>
+                          style={{ padding: '4px 10px', fontSize: 'var(--text-sm)' }}>
                           {testing === f.id ? <Spinner size={11} /> : 'Test'}
                         </button>
                       </td>
@@ -1929,16 +1929,16 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                   const off = !row.scavenging_enabled;
                   return (
                     <tr key={row.id} style={off ? { background: 'var(--yellow)' + '14' } : undefined}>
-                      <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{row.zone_name}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{row.zone_name}</td>
                       <td>{row.hostname}</td>
                       <td><span className={`badge ${row.scavenging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.scavenging_enabled ? 'Enabled' : 'Disabled'}</span></td>
                       <td><span className={`badge ${row.aging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.aging_enabled ? 'Enabled' : 'Disabled'}</span></td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{shortTime(row.last_scavenged)}</td>
+                      <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{shortTime(row.last_scavenged)}</td>
                       {canWrite && (
                         <td style={{ textAlign: 'right' }}>
                           {off && (
                             <button className="btn" disabled={enabling === row.id} onClick={() => enableScav(row)}
-                              style={{ padding: '4px 10px', fontSize: 12 }}>
+                              style={{ padding: '4px 10px', fontSize: 'var(--text-sm)' }}>
                               {enabling === row.id ? <Spinner size={11} /> : 'Enable'}
                             </button>
                           )}
@@ -1958,13 +1958,13 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
         <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) setPendingDelete(null); }}>
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', padding: 24, width: 440, maxWidth: '94vw' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>⚠️ Delete stale records</div>
-              <button onClick={() => setPendingDelete(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>×</button>
+              <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>⚠️ Delete stale records</div>
+              <button onClick={() => setPendingDelete(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)' }}>×</button>
             </div>
             <div style={PS_WARNING}>
               ⚡ Removes the record(s) from the DNS server(s) via WinRM. Requires DNS Server role and admin rights.
             </div>
-            <p style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5, margin: '0 0 18px' }}>
+            <p style={{ fontSize: 'var(--text-base)', color: 'var(--text-primary)', lineHeight: 1.5, margin: '0 0 18px' }}>
               You are about to delete <strong>{pendingDelete.length.toLocaleString()}</strong> stale DNS record{pendingDelete.length === 1 ? '' : 's'}. This cannot be undone. Are you sure?
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -1982,7 +1982,7 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
 
 // ── Sparkline (module scope) ──────────────────────────────────
 function Sparkline({ points, color = 'var(--blue)' }: { points: number[]; color?: string }) {
-  if (points.length < 2) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>insufficient data</span>;
+  if (points.length < 2) return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>insufficient data</span>;
   const W = 160, H = 36, pad = 2;
   const max = Math.max(...points), min = Math.min(...points);
   const span = max - min || 1;
@@ -2022,8 +2022,8 @@ function compactNum(n: number): string {
 function InsightKpi({ label, value, color, alert }: { label: string; value: React.ReactNode; color: string; alert?: boolean }) {
   return (
     <div className="kpi-card" style={{ borderLeftColor: alert ? 'var(--red)' : color, padding: '12px 16px', minHeight: 70 }}>
-      <div style={{ fontSize: 20, fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
+      <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: alert ? 'var(--red)' : color, letterSpacing: '-0.5px', lineHeight: 1.15 }}>{value}</div>
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 4 }}>{label}</div>
     </div>
   );
 }
@@ -2031,7 +2031,7 @@ function InsightKpi({ label, value, color, alert }: { label: string; value: Reac
 // Small inline "action →" link used in card headers / rows
 function CardLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: 11, fontWeight: 600, fontFamily: 'inherit', padding: 0, whiteSpace: 'nowrap' }}>{label}</button>
+    <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: 'var(--text-xs)', fontWeight: 600, fontFamily: 'inherit', padding: 0, whiteSpace: 'nowrap' }}>{label}</button>
   );
 }
 
@@ -2040,7 +2040,7 @@ function InsightCard({ title, right, children, scroll }: { title: string; right?
   return (
     <div style={{ ...CARD, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>
+        <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>
         {right}
       </div>
       <div style={{ flex: 1, minHeight: 0, ...(scroll ? { maxHeight: 196, overflowY: 'auto' as const } : {}) }}>{children}</div>
@@ -2056,10 +2056,10 @@ function LockedCard({ icon, title, lines, linkLabel }: { icon: string; title: st
       opacity: 0.7, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       textAlign: 'center', minHeight: 160, padding: 16, gap: 5,
     }}>
-      <div style={{ fontSize: 22 }}>{icon}</div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
-      {lines.map((l, i) => <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.3 }}>{l}</div>)}
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginTop: 4 }}>{linkLabel}</span>
+      <div style={{ fontSize: 'var(--text-xl)' }}>{icon}</div>
+      <div style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
+      {lines.map((l, i) => <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', lineHeight: 1.3 }}>{l}</div>)}
+      <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-muted)', marginTop: 4 }}>{linkLabel}</span>
     </div>
   );
 }
@@ -2224,17 +2224,17 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
   const scavDisabled = health?.scavenging_disabled_zones ?? 0;
   const replIssues = health?.replication_issues ?? 0;
 
-  const cellSm: React.CSSProperties = { fontSize: 12 };
-  const tableStyle: React.CSSProperties = { fontSize: 12 };
+  const cellSm: React.CSSProperties = { fontSize: 'var(--text-sm)' };
+  const tableStyle: React.CSSProperties = { fontSize: 'var(--text-sm)' };
 
   // Hygiene metric row
   const hygiene = (icon: string, label: string, count: number, ok: boolean, action: { label: string; onClick: () => void }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--border-light)' }}>
-      <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: 'var(--text-lg)', width: 22, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{label}</div>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', fontWeight: 600 }}>{label}</div>
       </div>
-      <span style={{ fontSize: 20, fontWeight: 800, color: ok ? 'var(--green)' : 'var(--orange)', letterSpacing: '-0.5px' }}>{count.toLocaleString()}</span>
+      <span style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: ok ? 'var(--green)' : 'var(--orange)', letterSpacing: '-0.5px' }}>{count.toLocaleString()}</span>
       <span className={`badge ${ok ? 'badge-green' : 'badge-yellow'}`} style={{ flexShrink: 0 }}>{ok ? 'OK' : 'Review'}</span>
       <CardLink label={action.label} onClick={action.onClick} />
     </div>
@@ -2279,7 +2279,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
                 {forwarders.map(f => (
                   <tr key={f.id}>
                     <td style={{ ...cellSm, fontWeight: 600, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.hostname}>{f.hostname}</td>
-                    <td style={{ ...cellSm, fontFamily: 'monospace' }}>{f.forwarder_ip}</td>
+                    <td style={{ ...cellSm, fontFamily: 'var(--font-mono)' }}>{f.forwarder_ip}</td>
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }} />
@@ -2290,7 +2290,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
                     </td>
                     {canWrite && (
                       <td style={{ textAlign: 'right' }}>
-                        <button className="btn" disabled={testing === f.id} onClick={() => testForwarder(f)} style={{ padding: '3px 9px', fontSize: 11 }}>
+                        <button className="btn" disabled={testing === f.id} onClick={() => testForwarder(f)} style={{ padding: '3px 9px', fontSize: 'var(--text-xs)' }}>
                           {testing === f.id ? <Spinner size={10} /> : 'Test'}
                         </button>
                       </td>
@@ -2310,12 +2310,12 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
             <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
               {recordRows.map(r => (
                 <div key={r.type} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 44, fontSize: 11, fontWeight: 700, color: RECORD_COLORS[r.type] || '#6b7280', flexShrink: 0 }}>{r.type}</span>
+                  <span style={{ width: 44, fontSize: 'var(--text-xs)', fontWeight: 700, color: RECORD_COLORS[r.type] || '#6b7280', flexShrink: 0 }}>{r.type}</span>
                   <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                     <div style={{ width: `${(r.count / maxRecord) * 100}%`, height: '100%', background: RECORD_COLORS[r.type] || '#6b7280', borderRadius: 5 }} />
                   </div>
-                  <span style={{ width: 54, textAlign: 'right', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{r.count.toLocaleString()}</span>
-                  <span style={{ width: 40, textAlign: 'right', fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{((r.count / recordTotal) * 100).toFixed(1)}%</span>
+                  <span style={{ width: 54, textAlign: 'right', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{r.count.toLocaleString()}</span>
+                  <span style={{ width: 40, textAlign: 'right', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flexShrink: 0 }}>{((r.count / recordTotal) * 100).toFixed(1)}%</span>
                 </div>
               ))}
             </div>
@@ -2366,13 +2366,13 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
                   const off = !row.scavenging_enabled;
                   return (
                     <tr key={row.id} style={off ? { background: 'var(--yellow)' + '14' } : undefined}>
-                      <td style={{ ...cellSm, fontFamily: 'monospace', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.zone_name}>{row.zone_name}</td>
+                      <td style={{ ...cellSm, fontFamily: 'var(--font-mono)', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.zone_name}>{row.zone_name}</td>
                       <td><span className={`badge ${row.scavenging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.scavenging_enabled ? 'On' : 'Off'}</span></td>
                       <td><span className={`badge ${row.aging_enabled ? 'badge-green' : 'badge-gray'}`}>{row.aging_enabled ? 'On' : 'Off'}</span></td>
                       {canWrite && (
                         <td style={{ textAlign: 'right' }}>
                           {off && (
-                            <button className="btn" disabled={enabling === row.id} onClick={() => enableScav(row)} style={{ padding: '3px 9px', fontSize: 11 }}>
+                            <button className="btn" disabled={enabling === row.id} onClick={() => enableScav(row)} style={{ padding: '3px 9px', fontSize: 'var(--text-xs)' }}>
                               {enabling === row.id ? <Spinner size={10} /> : 'Enable'}
                             </button>
                           )}
@@ -2388,7 +2388,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
 
         {/* Query Rate (server-level) */}
         <InsightCard title="Query Rate"
-          right={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>24h · server-level</span>} scroll>
+          right={<span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>24h · server-level</span>} scroll>
           {queryServers.length === 0 ? (
             <EmptyState title="No query data" message="Query rate appears once the collector gathers DNS stats." />
           ) : (
@@ -2399,8 +2399,8 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
                 return (
                   <div key={s.server_id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border-light)', paddingBottom: 7 }}>
                     <div style={{ width: 120, flexShrink: 0, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.hostname}>{s.hostname}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{latest.toFixed(1)} qps</div>
+                      <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.hostname}>{s.hostname}</div>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{latest.toFixed(1)} qps</div>
                     </div>
                     <Sparkline points={pts} color="var(--blue)" />
                   </div>
@@ -2422,11 +2422,11 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
             <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
               {topZones.map(z => (
                 <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 110, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={z.zone_name}>{z.zone_name}</span>
+                  <span style={{ width: 110, fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={z.zone_name}>{z.zone_name}</span>
                   <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
                     <div style={{ width: `${((z.record_count || 0) / maxZoneCount) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 5 }} />
                   </div>
-                  <span style={{ width: 48, textAlign: 'right', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{(z.record_count || 0).toLocaleString()}</span>
+                  <span style={{ width: 48, textAlign: 'right', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{(z.record_count || 0).toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -2444,7 +2444,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
               <tbody>
                 {staleByZone.map(g => (
                   <tr key={g.zone}>
-                    <td style={{ ...cellSm, fontFamily: 'monospace', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.zone}>{g.zone}</td>
+                    <td style={{ ...cellSm, fontFamily: 'var(--font-mono)', fontWeight: 600, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.zone}>{g.zone}</td>
                     <td style={{ ...cellSm, textAlign: 'center', fontWeight: 700 }}>{g.count.toLocaleString()}</td>
                     <td style={{ ...cellSm, textAlign: 'center', fontWeight: 700, color: g.oldest > 180 ? 'var(--red)' : 'var(--orange)' }}>{g.oldest}d</td>
                     <td style={{ textAlign: 'right' }}><CardLink label="Clean up →" onClick={() => setView('manage')} /></td>

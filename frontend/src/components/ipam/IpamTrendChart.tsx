@@ -68,7 +68,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
 
   const header = (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-      <div style={{ fontSize: 13, fontWeight: 700 }}>Utilization Over Time</div>
+      <div style={{ fontSize: 'var(--text-base)', fontWeight: 700 }}>Utilization Over Time</div>
       {toggle}
     </div>
   );
@@ -77,7 +77,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
     return (
       <div style={cardStyle}>
         {header}
-        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--text-base)' }}>
           Loading…
         </div>
       </div>
@@ -88,7 +88,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
     return (
       <div style={cardStyle}>
         {header}
-        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '0 24px' }}>
+        <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--text-base)', textAlign: 'center', padding: '0 24px' }}>
           Not enough history yet — utilization is recorded hourly.
         </div>
       </div>
@@ -134,7 +134,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
         {gridYs.map((g, i) => (
           <g key={i}>
             <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="var(--border-light)" strokeWidth={1} />
-            <text x={padL - 8} y={g.y + 3} textAnchor="end" fontSize={9} fill="var(--text-muted)">
+            <text x={padL - 8} y={g.y + 3} textAnchor="end" fontSize="var(--text-xs)" fill="var(--text-muted)">
               {g.v}
             </text>
           </g>
@@ -149,7 +149,7 @@ export function IpamTrendChart({ data, granularity, onGranularityChange, loading
 
         {buckets.map((b, i) =>
           i % labelStep === 0 ? (
-            <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--text-muted)">
+            <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="var(--text-xs)" fill="var(--text-muted)">
               {b.label}
             </text>
           ) : null

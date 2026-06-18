@@ -139,16 +139,16 @@ function DeviceSlideOver({ category, deviceType, count, onClose }: DeviceSlideOv
   }, [deviceType, search]);
 
   const TH: React.CSSProperties = {
-    textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 600,
+    textAlign: 'left', padding: '8px 12px', fontSize: 'var(--text-xs)', fontWeight: 600,
     color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em',
     borderBottom: '1px solid var(--border)', position: 'sticky', top: 0,
     background: 'var(--bg-card)', whiteSpace: 'nowrap',
   };
   const TD: React.CSSProperties = {
-    padding: '8px 12px', fontSize: 13, color: 'var(--text-primary)',
+    padding: '8px 12px', fontSize: 'var(--text-base)', color: 'var(--text-primary)',
     borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
   };
-  const MONO: React.CSSProperties = { fontFamily: 'monospace', fontSize: 12.5 };
+  const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' };
 
   return (
     <>
@@ -169,7 +169,7 @@ function DeviceSlideOver({ category, deviceType, count, onClose }: DeviceSlideOv
         }}
       >
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', flexShrink: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)', flexShrink: 0 }}>
             {category} Devices ({count.toLocaleString()})
           </div>
           <input
@@ -184,7 +184,7 @@ function DeviceSlideOver({ category, deviceType, count, onClose }: DeviceSlideOv
             aria-label="Close"
             style={{
               background: 'transparent', border: '1px solid var(--border)', borderRadius: 8,
-              width: 32, height: 32, cursor: 'pointer', fontSize: 16, lineHeight: 1,
+              width: 32, height: 32, cursor: 'pointer', fontSize: 'var(--text-lg)', lineHeight: 1,
               color: 'var(--text-muted)', flexShrink: 0,
             }}
           >
@@ -282,9 +282,9 @@ export default function DeviceDonut() {
     <>
     <div style={CARD}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Device Type Distribution</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Device Type Distribution</div>
         {!loading && !error && total > 0 && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{total.toLocaleString()} devices</div>
+          <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{total.toLocaleString()} devices</div>
         )}
       </div>
 
@@ -310,16 +310,16 @@ export default function DeviceDonut() {
                 background: hovered === s.category ? 'var(--bg-primary)' : 'transparent',
               }}
             >
-              <span style={{ fontSize: 11, color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
               <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                 <div style={{
                   width: `${maxPct > 0 ? (s.pct / maxPct) * 100 : 0}%`,
                   height: '100%', background: s.color, borderRadius: 4,
                 }} />
               </div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', width: 46, textAlign: 'right', flexShrink: 0 }}>{s.pct.toFixed(1)}%</span>
-              <span style={{ fontSize: 15, color: 'var(--text-muted)', width: 12, textAlign: 'center', flexShrink: 0, lineHeight: 1 }}>›</span>
+              <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', width: 46, textAlign: 'right', flexShrink: 0 }}>{s.pct.toFixed(1)}%</span>
+              <span style={{ fontSize: 'var(--text-md)', color: 'var(--text-muted)', width: 12, textAlign: 'center', flexShrink: 0, lineHeight: 1 }}>›</span>
             </div>
           ))}
         </div>

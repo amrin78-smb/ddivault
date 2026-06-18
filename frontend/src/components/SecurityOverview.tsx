@@ -92,12 +92,12 @@ export default function SecurityOverview({ onViewAll, onTypeClick }: { onViewAll
   return (
     <div style={CARD}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Security Overview</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>Security Overview</div>
         {onViewAll && (
           <button
             type="button"
             onClick={() => onViewAll?.()}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12 }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 'var(--text-sm)' }}
           >
             View all →
           </button>
@@ -115,19 +115,19 @@ export default function SecurityOverview({ onViewAll, onTypeClick }: { onViewAll
           {/* Counts */}
           <div style={{ display: 'flex', gap: 8 }}>
             <div style={{ flex: 1, padding: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--red)' }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--red)' }}>{summary?.today ?? 0}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Anomalies today</div>
+              <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: 'var(--red)' }}>{summary?.today ?? 0}</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>Anomalies today</div>
             </div>
             <div style={{ flex: 1, padding: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--orange)' }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--orange)' }}>{summary?.week ?? 0}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>This week</div>
+              <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: 'var(--orange)' }}>{summary?.week ?? 0}</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>This week</div>
             </div>
           </div>
 
           {/* Top types */}
           {topTypes.length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>Top types</div>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>Top types</div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {topTypes.map((t, i) => (
                   <div
@@ -138,12 +138,12 @@ export default function SecurityOverview({ onViewAll, onTypeClick }: { onViewAll
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderRadius: 'var(--radius-sm)', background: 'transparent', cursor: onTypeClick ? 'pointer' : 'default' }}
                   >
                     <span className={`badge ${severityBadge(t.severity)}`}>{t.severity || 'unknown'}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{t.anomaly_type}</span>
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{t.anomaly_type}</span>
                     <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 24 }}>
                       <div style={{ width: `${((Number(t.count) || 0) / maxCount) * 100}%`, height: '100%', background: severityColor(t.severity), borderRadius: 4 }} />
                     </div>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{Number(t.count) || 0}</span>
-                    {onTypeClick && <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 700, lineHeight: 1 }}>›</span>}
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>{Number(t.count) || 0}</span>
+                    {onTypeClick && <span style={{ fontSize: 'var(--text-base)', color: 'var(--text-muted)', fontWeight: 700, lineHeight: 1 }}>›</span>}
                   </div>
                 ))}
               </div>

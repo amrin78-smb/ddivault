@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useEscape } from '@/components/ui';
 
-const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
+const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
@@ -51,12 +51,12 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
     }
   };
 
-  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 };
+  const labelStyle: React.CSSProperties = { fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 };
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 480, maxWidth: '92%', maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Generate New API Key</div>
+        <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginBottom: 16 }}>Generate New API Key</div>
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>Name *</label>
           <input className="input" style={{ width: '100%' }} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Ansible automation" autoFocus />
@@ -68,9 +68,9 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>Permissions</label>
           <div style={{ display: 'flex', gap: 16 }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={read} onChange={e => setRead(e.target.checked)} /> Read</label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={write} onChange={e => setWrite(e.target.checked)} /> Write</label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={admin} onChange={e => setAdmin(e.target.checked)} /> Admin</label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--text-base)' }}><input type="checkbox" checked={read} onChange={e => setRead(e.target.checked)} /> Read</label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--text-base)' }}><input type="checkbox" checked={write} onChange={e => setWrite(e.target.checked)} /> Write</label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--text-base)' }}><input type="checkbox" checked={admin} onChange={e => setAdmin(e.target.checked)} /> Admin</label>
           </div>
         </div>
         <div style={{ marginBottom: 14 }}>
@@ -98,13 +98,13 @@ function RevealModal({ fullKey, onClose }: { fullKey: string; onClose: () => voi
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>API Key Created</div>
-        <div style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600, marginBottom: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginBottom: 8 }}>API Key Created</div>
+        <div style={{ fontSize: 'var(--text-base)', color: 'var(--red)', fontWeight: 600, marginBottom: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           Save this key now — it will never be shown again.
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input className="input" readOnly value={fullKey} style={{ width: '100%', fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }} onFocus={e => e.target.select()} />
+          <input className="input" readOnly value={fullKey} style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }} onFocus={e => e.target.select()} />
           <button className="btn btn-primary" onClick={copy}>Copy</button>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
@@ -151,8 +151,8 @@ export function ApiKeysSection() {
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', gridColumn: '1 / -1' }}>
       <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>API Keys</div>
-          <div style={{ ...MUTED, marginTop: 2 }}>Programmatic access to the DDIVault REST API (<code style={{ fontFamily: "'JetBrains Mono', monospace" }}>/api/v1</code>). Keys are shown once at creation.</div>
+          <div style={{ fontSize: 'var(--text-md)', fontWeight: 700 }}>API Keys</div>
+          <div style={{ ...MUTED, marginTop: 2 }}>Programmatic access to the DDIVault REST API (<code style={{ fontFamily: 'var(--font-mono)' }}>/api/v1</code>). Keys are shown once at creation.</div>
         </div>
         <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Generate New API Key</button>
       </div>
@@ -173,12 +173,12 @@ export function ApiKeysSection() {
                   <div style={{ fontWeight: 600 }}>{k.name}</div>
                   {k.description && <div style={MUTED}>{k.description}</div>}
                 </td>
-                <td className="mono" style={{ fontSize: 12 }}>{k.key_masked}</td>
+                <td className="mono" style={{ fontSize: 'var(--text-sm)' }}>{k.key_masked}</td>
                 <td><PermBadges p={k.permissions || {}} /></td>
                 <td className="mono">{k.request_count || 0}</td>
                 <td style={{ ...MUTED }}>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'never'}</td>
                 <td><span className={`badge ${k.is_active ? 'badge-green' : 'badge-gray'}`}>{k.is_active ? 'active' : 'revoked'}</span></td>
-                <td>{k.is_active && <button style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => revoke(k)}>Revoke</button>}</td>
+                <td>{k.is_active && <button style={{ fontSize: 'var(--text-xs)', color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => revoke(k)}>Revoke</button>}</td>
               </tr>
             ))}
           </tbody>

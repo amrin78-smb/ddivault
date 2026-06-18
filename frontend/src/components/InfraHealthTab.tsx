@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { PageHeader, EmptyState, Skeleton, useRefreshKey } from '@/components/ui';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
-const TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
-const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
+const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
+const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
 async function api(path: string) {
   const res = await fetch(`/api${path}`);
@@ -41,8 +41,8 @@ function Gauge({ score }: { score: number | null }) {
       <circle cx="37" cy="37" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
       <circle cx="37" cy="37" r={r} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"
         strokeDasharray={c} strokeDashoffset={c - (v / 100) * c} transform="rotate(-90 37 37)" />
-      <text x="37" y="40" textAnchor="middle" fontSize="17" fontWeight="800" fill={color}>{score == null ? '—' : score}</text>
-      <text x="37" y="52" textAnchor="middle" fontSize="7" fill="var(--text-muted)">/ 100</text>
+      <text x="37" y="40" textAnchor="middle" fontSize="var(--text-lg)" fontWeight="800" fill={color}>{score == null ? '—' : score}</text>
+      <text x="37" y="52" textAnchor="middle" fontSize="var(--text-xs)" fill="var(--text-muted)">/ 100</text>
     </svg>
   );
 }
@@ -80,8 +80,8 @@ export default function InfraHealthTab() {
       {/* Status strip */}
       <div style={{ borderRadius: 'var(--radius)', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14, background: stripColor, color: '#fff', boxShadow: 'var(--shadow-sm)' }}>
         <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#fff', boxShadow: '0 0 0 4px rgba(255,255,255,0.3)' }} />
-        <span style={{ fontWeight: 700, fontSize: 15 }}>{stripText}</span>
-        <span style={{ opacity: 0.9, fontSize: 13 }}>{servers.length} server{servers.length === 1 ? '' : 's'} monitored{worst != null && ` · lowest score ${worst}/100`}</span>
+        <span style={{ fontWeight: 700, fontSize: 'var(--text-md)' }}>{stripText}</span>
+        <span style={{ opacity: 0.9, fontSize: 'var(--text-base)' }}>{servers.length} server{servers.length === 1 ? '' : 's'} monitored{worst != null && ` · lowest score ${worst}/100`}</span>
       </div>
 
       {/* Server health cards */}
@@ -98,8 +98,8 @@ export default function InfraHealthTab() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                 <Gauge score={s.health_score} />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.hostname}</div>
-                  <div style={{ ...MUTED, fontFamily: "'JetBrains Mono', monospace" }}>{s.ip}</div>
+                  <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.hostname}</div>
+                  <div style={{ ...MUTED, fontFamily: 'var(--font-mono)' }}>{s.ip}</div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                     <span className="badge badge-gray">{s.role.toUpperCase()}</span>
                     <span className={`badge ${s.winrm_test_ok === false ? 'badge-red' : s.winrm_test_ok ? 'badge-green' : 'badge-gray'}`}>
@@ -116,7 +116,7 @@ export default function InfraHealthTab() {
                   { l: 'DNS Records', v: s.record_count },
                 ].map(m => (
                   <div key={m.l} style={{ background: 'var(--bg-primary)', borderRadius: 8, padding: '8px 10px' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{m.v}</div>
+                    <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>{m.v}</div>
                     <div style={MUTED}>{m.l}</div>
                   </div>
                 ))}
@@ -145,11 +145,11 @@ export default function InfraHealthTab() {
               {pairs.map(p => (
                 <tr key={p.id}>
                   <td style={{ fontWeight: 600 }}>{p.relationship_name}</td>
-                  <td className="mono" style={{ fontSize: 12 }}>{p.primary_name || '—'}</td>
-                  <td className="mono" style={{ fontSize: 12 }}>{p.secondary_name || '—'}</td>
+                  <td className="mono" style={{ fontSize: 'var(--text-sm)' }}>{p.primary_name || '—'}</td>
+                  <td className="mono" style={{ fontSize: 'var(--text-sm)' }}>{p.secondary_name || '—'}</td>
                   <td><span className="badge badge-gray">{p.mode || '—'}</span></td>
                   <td><span className={`badge ${FAILOVER_BADGE[p.state] || 'badge-gray'}`}>{p.state || 'unknown'}</span></td>
-                  <td className="mono" style={{ fontSize: 12 }}>{p.mclt != null ? `${p.mclt}s` : '—'}</td>
+                  <td className="mono" style={{ fontSize: 'var(--text-sm)' }}>{p.mclt != null ? `${p.mclt}s` : '—'}</td>
                   <td style={{ ...MUTED }}>{p.last_checked ? new Date(p.last_checked).toLocaleString() : '—'}</td>
                 </tr>
               ))}

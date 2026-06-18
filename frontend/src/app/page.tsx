@@ -91,13 +91,13 @@ const CARD: React.CSSProperties = {
   borderRadius: 'var(--radius)',
   boxShadow: 'var(--shadow-sm)',
 };
-const TITLE: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
-const MUTED: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)' };
+const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
+const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
 // ── Section header (compact, uppercase) ───────────────────────
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 12, marginTop: 4 }}>
+    <div style={{ fontSize: 'var(--text-base)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 12, marginTop: 4 }}>
       {children}
     </div>
   );
@@ -174,7 +174,7 @@ function Sparkline({ data, color, width = 220, height = 44 }: {
         <div style={{
           position: 'absolute', left: `${(hi! / (data.length - 1)) * 100}%`, top: -2,
           transform: 'translate(-50%, -100%)', background: 'var(--navy)', color: '#fff',
-          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap',
+          padding: '2px 7px', borderRadius: 6, fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
           pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           {fmtDate(hp.recorded_at)}{hp.recorded_at ? ' · ' : ''}{Number(hp.percent_used).toFixed(1)}%
@@ -214,8 +214,8 @@ function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; val
             return seg;
           })}
         </g>
-        <text x="70" y="66" textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--text-primary)">{total}</text>
-        <text x="70" y="84" textAnchor="middle" fontSize="10" fill="var(--text-muted)">addresses</text>
+        <text x="70" y="66" textAnchor="middle" fontSize="var(--text-xl)" fontWeight="800" fill="var(--text-primary)">{total}</text>
+        <text x="70" y="84" textAnchor="middle" fontSize="var(--text-xs)" fill="var(--text-muted)">addresses</text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {data.map(d => {
@@ -224,7 +224,7 @@ function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; val
             <div key={d.label}
               onMouseEnter={() => idx >= 0 && setHi(idx)} onMouseLeave={() => setHi(null)}
               onClick={() => clickable && onSegmentClick?.(d.label)}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: clickable ? 'pointer' : 'default', borderRadius: 6, padding: '1px 4px', background: hi != null && segs[hi]?.label === d.label ? 'var(--bg-primary)' : 'transparent' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', cursor: clickable ? 'pointer' : 'default', borderRadius: 6, padding: '1px 4px', background: hi != null && segs[hi]?.label === d.label ? 'var(--bg-primary)' : 'transparent' }}>
               <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
               <span style={{ color: 'var(--text-secondary)', minWidth: 76 }}>{d.label}</span>
               <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{d.value}</span>
@@ -235,7 +235,7 @@ function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; val
       {tip && (
         <div style={{
           position: 'absolute', left: dim / 2, top: dim / 2, transform: 'translate(-50%, -50%)',
-          background: 'var(--navy)', color: '#fff', padding: '5px 9px', borderRadius: 8, fontSize: 11,
+          background: 'var(--navy)', color: '#fff', padding: '5px 9px', borderRadius: 8, fontSize: 'var(--text-xs)',
           whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', fontWeight: 700 }}>
@@ -286,7 +286,7 @@ function LineChart({ points, color = 'var(--blue)', height = 120, labels }: { po
         <div style={{
           position: 'absolute', left: `${(hi / (points.length - 1)) * 100}%`, top: 2,
           transform: 'translate(-50%, 0)', background: 'var(--navy)', color: '#fff',
-          padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+          padding: '3px 8px', borderRadius: 6, fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
           pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           {labels?.[hi] ? `${fmtLabel(labels[hi])} · ` : ''}{points[hi].toLocaleString()} leases
@@ -304,15 +304,15 @@ function AttentionRow({ s, onClick }: { s: any; onClick: () => void }) {
       onMouseMove={e => setTip({ x: e.clientX, y: e.clientY })}
       onMouseLeave={() => setTip(null)}>
       <td style={{ padding: '6px 10px' }}>
-        <div style={{ fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5 }}>{s.scope_id}</div>
+        <div style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>{s.scope_id}</div>
         <div style={{ ...MUTED, marginTop: 1 }}>{s.name || s.server_hostname || '—'}</div>
         {tip && (
           <div style={{
             position: 'fixed', left: Math.min(tip.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 230), top: tip.y + 14,
             width: 210, background: 'var(--navy)', color: '#fff', padding: '8px 10px', borderRadius: 8,
-            fontSize: 11.5, lineHeight: 1.5, pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 100,
+            fontSize: 'var(--text-xs)', lineHeight: 1.5, pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 100,
           }}>
-            <div style={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{s.scope_id}</div>
+            <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{s.scope_id}</div>
             <div style={{ opacity: 0.85 }}>{s.name || s.server_hostname || '—'}</div>
             <div style={{ marginTop: 4, display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>Utilization</span><span style={{ fontWeight: 700 }}>{Number(s.pct).toFixed(1)}%</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ opacity: 0.75 }}>In use / total</span><span>{s.in_use} / {s.total_ips}</span></div>
@@ -322,7 +322,7 @@ function AttentionRow({ s, onClick }: { s: any; onClick: () => void }) {
           </div>
         )}
       </td>
-      <td className="mono" style={{ padding: '6px 10px', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+      <td className="mono" style={{ padding: '6px 10px', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
         {s.in_use} / {s.total_ips}
         {s.free < 10 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {s.free} left</span>}
       </td>
@@ -344,7 +344,7 @@ function DnsHealthCard({ data, onClick }: { data?: DnsHealth; onClick: () => voi
   const syncDenom = data ? data.zones_in_sync + data.zones_out_of_sync : 0;
   const issues = data?.replication_issues ?? 0;
   const issueColor = issues > 0 ? 'var(--red)' : 'var(--green)';
-  const rowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12.5 };
+  const rowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--text-sm)' };
   return (
     <div onClick={onClick} className="clickable"
       style={{ ...CARD, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
@@ -395,7 +395,7 @@ function UpdatedNotice() {
   return (
     <div onClick={() => setShow(false)} style={{
       display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-      borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
+      borderRadius: 8, fontSize: 'var(--text-md)', fontWeight: 600, cursor: 'pointer',
       color: '#166534', background: 'rgba(22,163,74,0.10)', border: '1px solid rgba(22,163,74,0.30)',
     }}>
       <span aria-hidden>✓</span>
@@ -525,10 +525,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
+                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: k.color, lineHeight: 1, letterSpacing: '-0.5px' }}>{k.value}</div>
                   <Trend delta={k.delta} invert={k.invert} />
                 </div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>
+                <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 6 }}>{k.label}</div>
                 <div style={{ ...MUTED, marginTop: 2 }}>{k.sub}</div>
               </div>
             ))}
@@ -570,7 +570,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 </table>
                 {attention.length > 3 && (
                   <div style={{ padding: '8px 10px', textAlign: 'center', borderTop: '1px solid var(--border-light)' }}>
-                    <button onClick={() => onNavigate('scopes')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 12.5 }}>+{attention.length - 3} more · View all →</button>
+                    <button onClick={() => onNavigate('scopes')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontWeight: 600, fontSize: 'var(--text-sm)' }}>+{attention.length - 3} more · View all →</button>
                   </div>
                 )}
               </div>
@@ -617,9 +617,9 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                     onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 0 0 2px ${color}55, var(--shadow-md)`; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                     onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = 'none'; }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600 }}>{sh.scope_id}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', fontWeight: 600 }}>{sh.scope_id}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color }}>{latest.toFixed(1)}%</span>
+                        <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color }}>{latest.toFixed(1)}%</span>
                         <Trend delta={latest - first} invert={false} />
                       </div>
                     </div>
@@ -687,20 +687,20 @@ function AlertRows({ alerts, muted, onAck }: { alerts: AlertEvent[]; muted?: boo
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{a.message}</span>
               {a.occurrence_count && a.occurrence_count > 1 ? (
-                <span className="badge badge-gray" style={{ fontSize: 10 }}>fired {a.occurrence_count}×</span>
+                <span className="badge badge-gray" style={{ fontSize: 'var(--text-xs)' }}>fired {a.occurrence_count}×</span>
               ) : null}
             </div>
             {a.explanation && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.4 }}>{a.explanation}</div>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.4 }}>{a.explanation}</div>
             )}
           </td>
-          <td className="mono" style={{ fontSize: 11 }}>{a.scope_id || '—'}</td>
-          <td style={{ fontSize: 11 }}>{new Date(a.fired_at).toLocaleString()}</td>
+          <td className="mono" style={{ fontSize: 'var(--text-xs)' }}>{a.scope_id || '—'}</td>
+          <td style={{ fontSize: 'var(--text-xs)' }}>{new Date(a.fired_at).toLocaleString()}</td>
           <td><span className={`badge ${a.resolved_at ? 'badge-green' : a.acknowledged ? 'badge-gray' : 'badge-red'}`}>{a.resolved_at ? 'Resolved' : a.acknowledged ? 'ACK' : 'Open'}</span></td>
           <td>
             {muted
-              ? <span style={{ fontSize: 11, ...MUTED }}>✓ acked</span>
-              : (!a.acknowledged && onAck && <button onClick={() => onAck(a.id)} style={{ fontSize: 11, color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>)}
+              ? <span style={{ fontSize: 'var(--text-xs)', ...MUTED }}>✓ acked</span>
+              : (!a.acknowledged && onAck && <button onClick={() => onAck(a.id)} style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}>Ack</button>)}
           </td>
         </tr>
       ))}
@@ -849,12 +849,12 @@ function EventsTab() {
               {events.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, ...MUTED }}>No events</td></tr>}
               {events.map(e => (
                 <tr key={e.id}>
-                  <td style={{ fontSize: 11 }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
+                  <td style={{ fontSize: 'var(--text-xs)' }}>{e.event_time ? new Date(e.event_time).toLocaleString() : '—'}</td>
                   <td><EventTypeBadge type={e.event_type} /></td>
                   <td className="mono">{e.ip_address || '—'}</td>
                   <td>{e.hostname || '—'}</td>
-                  <td className="mono" style={{ fontSize: 11 }}>{e.mac_address || '—'}</td>
-                  <td style={{ fontSize: 11, ...MUTED, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description || '—'}</td>
+                  <td className="mono" style={{ fontSize: 'var(--text-xs)' }}>{e.mac_address || '—'}</td>
+                  <td style={{ fontSize: 'var(--text-xs)', ...MUTED, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -906,8 +906,8 @@ function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onC
   return (
     <div className="modal-overlay" onMouseDown={onCancel}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+        <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
+        <p style={{ fontSize: 'var(--text-base)', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
           Services will restart and you&apos;ll lose connection for 30&ndash;60 seconds. The page reloads automatically when the update completes.
         </p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
@@ -1019,7 +1019,7 @@ function UpdatingOverlay() {
         )}
         {phase === 'back_up' && <div style={{ fontSize: 44, lineHeight: 1 }}>✓</div>}
         {phase === 'timeout' && <div style={{ fontSize: 44, lineHeight: 1 }}>⚠</div>}
-        <div style={{ fontSize: 18, fontWeight: 700, marginTop: 14 }}>Updating DDIVault…</div>
+        <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginTop: 14 }}>Updating DDIVault…</div>
         <p style={{ ...MUTED, marginTop: 6 }}>Pulling latest code and restarting services. Do not close this window.</p>
         <p style={{ fontWeight: 600, margin: '14px 0' }}>{statusLine}</p>
         {phase === 'back_up' && (
@@ -1028,7 +1028,7 @@ function UpdatingOverlay() {
           </div>
         )}
         {phase !== 'back_up' && (
-          <p style={{ ...MUTED, fontSize: 12 }}>(This usually takes 1-3 minutes)</p>
+          <p style={{ ...MUTED, fontSize: 'var(--text-sm)' }}>(This usually takes 1-3 minutes)</p>
         )}
         <button
           className="btn btn-primary"
@@ -1126,13 +1126,13 @@ function SystemUpdates() {
         </div>
       ) : updatesAvailable ? (
         <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--text-md)' }}>
             {status?.current_version === status?.latest_version
               ? <>🔄 Patches available since v{status?.current_version}</>
               : <>🔄 Update available: v{status?.current_version} → v{status?.latest_version}</>}
           </div>
           {(status?.current_commit || status?.latest_commit) && (
-            <div style={{ ...MUTED, fontSize: 13, margin: '6px 0 0' }}>
+            <div style={{ ...MUTED, fontSize: 'var(--text-base)', margin: '6px 0 0' }}>
               Current: v{status?.current_version}
               {status?.current_commit && <> (<code>{status.current_commit}</code>)</>}
               {'  →  '}
@@ -1142,14 +1142,14 @@ function SystemUpdates() {
           )}
           {!!status?.release_notes?.length && (
             <div style={{ margin: '12px 0' }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
+              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
                 What&apos;s new in v{status?.latest_version}
               </div>
               <ul style={{
                 margin: 0, padding: 0, listStyle: 'none',
                 border: '1px solid var(--border)', borderRadius: 8,
                 background: 'var(--bg-primary)',
-                fontSize: 13, lineHeight: 1.5,
+                fontSize: 'var(--text-base)', lineHeight: 1.5,
               }}>
                 {status.release_notes.map((note, i) => (
                   <li key={i} style={{ display: 'flex', gap: 8, padding: '6px 14px', color: 'var(--text-primary)' }}>
@@ -1161,11 +1161,11 @@ function SystemUpdates() {
             </div>
           )}
           {status?.release_date && (
-            <div style={{ ...MUTED, fontSize: 13, margin: '6px 0' }}>
+            <div style={{ ...MUTED, fontSize: 'var(--text-base)', margin: '6px 0' }}>
               Released: {fmtReleaseDate(status.release_date)}
             </div>
           )}
-          <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 13, margin: '12px 0' }}>
+          <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 'var(--text-base)', margin: '12px 0' }}>
             ⚠ Services will restart during the update — you may lose connection for 30&ndash;60 seconds.
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -1173,14 +1173,14 @@ function SystemUpdates() {
             <button className="btn" onClick={check}>Re-check</button>
           </div>
           {licenseBlocked && (
-            <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>
+            <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 'var(--text-base)', marginTop: 12 }}>
               ⚠ License expired — updates disabled. Renew your license to receive updates.{' '}
               <a href={`${hubUrl}/settings/license`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'underline' }}>
                 Manage License →
               </a>
             </div>
           )}
-          {updateErr && <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 13, marginTop: 12 }}>⚠ {updateErr}</div>}
+          {updateErr && <div style={{ color: 'var(--red)', fontWeight: 600, fontSize: 'var(--text-base)', marginTop: 12 }}>⚠ {updateErr}</div>}
         </div>
       ) : (
         <button className="btn" onClick={check}>Check for Updates</button>
@@ -1201,12 +1201,12 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, o
 }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{label}</label>
+      <label style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{label}</label>
       <input
         className="input" style={{ width: '100%' }} type={type} defaultValue={value} placeholder={placeholder}
         onBlur={e => { if (e.target.value !== value) onSave(settingKey, e.target.value); }}
       />
-      {helpText && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{helpText}</div>}
+      {helpText && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 4 }}>{helpText}</div>}
     </div>
   );
 }
@@ -1232,14 +1232,14 @@ function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }
   return (
     <div style={{ ...CARD, padding: 20 }}>
       <div style={titleStyle}>NocVault Hub</div>
-      <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+      <div style={{ fontSize: 'var(--text-base)', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
         <div>DDIVault authenticates through the NocVault hub (SSO) and shares its sites directory.</div>
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={MUTED}>Hub URL</span>
-          <code style={{ fontSize: 12.5 }}>{hub}</code>
+          <code style={{ fontSize: 'var(--text-sm)' }}>{hub}</code>
         </div>
         <div style={{ marginTop: 12 }}>
-          <a href={`${hub}/launcher`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Open NocVault Hub →</a>
+          <a href={`${hub}/launcher`} style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: 'var(--text-base)', fontWeight: 600 }}>Open NocVault Hub →</a>
         </div>
       </div>
     </div>
@@ -1256,7 +1256,7 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
       .catch(() => {});
   }, []);
   const v = ver || '1.0.0';
-  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 16, fontSize: 13, padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 16, fontSize: 'var(--text-base)', padding: '7px 0', borderBottom: '1px solid var(--border-light)' };
   const ABOUT_ROWS: [string, React.ReactNode][] = [
     ['Product', 'DDIVault — DNS, DHCP & IPAM'],
     ['Family', 'NocVault Network Intelligence Suite'],
@@ -1278,7 +1278,7 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 14, lineHeight: 1.7, fontSize: 13 }}>
+      <div style={{ marginTop: 14, lineHeight: 1.7, fontSize: 'var(--text-base)' }}>
         <div style={{ fontWeight: 700 }}>DDIVault v{v}</div>
         <div style={MUTED}>Part of the NocVault Network Intelligence Suite</div>
         <div style={MUTED}>© 2026 NocVault</div>
@@ -1319,7 +1319,7 @@ function SettingsTab() {
     toast('Saved', 'success');
   }, [toast]);
 
-  const sectionTitle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 14 };
+  const sectionTitle: React.CSSProperties = { fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 14 };
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
@@ -1505,7 +1505,7 @@ export default function DDIVaultApp() {
           transition: 'width 0.18s ease',
         }}>
           {!collapsed && (
-            <div style={{ padding: '12px 20px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase' }}>
+            <div style={{ padding: '12px 20px 8px', fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase' }}>
               Navigation
             </div>
           )}
@@ -1525,14 +1525,14 @@ export default function DDIVaultApp() {
                   margin: '1px 10px', background: active ? 'rgba(200,16,46,0.15)' : 'transparent',
                   border: 'none', borderRadius: 10,
                   color: active ? '#fff' : 'rgba(255,255,255,0.5)', cursor: 'pointer',
-                  fontSize: 13.5, fontWeight: active ? 600 : 400, textAlign: 'left',
+                  fontSize: 'var(--text-md)', fontWeight: active ? 600 : 400, textAlign: 'left',
                   width: 'calc(100% - 20px)', transition: 'all 0.15s', position: 'relative',
                 }}
                 onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
                 onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; } }}
               >
-                {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, background: '#C8102E', borderRadius: '0 3px 3px 0' }} />}
-                <span style={{ color: active ? '#C8102E' : 'rgba(255,255,255,0.45)', flexShrink: 0, display: 'flex' }}>{ICONS[item.id]}</span>
+                {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, background: 'var(--primary)', borderRadius: '0 3px 3px 0' }} />}
+                <span style={{ color: active ? 'var(--primary)' : 'rgba(255,255,255,0.45)', flexShrink: 0, display: 'flex' }}>{ICONS[item.id]}</span>
                 {!collapsed && <span>{item.label}</span>}
               </button>
             );
@@ -1548,7 +1548,7 @@ export default function DDIVaultApp() {
               display: 'flex', alignItems: 'center', gap: 10, justifyContent: collapsed ? 'center' : 'flex-start',
               margin: '4px 10px', padding: collapsed ? '10px 0' : '10px 20px', width: 'calc(100% - 20px)',
               background: 'transparent', border: 'none', borderRadius: 10, cursor: 'pointer',
-              color: 'rgba(255,255,255,0.4)', fontSize: 12.5, transition: 'all 0.15s',
+              color: 'rgba(255,255,255,0.4)', fontSize: 'var(--text-sm)', transition: 'all 0.15s',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
@@ -1559,7 +1559,7 @@ export default function DDIVaultApp() {
             {!collapsed && <span>Collapse</span>}
           </button>
 
-          {!collapsed && <div style={{ padding: '6px 20px', fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>DDIVault{appVersion ? ` v${appVersion}` : ''}</div>}
+          {!collapsed && <div style={{ padding: '6px 20px', fontSize: 'var(--text-xs)', color: 'rgba(255,255,255,0.2)' }}>DDIVault{appVersion ? ` v${appVersion}` : ''}</div>}
         </nav>
 
         {/* Content area */}

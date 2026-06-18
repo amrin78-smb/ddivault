@@ -183,14 +183,14 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '12px 16px', borderBottom: '1px solid var(--border)',
     }}>
-      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+      <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>
         Infrastructure &amp; Redundancy
       </span>
       <button
         onClick={() => onNavigate?.('infra')}
         style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--primary)', fontSize: 12, fontWeight: 600, padding: 0,
+          color: 'var(--primary)', fontSize: 'var(--text-sm)', fontWeight: 600, padding: 0,
         }}
       >
         Details →
@@ -254,7 +254,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
                 width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                 background: degraded.length === 0 ? 'var(--green)' : 'var(--red)',
               }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
                 Failover: {inSyncCount}/{pairs.length} pairs in sync
               </span>
             </div>
@@ -264,7 +264,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
                 gap: 8, paddingLeft: 16,
               }}>
                 <span style={{
-                  fontSize: 11, color: 'var(--text-secondary)',
+                  fontSize: 'var(--text-xs)', color: 'var(--text-secondary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>{p.name}</span>
                 <span className="badge badge-red" style={{ flexShrink: 0 }}>{p.state}</span>
@@ -272,7 +272,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
             ))}
           </>
         ) : (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
             No failover pairs configured.
           </span>
         )}
@@ -310,16 +310,16 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{
-                    fontSize: 13, fontWeight: 700, color: 'var(--text-primary)',
+                    fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>{s?.hostname ?? '—'}</div>
                   <div style={{
-                    fontSize: 11, color: 'var(--text-muted)',
-                    fontFamily: 'var(--font-mono, monospace)', marginTop: 2,
+                    fontSize: 'var(--text-xs)', color: 'var(--text-muted)',
+                    fontFamily: 'var(--font-mono)', marginTop: 2,
                   }}>{s?.ip ?? '—'}</div>
                 </div>
                 <div style={{
-                  fontSize: 22, fontWeight: 800, color, lineHeight: 1, flexShrink: 0,
+                  fontSize: 'var(--text-xl)', fontWeight: 800, color, lineHeight: 1, flexShrink: 0,
                 }}>
                   {score === null || score === undefined ? '—' : score}
                 </div>
@@ -339,7 +339,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
               <Sparkline values={points} color={color} height={22} />
 
               {/* metrics line */}
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 8 }}>
                 Uptime {uptime ?? '—'}% · {avgQuery ?? queryMs ?? '—'}ms · {s?.scope_count ?? 0} scopes · {s?.zone_count ?? 0} zones
               </div>
             </div>

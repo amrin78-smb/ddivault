@@ -29,7 +29,7 @@ export function IpamDonut({ used, free, total }: IpamDonutProps) {
         flexDirection: 'column',
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+      <div style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
         IP Address Utilization
       </div>
 
@@ -68,22 +68,22 @@ export function IpamDonut({ used, free, total }: IpamDonutProps) {
               justifyContent: 'center',
             }}
           >
-            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>
+            <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-primary)' }}>
               {usedPct.toFixed(1)}%
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Utilized</div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Utilized</div>
           </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 150 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, gap: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--text-sm)', gap: 16 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)' }}>
               <span style={{ width: 10, height: 10, borderRadius: '50%', background: usedColor }} />
               Used ({used.toLocaleString()})
             </span>
             <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{usedPct.toFixed(1)}%</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, gap: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--text-sm)', gap: 16 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)' }}>
               <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--green)' }} />
               Free ({free.toLocaleString()})

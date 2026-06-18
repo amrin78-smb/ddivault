@@ -29,17 +29,17 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>Top Subnets by Utilization</div>
+        <div style={{ fontSize: 'var(--text-base)', fontWeight: 700 }}>Top Subnets by Utilization</div>
         <button
           onClick={onViewAll}
-          style={{ fontSize: 12, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+          style={{ fontSize: 'var(--text-sm)', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
         >
           View all →
         </button>
       </div>
 
       {subnets.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>
           No subnet utilization data yet.
         </div>
       ) : (
@@ -56,8 +56,8 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
           >
             <div
               style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 12,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 'var(--text-sm)',
                 fontWeight: 600,
                 color: 'var(--text-primary)',
                 whiteSpace: 'nowrap',
@@ -71,10 +71,10 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
             <div style={{ flex: 1, height: 7, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 70 }}>
               <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: pctColor(s.pct), borderRadius: 4 }} />
             </div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: pctColor(s.pct), minWidth: 46, textAlign: 'right' }}>
+            <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: pctColor(s.pct), minWidth: 46, textAlign: 'right' }}>
               {s.pct.toFixed(1)}%
             </div>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textAlign: 'right' }}>
               {s.used.toLocaleString()}/{s.total.toLocaleString()}
             </div>
           </div>

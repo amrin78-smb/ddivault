@@ -94,8 +94,8 @@ export default function CommandBar({
     : '—';
 
   // ── Inline style constants ──────────────────────────────────
-  const labelCss: React.CSSProperties = { fontSize: 11, color: 'var(--text-muted)' };
-  const ctrlCss: React.CSSProperties = { fontSize: 12 };
+  const labelCss: React.CSSProperties = { fontSize: 'var(--text-xs)', color: 'var(--text-muted)' };
+  const ctrlCss: React.CSSProperties = { fontSize: 'var(--text-sm)' };
   const dot = (color: string): React.CSSProperties => ({
     display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
     background: color, flexShrink: 0,
@@ -123,7 +123,7 @@ export default function CommandBar({
           title="View infrastructure health"
         >
           <span style={dot(posture.color)} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--text-primary)' }}>
             {posture.label}
           </span>
           <span style={labelCss}>
@@ -136,7 +136,7 @@ export default function CommandBar({
         <span style={{
           display: 'inline-flex', alignItems: 'center', gap: 7,
           padding: '4px 10px', borderRadius: 999,
-          background: collectorState.color + '18', fontSize: 12,
+          background: collectorState.color + '18', fontSize: 'var(--text-sm)',
           color: 'var(--text-primary)', fontWeight: 600,
         }}>
           <span style={dot(collectorState.color)} />
@@ -163,7 +163,7 @@ export default function CommandBar({
                 key={r}
                 onClick={() => onTimeRange(r)}
                 style={{
-                  fontSize: 11, fontWeight: 600, padding: '4px 10px',
+                  fontSize: 'var(--text-xs)', fontWeight: 600, padding: '4px 10px',
                   borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                   border: active ? '1px solid var(--primary)' : '1px solid transparent',
                   background: active ? 'var(--primary-light)' : 'transparent',
