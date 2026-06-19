@@ -449,6 +449,14 @@ Display/hero sizes >= 34px (e.g. the connection-lost glyphs ~44px, the big count
 number ~40px, the license-disabled 🔒 ~64px, the IPAM import success ✅ ~48px) may stay
 literal — they are intentional display sizes, not body type.
 
+**Dark-mode rule — selected/active row backgrounds:** tile/row/selected-item
+BACKGROUNDS sitting behind tokenized text must adapt to the theme — use a `var(--bg-*)`
+token or a semi-transparent brand tint (e.g. `rgba(200,16,46,0.18)` / `var(--primary-light)`,
+which is overridden per-theme in `[data-theme="dark"]`). Never a hardcoded light hex
+(`#fef2f4`, `#f1f5f9`, `#eff6ff`, …) behind text, and never a dark text literal as the
+selected color — in dark mode that yields white-on-white / dark-on-dark and the text
+becomes unreadable.
+
 This is the **NocVault SUITE-WIDE standard** — the same scale and rule apply to
 spanvault, logvault, and netvault. SpanVault is the reference implementation; this
 scale matches it exactly.

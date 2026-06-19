@@ -61,6 +61,10 @@
   --bg-card:        #1a2235;
   --border:         #2d3a52;
   --border-light:   #243050;
+  /* Selected/active row tint — the light theme's #fef2f4 is near-white and would
+     leave tokenized text (var(--text-primary) = #f1f5f9) unreadable in dark mode.
+     A low-alpha brand-red tint layers correctly over the dark surface. */
+  --primary-light:  rgba(200,16,46,0.18);
   --text-primary:   #f1f5f9;
   --text-secondary: #cbd5e1;
   --text-muted:     #94a3b8;
