@@ -178,7 +178,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
                           onClick={() => handleSelect(r)}
                           style={{
                             padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
-                            background: selected === globalIdx ? '#f8fafc' : 'var(--bg-card)',
+                            background: selected === globalIdx ? 'var(--surface-subtle)' : 'var(--bg-card)',
                             borderBottom: '1px solid var(--border-light)',
                           }}
                           onMouseEnter={() => setSelected(globalIdx)}

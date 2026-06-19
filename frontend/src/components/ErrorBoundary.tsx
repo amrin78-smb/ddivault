@@ -19,8 +19,8 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div style={{
-          padding: 12, background: '#fee2e2', borderRadius: 8,
-          fontSize: 'var(--text-sm)', color: '#b91c1c', border: '1px solid #fecaca',
+          padding: 12, background: 'var(--tint-danger)', borderRadius: 8,
+          fontSize: 'var(--text-sm)', color: 'var(--tint-danger-fg)', border: '1px solid var(--tint-danger)',
         }}>
           {this.props.name || 'Component'} error: {this.state.error}
         </div>

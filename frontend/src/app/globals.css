@@ -54,6 +54,15 @@
   --orange:  #ea580c;
   --purple:  #7c3aed;
   --teal:    #0891b2;
+
+  /* Adaptive surface + semantic tint tokens (suite standard — identical in
+     logvault + spanvault). Tinted/neutral surfaces behind text MUST use these,
+     never a hardcoded light hex (which doesn't flip in dark mode). */
+  --surface-subtle: #f8fafc;
+  --tint-info:    #eff6ff;  --tint-info-fg:    #1d4ed8;
+  --tint-success: #f0fdf4;  --tint-success-fg: #15803d;
+  --tint-warn:    #fffbeb;  --tint-warn-fg:    #b45309;
+  --tint-danger:  #fef2f2;  --tint-danger-fg:  #b91c1c;
 }
 
 [data-theme="dark"] {
@@ -70,6 +79,13 @@
   --text-muted:     #94a3b8;
   --shadow-sm:      0 1px 3px rgba(0,0,0,0.3);
   --shadow-md:      0 4px 16px rgba(0,0,0,0.4);
+
+  /* Adaptive surface + semantic tints — dark overrides (see :root) */
+  --surface-subtle: rgba(255,255,255,0.04);
+  --tint-info:    rgba(59,130,246,0.13);  --tint-info-fg:    #93c5fd;
+  --tint-success: rgba(34,197,94,0.13);   --tint-success-fg: #86efac;
+  --tint-warn:    rgba(217,119,6,0.15);    --tint-warn-fg:    #fcd34d;
+  --tint-danger:  rgba(220,38,38,0.13);    --tint-danger-fg:  #fca5a5;
 }
 
 html, body {

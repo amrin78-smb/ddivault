@@ -25,6 +25,12 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.12.16': [
+    'Dark-mode polish: adaptive surface and semantic tint tokens replace hardcoded light backgrounds across the app',
+    'Fixed invisible dropdown/menu hover states in the header (alerts, NocVault Hub, theme toggle, sign out)',
+    'Info, success, warning and error boxes (IPAM import, DNS, error banners, read-only notice) now adapt to dark mode',
+    'Global search selected row and idle-timeout dialog now use theme-aware surfaces',
+  ],
   '1.12.15': [
     'Fixed unreadable text on the selected DNS server/zone in dark mode',
     'Selected/active rows now use a dark-adapting brand tint instead of a near-white highlight',

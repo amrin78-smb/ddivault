@@ -428,7 +428,7 @@ function CreateScopeModal({ servers, onClose, onDone }: {
         </div>
 
         {error && (
-          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
+          <div style={{ background: 'var(--tint-danger)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
             {error}
           </div>
         )}
@@ -667,7 +667,7 @@ function EditScopeModal({ scope, onClose, onDone }: {
         </div>
 
         {error && (
-          <div style={{ background: 'var(--red-light, #fee2e2)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
+          <div style={{ background: 'var(--tint-danger)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 12 }}>
             {error}
           </div>
         )}

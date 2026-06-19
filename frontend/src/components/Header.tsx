@@ -205,7 +205,7 @@ export function Header(props: HeaderProps) {
                   <div key={a.id}
                     onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
                     style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', gap: 10 }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-subtle)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: SEVERITY_COLOR[a.severity] || '#64748b', marginTop: 5, flexShrink: 0 }} />
@@ -222,7 +222,7 @@ export function Header(props: HeaderProps) {
             <button
               onClick={() => { setNotifOpen(false); onNavigate?.('events'); }}
               style={{ width: '100%', padding: '11px 16px', background: 'var(--bg-card)', border: 'none', borderTop: '1px solid var(--border-light)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--primary)', textAlign: 'center' }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--tint-danger)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
             >
               View all alerts →
@@ -346,7 +346,7 @@ export function Header(props: HeaderProps) {
                   transition: 'background 0.1s',
                   cursor: 'pointer',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-subtle)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
@@ -366,7 +366,7 @@ export function Header(props: HeaderProps) {
                   textAlign: 'left',
                   transition: 'background 0.1s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-subtle)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
@@ -407,7 +407,7 @@ export function Header(props: HeaderProps) {
                   textAlign: 'left',
                   transition: 'background 0.1s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#fef2f2')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--tint-danger)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

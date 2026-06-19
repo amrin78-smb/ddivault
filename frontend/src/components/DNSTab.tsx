@@ -231,8 +231,8 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const PS_WARNING: React.CSSProperties = {
-  background: '#fef9c3', border: '1px solid #fde047', borderRadius: 'var(--radius-sm)',
-  padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 14, color: '#a16207',
+  background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 'var(--radius-sm)',
+  padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 14, color: 'var(--tint-warn-fg)',
 };
 
 // ════════════════════════════════════════════════════════════

@@ -81,7 +81,7 @@ export function ReadOnlyBanner({ show, label }: { show?: boolean; label?: string
   if (!visible) return null;
   return (
     <div style={{
-      background: '#fefce8', border: '1px solid #fde047', color: '#854d0e',
+      background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', color: 'var(--tint-warn-fg)',
       padding: '8px 14px', borderRadius: 8, fontSize: 'var(--text-base)', fontWeight: 500,
       display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14,
     }}>

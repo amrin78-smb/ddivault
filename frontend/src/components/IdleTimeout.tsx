@@ -41,7 +41,7 @@ function WarningModal(props: WarningModalProps) {
             width: 48,
             height: 48,
             borderRadius: '50%',
-            background: '#fef2f2',
+            background: 'var(--tint-danger)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

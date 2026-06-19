@@ -461,6 +461,31 @@ This is the **NocVault SUITE-WIDE standard** — the same scale and rule apply t
 spanvault, logvault, and netvault. SpanVault is the reference implementation; this
 scale matches it exactly.
 
+### Adaptive surface & semantic tint tokens (suite standard)
+Tinted and neutral surfaces sitting behind text MUST use these tokens — never a
+hardcoded light hex (which does not flip in dark mode and yields unreadable
+light-on-light / dark-on-dark). The same tokens exist in **logvault + spanvault**.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `--surface-subtle` | `#f8fafc` | `rgba(255,255,255,0.04)` | neutral near-white surfaces: selected rows, dropdown/menu hover |
+| `--tint-info` / `-fg` | `#eff6ff` / `#1d4ed8` | `rgba(59,130,246,0.13)` / `#93c5fd` | info boxes/badges |
+| `--tint-success` / `-fg` | `#f0fdf4` / `#15803d` | `rgba(34,197,94,0.13)` / `#86efac` | success boxes/tiles |
+| `--tint-warn` / `-fg` | `#fffbeb` / `#b45309` | `rgba(217,119,6,0.15)` / `#fcd34d` | warning boxes, read-only banner |
+| `--tint-danger` / `-fg` | `#fef2f2` / `#b91c1c` | `rgba(220,38,38,0.13)` / `#fca5a5` | error boxes, destructive/dismiss hover |
+
+Rules:
+- **Self-contained boxes** (hardcoded bg + hardcoded dark text together) → swap BOTH:
+  bg → `--tint-*`, text → matching `--tint-*-fg`.
+- **Surfaces holding already-tokenized text** → swap just the bg.
+- **Dynamic hover backgrounds** (`onMouseEnter`/`onMouseLeave` setting
+  `element.style.background`) must use a token, never a literal hex — neutral hovers
+  use `var(--surface-subtle)`, destructive/dismiss hovers use `var(--tint-danger)`,
+  and the mouseLeave must reset to the real base (`transparent` / `var(--bg-card)`),
+  not a hardcoded color.
+- The brand-red selected-row tint `var(--primary-light)` (dark override
+  `rgba(200,16,46,0.18)`) is also adaptive — fine to keep.
+
 ## License Enforcement
 DDIVault enforces a NocVault license fetched from `GET {NOCVAULT_HUB_URL}/api/license` (no auth).
 - **Backend** (`api/licenseCheck.js`): `getLicense()` caches for 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). `api/server.js` checks on startup + every 24h, exposes `GET /api/license-status`, and applies `enforceLicense` middleware (registered before all business routes).

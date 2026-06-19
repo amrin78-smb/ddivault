@@ -127,13 +127,13 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
           <>
             {/* Template download */}
             <div style={{
-              background: '#eff6ff', border: '1px solid #bfdbfe',
+              background: 'var(--tint-info)', border: '1px solid var(--tint-info)',
               borderRadius: 10, padding: '14px 18px', marginBottom: 20,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <div>
-                <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: '#1d4ed8' }}>📋 Download Template</div>
-                <div style={{ fontSize: 'var(--text-sm)', color: '#3b82f6', marginTop: 2 }}>
+                <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--tint-info-fg)' }}>📋 Download Template</div>
+                <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-info-fg)', marginTop: 2 }}>
                   Get the CSV template with all supported columns and example data
                 </div>
               </div>
@@ -167,7 +167,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
                   <div key={f.col} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 6 }}>
                     <code style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: f.req ? 'var(--primary)' : '#2563eb', whiteSpace: 'nowrap', minWidth: 100 }}>{f.col}</code>
                     <div>
-                      <span style={{ fontSize: 'var(--text-xs)', background: f.req ? '#fee2e2' : '#dbeafe', color: f.req ? '#b91c1c' : '#1d4ed8', padding: '1px 6px', borderRadius: 10, fontWeight: 600, marginRight: 6 }}>
+                      <span style={{ fontSize: 'var(--text-xs)', background: f.req ? 'var(--tint-danger)' : 'var(--tint-info)', color: f.req ? 'var(--tint-danger-fg)' : 'var(--tint-info-fg)', padding: '1px 6px', borderRadius: 10, fontWeight: 600, marginRight: 6 }}>
                         {f.req ? 'REQUIRED' : 'optional'}
                       </span>
                       <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{f.desc}</span>
@@ -187,7 +187,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
                 padding: '40px 24px', textAlign: 'center', cursor: 'pointer',
                 transition: 'border-color 0.15s, background 0.15s',
               }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = '#fff8f8'; }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--tint-danger)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'transparent'; }}
             >
               <div style={{ fontSize: 'var(--text-2xl)', marginBottom: 8 }}>📂</div>
@@ -213,14 +213,14 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
           <>
             {/* Validation summary */}
             <div style={{
-              background: '#f0fdf4', border: '1px solid #bbf7d0',
+              background: 'var(--tint-success)', border: '1px solid var(--tint-success)',
               borderRadius: 10, padding: '12px 16px', marginBottom: 16,
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
               <span style={{ fontSize: 'var(--text-lg)' }}>✓</span>
               <div>
-                <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: '#15803d' }}>{rows.length} subnets ready to import</div>
-                <div style={{ fontSize: 'var(--text-sm)', color: '#16a34a' }}>Existing subnets will be updated (not duplicated)</div>
+                <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--tint-success-fg)' }}>{rows.length} subnets ready to import</div>
+                <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-success-fg)' }}>Existing subnets will be updated (not duplicated)</div>
               </div>
             </div>
 
@@ -269,21 +269,21 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
             <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Import Complete</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 20 }}>
-              <div style={{ padding: '12px 24px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10 }}>
-                <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: '#16a34a' }}>{result.imported}</div>
-                <div style={{ fontSize: 'var(--text-sm)', color: '#15803d', fontWeight: 600 }}>Subnets Imported</div>
+              <div style={{ padding: '12px 24px', background: 'var(--tint-success)', border: '1px solid var(--tint-success)', borderRadius: 10 }}>
+                <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--tint-success-fg)' }}>{result.imported}</div>
+                <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-success-fg)', fontWeight: 600 }}>Subnets Imported</div>
               </div>
               {result.skipped > 0 && (
-                <div style={{ padding: '12px 24px', background: '#fefce8', border: '1px solid #fde68a', borderRadius: 10 }}>
-                  <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: '#d97706' }}>{result.skipped}</div>
-                  <div style={{ fontSize: 'var(--text-sm)', color: '#b45309', fontWeight: 600 }}>Skipped</div>
+                <div style={{ padding: '12px 24px', background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 10 }}>
+                  <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--tint-warn-fg)' }}>{result.skipped}</div>
+                  <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-warn-fg)', fontWeight: 600 }}>Skipped</div>
                 </div>
               )}
             </div>
             {result.errors.length > 0 && (
-              <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 12, marginBottom: 16, textAlign: 'left' }}>
-                <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: '#c2410c', marginBottom: 6 }}>Warnings:</div>
-                {result.errors.slice(0, 5).map((e, i) => <div key={i} style={{ fontSize: 'var(--text-xs)', color: '#ea580c' }}>{e}</div>)}
+              <div style={{ background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 8, padding: 12, marginBottom: 16, textAlign: 'left' }}>
+                <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--tint-warn-fg)', marginBottom: 6 }}>Warnings:</div>
+                {result.errors.slice(0, 5).map((e, i) => <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--tint-warn-fg)' }}>{e}</div>)}
               </div>
             )}
             <button onClick={onDone} style={{ padding: '10px 28px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600 }}>
