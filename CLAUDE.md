@@ -473,6 +473,7 @@ light-on-light / dark-on-dark). The same tokens exist in **logvault + spanvault*
 | `--tint-success` / `-fg` | `#f0fdf4` / `#15803d` | `rgba(34,197,94,0.13)` / `#86efac` | success boxes/tiles |
 | `--tint-warn` / `-fg` | `#fffbeb` / `#b45309` | `rgba(217,119,6,0.15)` / `#fcd34d` | warning boxes, read-only banner |
 | `--tint-danger` / `-fg` | `#fef2f2` / `#b91c1c` | `rgba(220,38,38,0.13)` / `#fca5a5` | error boxes, destructive/dismiss hover |
+| `--tint-purple` / `-fg` | `#f5f3ff` / `#6d28d9` | `rgba(139,92,246,0.15)` / `#c4b5fd` | purple badges/surfaces (site/scan/import tags) |
 
 Rules:
 - **Self-contained boxes** (hardcoded bg + hardcoded dark text together) → swap BOTH:
