@@ -15,6 +15,10 @@
 }
 
 :root {
+  /* Native form controls (select option popups, native scrollbars, date pickers)
+     follow color-scheme. Light in :root, dark in [data-theme="dark"] — this makes
+     native <select> option lists render dark in dark mode instead of light/white. */
+  color-scheme: light;
   --primary:        #C8102E;
   --primary-dark:   #a00d24;
   --primary-light:  #fef2f4;
@@ -67,6 +71,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary:     #0d1220;
   --bg-card:        #1a2235;
   --border:         #2d3a52;
@@ -299,6 +304,16 @@ tbody tr:hover td { background: var(--bg-primary); }
 .btn-navy:hover { background: var(--navy-light); }
 
 /* ── Input / Select ────────────────────────────────────────── */
+/* Base native control surfaces — ensures option popups carry the themed
+   surface/text even where a component renders a bare <select> without .input. */
+select {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+option {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
 .input {
   padding: 8px 12px;
   border: 1px solid var(--border);

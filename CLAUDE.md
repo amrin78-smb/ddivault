@@ -487,6 +487,20 @@ Rules:
 - The brand-red selected-row tint `var(--primary-light)` (dark override
   `rgba(200,16,46,0.18)`) is also adaptive — fine to keep.
 
+### Dropdowns / selects — dark-mode readability (suite standard)
+- **Native form controls** (`<select>` option popups, native scrollbars, date pickers)
+  follow `color-scheme`: `:root` declares `color-scheme: light`, `[data-theme="dark"]`
+  declares `color-scheme: dark`. Without this the OS-rendered option list stays
+  light/white in dark mode regardless of the `<select>` element's own background.
+  A base rule also sets `select`/`option` to `var(--bg-card)` + `var(--text-primary)`.
+- **Custom dropdown / menu / combobox / results panels** use `var(--bg-card)` for the
+  panel surface + `border: 1px solid var(--border)`; hover/selected rows use
+  `var(--surface-subtle)` (or an appropriate `--tint-*`); option text uses
+  `var(--text-primary)`/`--text-secondary`. NEVER a hardcoded light hex
+  (`#fff`/`#f8fafc`/`#eff6ff`/…) as a menu surface or hover row behind text — it
+  doesn't flip in dark mode and yields white-on-white. Mouse-leave resets to the real
+  base (`var(--bg-card)` / `transparent`), not a literal.
+
 ## License Enforcement
 DDIVault enforces a NocVault license fetched from `GET {NOCVAULT_HUB_URL}/api/license` (no auth).
 - **Backend** (`api/licenseCheck.js`): `getLicense()` caches for 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). `api/server.js` checks on startup + every 24h, exposes `GET /api/license-status`, and applies `enforceLicense` middleware (registered before all business routes).

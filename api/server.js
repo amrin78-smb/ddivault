@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.12.18': [
+    'Fixed dark-mode dropdowns: native <select> option popups now render dark instead of a light/white list via color-scheme (light in :root, dark in dark theme)',
+    'Added base select/option theming so option text stays readable in both themes',
+    'Verified custom dropdown/menu panels (header avatar + alerts, global search) use adaptive surface tokens',
+  ],
   '1.12.17': [
     'Added the suite-standard purple tint token (--tint-purple) for cross-app parity',
     'Purple badges (site/scan/import tags) now adapt to dark mode instead of staying a fixed light surface',
