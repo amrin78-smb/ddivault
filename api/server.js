@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.12.19': [
+    'Added the missing dark-mode override for the teal badge (.badge-teal) so it matches its sibling badges',
+  ],
   '1.12.18': [
     'Fixed dark-mode dropdowns: native <select> option popups now render dark instead of a light/white list via color-scheme (light in :root, dark in dark theme)',
     'Added base select/option theming so option text stays readable in both themes',

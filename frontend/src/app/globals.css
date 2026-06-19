@@ -163,6 +163,7 @@ tbody tr:hover td { background: var(--bg-primary); }
 [data-theme="dark"] .badge-blue   { background: rgba(37,99,235,0.15);  color: #93c5fd; }
 [data-theme="dark"] .badge-gray   { background: rgba(255,255,255,0.08); color: #94a3b8; }
 [data-theme="dark"] .badge-orange { background: rgba(234,88,12,0.15);  color: #fdba74; }
+[data-theme="dark"] .badge-teal   { background: rgba(8,145,178,0.15);  color: #67e8f9; }
 
 /* ── Animations ────────────────────────────────────────────── */
 @keyframes pulse {
