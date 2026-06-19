@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.12.20': [
+    'Fixed sticky table headers bleeding through when scrolling: thead now uses an opaque background instead of the semi-transparent dark-mode tint',
+    'Rows no longer garble/overlap the column headers while scrolling, most visibly in dark mode',
+  ],
   '1.12.19': [
     'Added the missing dark-mode override for the teal badge (.badge-teal) so it matches its sibling badges',
   ],

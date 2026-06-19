@@ -398,7 +398,11 @@ option {
 
 /* ── Data table (dense, consistent) ────────────────────────── */
 .data-table { width: 100%; border-collapse: collapse; }
-.data-table thead th { position: sticky; top: 0; z-index: 2; }
+/* Sticky header must be OPAQUE (var(--bg-card)) so scrolling rows don't bleed
+   through. The base `th` background is semi-transparent in dark mode
+   (rgba(255,255,255,0.03)), which would garble text underneath. */
+.data-table thead th { position: sticky; top: 0; z-index: 5; background: var(--bg-card); box-shadow: 0 1px 0 var(--border); }
+[data-theme="dark"] .data-table thead th { background: var(--bg-card); }
 .data-table td { padding: 9px 14px; font-size: var(--text-base); }
 .data-table tbody tr { cursor: default; }
 .data-table tbody tr.clickable { cursor: pointer; }

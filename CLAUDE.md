@@ -486,6 +486,14 @@ Rules:
   not a hardcoded color.
 - The brand-red selected-row tint `var(--primary-light)` (dark override
   `rgba(200,16,46,0.18)`) is also adaptive — fine to keep.
+- **STICKY headers/toolbars (anything content scrolls BENEATH)** — sticky table
+  headers (`thead`/header rows), pinned toolbars/filter bars, pinned first columns,
+  sticky section headers — MUST use an OPAQUE background token (`var(--bg-card)` for
+  card-level tables, `var(--bg-primary)` when sitting on the page background) plus a
+  sufficient `z-index` (5+). NEVER a semi-transparent tint (`var(--surface-subtle)`,
+  any `rgba(...)` with alpha < 1, or no background at all) — scrolled rows bleed
+  through and garble the text, most visibly in dark mode. This is the **suite-wide
+  standard** (matches the logvault/spanvault/netvault fix).
 
 ### Dropdowns / selects — dark-mode readability (suite standard)
 - **Native form controls** (`<select>` option popups, native scrollbars, date pickers)
