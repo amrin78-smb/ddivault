@@ -638,7 +638,7 @@ let _lastBaselineDay = null;
 let _lastStaleDay = null;
 async function hourlyTick() {
   try { const ad = require('../api/alertDispatcher'); await ad.sendHourlyDigest(db); } catch (e) { console.error('[Digest] error:', e.message); }
-  const now = new Date(); const day = now.toISOString().slice(0,10);
+  const now = new Date(); const day = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   if (now.getHours() >= 2) {
     if (_lastBaselineDay !== day) {
       _lastBaselineDay = day;

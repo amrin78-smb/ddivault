@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.14.0': [
+    'New Anomaly Root Causes card on the Operations Center dashboard: grouped anomalies with an expandable per-entity drill-down and one-click bulk-acknowledge per root cause',
+    'Per-entity anomaly drill-down now ranks severity correctly (critical over warning over info) instead of alphabetically, so a critical entity no longer mislabels as a lower severity',
+    'Fixed the nightly anomaly/baseline job timezone mismatch: the 02:00 hour gate and the once-per-day guard now both use local time, so the job runs in the intended quiet window instead of ~07:00 local and can no longer double-run on first start',
+  ],
   '1.13.0': [
     'Anomaly console root-cause rollup — anomalies are now grouped by type and affected entity (e.g. "10 zones: DNS scavenging disabled") instead of thousands of repeated rows, with expandable drill-down to the underlying items',
     'Bulk-acknowledge a whole anomaly group in one click, so a single root cause can be cleared at once',
@@ -1818,7 +1823,10 @@ app.get('/api/anomalies/grouped', async (req, res) => {
                COUNT(*)              AS event_count,
                MAX(detected_at)      AS latest_at,
                MIN(detected_at)      AS first_at,
-               MAX(severity)         AS severity,
+               -- highest severity present for this entity (ranked, not alphabetical)
+               (ARRAY_AGG(severity ORDER BY
+                  CASE severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2
+                                WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC))[1] AS severity,
                (ARRAY_AGG(description ORDER BY detected_at DESC))[1] AS sample_description
           FROM filtered
          GROUP BY anomaly_type, entity_type, entity_id

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
@@ -689,6 +689,9 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
           <SecurityOverview />
           <SiteHealth onSiteClick={() => onNavigate('infra')} />
         </div>
+        <div style={{ marginTop: 12 }}>
+          <AnomalyRootCauses />
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16, marginTop: 12 }}>
           <div style={CARD}>
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>IP Address Distribution</div></div>
@@ -712,6 +715,130 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
 
       {/* Unified activity feed — DHCP events / config changes / fired alerts */}
       <ActivityFeed refreshNonce={refreshNonce} onNavigate={navStr} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// Anomaly Root Causes — signal-to-noise rollup of behavioral/DNS
+// anomalies. The backend (/api/anomalies/grouped) collapses the
+// ~13k flat anomaly rows into a few dozen root causes, each with a
+// count, latest occurrence and an expandable per-entity drill-down.
+// Each group can be bulk-acknowledged via /api/anomalies/group/ack.
+// ════════════════════════════════════════════════════════════
+function AnomalyRootCauses() {
+  const [groups, setGroups] = useState<AnomalyGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [acking, setAcking] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api('/anomalies/grouped?acknowledged=false')
+      .then(d => setGroups(d.data?.groups || []))
+      .catch(() => setGroups([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const ackGroup = async (anomalyType: string) => {
+    setAcking(anomalyType);
+    try {
+      const r = await api('/anomalies/group/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ anomaly_type: anomalyType, user: 'admin' }),
+      });
+      toast(`Acknowledged ${r.acknowledged || 0} ${anomalyLabel(anomalyType)} anomalies`, 'success');
+      setExpanded(e => (e === anomalyType ? null : e));
+      load();
+    } catch (e: any) {
+      toast(e?.message || 'Failed to acknowledge', 'error');
+    } finally {
+      setAcking(null);
+    }
+  };
+
+  const entityLabel = (e: AnomalyEntity) => {
+    const kind = e.entity_type ? (ENTITY_LABELS[e.entity_type] || e.entity_type) : 'entity';
+    return `${kind} ${e.entity_id ?? '—'}`;
+  };
+
+  return (
+    <div style={CARD}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={TITLE}>Anomaly Root Causes</div>
+        <span style={MUTED}>{loading ? '…' : `${groups.length} open`}</span>
+      </div>
+      {loading ? (
+        <TableSkeleton rows={4} cols={3} />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}
+          title="No open anomalies"
+          message="No behavioral or DNS anomalies need attention."
+        />
+      ) : (
+        <table className="data-table">
+          <thead><tr><th style={{ width: 28 }} /><th>Root cause</th><th>Severity</th><th>Entities</th><th>Events</th><th>Latest</th><th>Action</th></tr></thead>
+          <tbody>
+            {groups.map(g => {
+              const open = expanded === g.anomaly_type;
+              return (
+                <Fragment key={g.anomaly_type}>
+                  <tr style={{ cursor: 'pointer' }} onClick={() => setExpanded(open ? null : g.anomaly_type)}>
+                    <td style={{ textAlign: 'center' }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>
+                        <polyline points="9 18 15 12 9 6"/>
+                      </svg>
+                    </td>
+                    <td>{anomalyLabel(g.anomaly_type)}</td>
+                    <td><span className={`badge ${anomalySeverityBadge(g.severity)}`}>{g.severity}</span></td>
+                    <td>{g.entity_count}</td>
+                    <td>{g.total_count}</td>
+                    <td style={{ fontSize: 'var(--text-xs)' }}>{g.latest_at ? new Date(g.latest_at).toLocaleString() : '—'}</td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => ackGroup(g.anomaly_type)}
+                        disabled={acking === g.anomaly_type}
+                        style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', background: 'none', border: 'none', cursor: acking === g.anomaly_type ? 'default' : 'pointer', opacity: acking === g.anomaly_type ? 0.5 : 1 }}
+                      >
+                        {acking === g.anomaly_type ? 'Acking…' : 'Acknowledge all'}
+                      </button>
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 0, background: 'var(--bg-primary)' }}>
+                        <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                          <table className="data-table" style={{ margin: 0 }}>
+                            <thead><tr><th>Affected entity</th><th>Severity</th><th>Events</th><th>Latest</th><th>Detail</th></tr></thead>
+                            <tbody>
+                              {g.entities.length === 0 ? (
+                                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 16, ...MUTED }}>No entity detail</td></tr>
+                              ) : g.entities.map((e, i) => (
+                                <tr key={i}>
+                                  <td className="mono" style={{ fontSize: 'var(--text-xs)' }}>{entityLabel(e)}</td>
+                                  <td><span className={`badge ${anomalySeverityBadge(e.severity)}`}>{e.severity}</span></td>
+                                  <td>{e.event_count}</td>
+                                  <td style={{ fontSize: 'var(--text-xs)' }}>{e.latest_at ? new Date(e.latest_at).toLocaleString() : '—'}</td>
+                                  <td style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
