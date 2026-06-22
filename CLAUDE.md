@@ -74,18 +74,17 @@ ddivault/
 ## Development Workflow
 
 ### ⚠️ IMPORTANT — Never edit files directly on the server
-All changes must follow this workflow:
-1. Edit in GitHub Codespaces
-2. Test/verify in Codespaces
-3. Commit and push to GitHub
-4. Run update script on server
+All development happens here in Claude Code. Follow this workflow:
+1. Edit and verify in Claude Code (build locally to confirm no errors)
+2. Commit and push to GitHub
+3. Run update script on server
 
 ### Deploy to server
 ```powershell
 & "C:\Apps\ddivault\installer\Update-DDIVault.ps1"
 ```
 
-### Commit from Codespaces
+### Commit and push
 ```bash
 git add -A && git commit -m "feat/fix: description" && git push
 ```
@@ -531,7 +530,7 @@ All products share:
 ## GitHub
 - Repo: `https://github.com/amrin78-smb/ddivault`
 - Branch: `main`
-- Always work from Codespaces, never edit on server directly
+- Never edit on the server directly — all development is done in Claude Code
 
 ## Schema Maintenance Rule
 
@@ -560,7 +559,7 @@ $env:PGPASSWORD = "NVAdmin@2026"
 ```
 
 ```bash
-# In Codespaces — check what's in schema files
+# In Claude Code — check what's in schema files
 grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-server-auth.sql scripts/schema-sites.sql
 ```
 
@@ -632,7 +631,7 @@ Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert
 ### Never use PowerShell heredoc for Node.js/JSX files
 PowerShell heredoc corrupts JSX syntax. Always write to a temp file first then run with node.
 
-### Making file edits in Codespaces
+### Making file edits
 - Prefer targeted replacements over full file rewrites
 - Use node script for complex replacements
 - Use sed only for simple single-line changes
