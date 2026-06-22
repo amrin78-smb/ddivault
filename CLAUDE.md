@@ -588,47 +588,6 @@ Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert
 ## Code Editing Rules
 
 ### Never use PowerShell heredoc for Node.js/JSX files
-PowerShell heredoc corrupts JSX syntax. Always use Python scripts or `node -e` with a file:
-```bash
-# Correct — write script to file first
-cat > /tmp/fix.js << 'ENDOFFILE'
-// your Node.js script
-
-## Adding New API Routes
-
-### ⚠️ Always add new routes to next.config.js
-Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
-
-```js
-// frontend/next.config.js
-{ source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
-```
-
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
-
----
-
-## Code Editing Rules
-
-### Never use PowerShell heredoc for Node.js/JSX files
-PowerShell heredoc corrupts JSX syntax. Always use Python scripts or `node -e` with a file:
-```bash
-# Correct — write script to file first
-cat > /tmp/fix.js << 'ENDOFFILE'
-// your Node.js script
-
-## Adding New API Routes
-
-### Always add new routes to next.config.js
-Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
-
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
-
----
-
-## Code Editing Rules
-
-### Never use PowerShell heredoc for Node.js/JSX files
 PowerShell heredoc corrupts JSX syntax. Always write to a temp file first then run with node.
 
 ### Making file edits
