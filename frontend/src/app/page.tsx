@@ -910,11 +910,13 @@ function EventsTab() {
     await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
     toast('Alert acknowledged', 'success');
     reloadAlerts();
+    window.dispatchEvent(new Event('ddivault:alerts-changed')); // refresh the header bell instantly
   };
   const ackAll = async () => {
     await api('/alerts/acknowledge-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
     toast('All alerts acknowledged', 'success');
     reloadAlerts();
+    window.dispatchEvent(new Event('ddivault:alerts-changed')); // refresh the header bell instantly
   };
 
   const openAlerts     = useMemo(() => alerts.filter(a => !a.acknowledged && !a.resolved_at), [alerts]);

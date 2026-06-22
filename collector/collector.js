@@ -276,7 +276,9 @@ async function collectScopeStats(server) {
     if (pct < SCOPE_CRITICAL_CLEAR_PCT) {
       await db.query(
         `UPDATE alert_events
-            SET resolved_at = NOW(), resolved_reason = 'condition-cleared'
+            SET resolved_at = NOW(), resolved_reason = 'condition-cleared',
+                acknowledged = TRUE, acknowledged_by = COALESCE(acknowledged_by, 'system'),
+                acknowledged_at = COALESCE(acknowledged_at, NOW())
           WHERE scope_id = $1 AND severity = 'critical'
             AND acknowledged = FALSE AND resolved_at IS NULL`,
         [scopeId]
@@ -286,7 +288,9 @@ async function collectScopeStats(server) {
     if (pct < SCOPE_WARNING_CLEAR_PCT) {
       await db.query(
         `UPDATE alert_events
-            SET resolved_at = NOW(), resolved_reason = 'condition-cleared'
+            SET resolved_at = NOW(), resolved_reason = 'condition-cleared',
+                acknowledged = TRUE, acknowledged_by = COALESCE(acknowledged_by, 'system'),
+                acknowledged_at = COALESCE(acknowledged_at, NOW())
           WHERE scope_id = $1 AND severity = 'warning'
             AND acknowledged = FALSE AND resolved_at IS NULL`,
         [scopeId]

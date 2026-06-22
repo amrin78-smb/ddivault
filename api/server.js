@@ -25,6 +25,12 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.14.1': [
+    'Fixed the notification bell that never cleared: it now counts only open alerts (acknowledged=FALSE AND resolved_at IS NULL), matching the Events page "Open" tab, instead of including alerts the collector had already auto-resolved',
+    'The collector now marks auto-resolved alerts as acknowledged (by "system"), so cleared conditions no longer pile up unacknowledged behind the bell',
+    'The bell now refreshes instantly when you acknowledge alerts on the Events page, instead of lagging up to 30s for the next poll',
+    'One-time backfill drains ~686 historical resolved-but-unacknowledged alerts so the bell reflects the true open count',
+  ],
   '1.14.0': [
     'New Anomaly Root Causes card on the Operations Center dashboard: grouped anomalies with an expandable per-entity drill-down and one-click bulk-acknowledge per root cause',
     'Per-entity anomaly drill-down now ranks severity correctly (critical over warning over info) instead of alphabetically, so a critical entity no longer mislabels as a lower severity',
@@ -1355,7 +1361,7 @@ app.get('/api/alerts', async (req, res) => {
     } else if (status === 'resolved') {
       conds.push('ae.resolved_at IS NOT NULL');
     } else if (unackedOnly) {
-      conds.push('ae.acknowledged = FALSE');
+      conds.push('ae.acknowledged = FALSE', 'ae.resolved_at IS NULL');
     }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 

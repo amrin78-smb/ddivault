@@ -52,7 +52,10 @@ async function fireAlertDeduped(db, { serverId, scopeId, message, severity, dedu
 /** Auto-resolve open alerts whose condition has cleared (matched by LIKE pattern). */
 async function resolveAlerts(db, { pattern, reason }) {
   await db.query(
-    `UPDATE alert_events SET resolved_at=NOW(), resolved_reason=$2
+    `UPDATE alert_events
+        SET resolved_at=NOW(), resolved_reason=$2,
+            acknowledged=TRUE, acknowledged_by=COALESCE(acknowledged_by, 'system'),
+            acknowledged_at=COALESCE(acknowledged_at, NOW())
       WHERE acknowledged=FALSE AND resolved_at IS NULL AND message LIKE $1`,
     [pattern, reason || 'condition-cleared']).catch(() => {});
 }

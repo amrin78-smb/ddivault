@@ -92,7 +92,13 @@ export function Header(props: HeaderProps) {
     };
     load();
     const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    // Refetch immediately when alerts are acknowledged elsewhere (e.g. Events page),
+    // so the bell clears at once instead of waiting up to 30s for the next poll.
+    window.addEventListener('ddivault:alerts-changed', load);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('ddivault:alerts-changed', load);
+    };
   }, []);
 
   // Close dropdowns on outside click

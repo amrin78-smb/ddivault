@@ -506,6 +506,18 @@ UPDATE alert_rule_config SET severity = 'info', is_enabled = FALSE, digest_mode 
 UPDATE alert_rule_config SET severity = 'info', is_enabled = FALSE, digest_mode = TRUE
   WHERE rule_type = 'unknown_device'     AND severity = 'warning' AND is_enabled = TRUE;
 
+-- ── Backfill: drain the notification bell of stale resolved alerts ────
+-- Auto-resolved alerts were historically left acknowledged=FALSE, inflating
+-- the notification bell. Mark all resolved-but-unacknowledged alerts as
+-- system-acknowledged (preserving any existing human ack metadata).
+-- Idempotent: after the first run (and with the collector fix) this matches zero rows.
+UPDATE alert_events
+   SET acknowledged = TRUE,
+       acknowledged_by = COALESCE(acknowledged_by, 'system'),
+       acknowledged_at = COALESCE(acknowledged_at, NOW())
+ WHERE acknowledged = FALSE
+   AND resolved_at IS NOT NULL;
+
 -- ── Feature 2: Capacity planning ─────────────────────────────
 CREATE TABLE IF NOT EXISTS scope_forecasts (
   id                  SERIAL PRIMARY KEY,
