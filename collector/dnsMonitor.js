@@ -267,6 +267,8 @@ async function runDnsMonitor(db, ps, servers, serverAuth) {
  */
 async function detectStaleRecords(db, ps, servers, serverAuth) {
   let total = 0;
+  let zonesChecked = 0;
+  let zonesNullResult = 0;
   for (const server of servers) {
     if (server.role === 'dhcp') continue;
     const ip = cleanIp(server.ip_address);
@@ -283,9 +285,17 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
     } catch (e) { log(`[Stale] ${ip} zones: ${e.message}`); continue; }
 
     for (const z of zones) {
+      zonesChecked++;
       let raw;
       try { raw = await ps.getDnsStaleRecords(ip, auth, z.zone_name, 90); }
       catch (e) { log(`[Stale] ${ip}/${z.zone_name}: ${e.message}`); continue; }
+      // A null result is ambiguous: either the zone genuinely has zero stale records
+      // (ConvertTo-Json of an empty pipeline emits nothing) OR the PowerShell read failed
+      // (runPS already logged the underlying error). We keep the original semantics —
+      // treat it as "no stale records" and refresh the snapshot — but count nulls so a
+      // server-wide PS/WinRM failure shows up in the run summary instead of silently
+      // recording 0 records.
+      if (raw === null || raw === undefined) zonesNullResult++;
       const records = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
 
       // Fresh snapshot — clear prior stale rows for this zone first.
@@ -309,7 +319,8 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
       }
     }
   }
-  log(`detectStaleRecords complete — ${total} stale record(s) recorded`);
+  log(`detectStaleRecords complete — ${total} stale record(s) recorded across ${zonesChecked} zone(s)` +
+      (zonesNullResult ? `; ${zonesNullResult} zone(s) returned no result (PS read failed/empty — prior snapshot kept)` : ''));
 }
 
 module.exports = { runDnsMonitor, detectStaleRecords };

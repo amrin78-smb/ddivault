@@ -623,18 +623,35 @@ async function runDnsStale() {
   try { await dnsMonitor.detectStaleRecords(db, ps, servers, serverAuth); }
   catch (e) { console.error('[DNS-Stale] error:', e.message); }
 }
-// hourly tick: send digest emails; run baselines once per day around 02:00
+// hourly tick: send digest emails; run baselines + nightly stale snapshot once per day.
+//
+// Both the baseline builder and the stale-record snapshot are once-daily jobs that
+// should fire at/after 02:00 local time. The original gate required the hour to be
+// EXACTLY 2 (`getHours() === 2`); because hourlyTick is anchored to collector start
+// (not wall-clock :00) and setInterval drifts, a tick can straddle the 02:xx hour
+// (e.g. 01:58 → 03:01), skipping the whole window and silently losing that day's run.
+// This is exactly what stranded the `dns_stale_records` snapshot (table froze while
+// the 15-min DNS monitor kept producing anomalies). Fix: fire on the FIRST tick AT OR
+// AFTER 02:00 each day (`getHours() >= 2`), still guarded once-per-day so it runs once.
+// The stale snapshot has its own day-guard so a baseline failure can never skip it.
 let _lastBaselineDay = null;
+let _lastStaleDay = null;
 async function hourlyTick() {
   try { const ad = require('../api/alertDispatcher'); await ad.sendHourlyDigest(db); } catch (e) { console.error('[Digest] error:', e.message); }
-  try {
-    const now = new Date(); const day = now.toISOString().slice(0,10);
-    if (now.getHours() === 2 && _lastBaselineDay !== day) {
+  const now = new Date(); const day = now.toISOString().slice(0,10);
+  if (now.getHours() >= 2) {
+    if (_lastBaselineDay !== day) {
       _lastBaselineDay = day;
-      const r = await anomalyDetector.buildBaselines(db); log(`[Baselines] ${JSON.stringify(r)}`);
-      try { await runDnsStale(); } catch (e) { console.error('[DNS-Stale] error:', e.message); }
+      try {
+        const r = await anomalyDetector.buildBaselines(db); log(`[Baselines] ${JSON.stringify(r)}`);
+      } catch (e) { console.error('[Baselines] error:', e.message); }
     }
-  } catch (e) { console.error('[Baselines] error:', e.message); }
+    if (_lastStaleDay !== day) {
+      _lastStaleDay = day;
+      try { log('[DNS-Stale] starting nightly snapshot'); await runDnsStale(); }
+      catch (e) { console.error('[DNS-Stale] nightly snapshot error:', e.message); }
+    }
+  }
 }
 
 async function pollAll(fn, label) {

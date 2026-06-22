@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.13.0': [
+    'Anomaly console root-cause rollup — anomalies are now grouped by type and affected entity (e.g. "10 zones: DNS scavenging disabled") instead of thousands of repeated rows, with expandable drill-down to the underlying items',
+    'Bulk-acknowledge a whole anomaly group in one click, so a single root cause can be cleared at once',
+    'Fixed the nightly DNS stale-record snapshot (and baseline build) silently skipping days: the 02:00 job gate could be missed when the collector tick drifted past the hour — it now runs on the first tick at or after 02:00, with clearer run logging',
+  ],
   '1.12.20': [
     'Fixed sticky table headers bleeding through when scrolling: thead now uses an opaque background instead of the semi-transparent dark-mode tint',
     'Rows no longer garble/overlap the column headers while scrolling, most visibly in dark mode',
@@ -1766,12 +1771,129 @@ app.get('/api/anomalies/summary', async (req, res) => {
   }
 });
 
-// Note: anomaly acknowledge routes (POST /api/anomalies/acknowledge-all and
-// POST /api/anomalies/:id/ack) were removed with the Intelligence tab (v1.12.1).
-// The read endpoints GET /api/anomalies and GET /api/anomalies/summary remain —
-// they feed the Dashboard (Priority Action Center, Security Overview, Pillar
-// Scorecards) and the DNS Insights view. Anomaly detection continues in the
-// collector, surfacing through alerts.
+// Note: the original per-anomaly acknowledge routes were removed with the
+// Intelligence tab (v1.12.1). The grouped/rollup acknowledge route below
+// (POST /api/anomalies/group/ack) replaces them — the anomaly console now
+// works on root-cause GROUPS, not individual rows. The read endpoints
+// GET /api/anomalies and GET /api/anomalies/summary feed the Dashboard
+// (Priority Action Center, Security Overview, Pillar Scorecards) and the
+// DNS Insights view. Anomaly detection continues in the collector.
+
+// ── Anomaly root-cause rollup (signal-to-noise) ───────────────
+// The console is dominated by a handful of root causes repeated once per
+// affected entity (e.g. ~9k `dns_scavenging_disabled`, one per zone). This
+// groups anomalies by (anomaly_type, entity) so the UI shows ~dozens of root
+// causes with a count + latest occurrence + an expandable list of the affected
+// entities, instead of ~13k flat rows.
+app.get('/api/anomalies/grouped', async (req, res) => {
+  try {
+    const conditions = [];
+    const params = [];
+    // Default to unacknowledged (the actionable backlog); ?acknowledged=all|true|false.
+    const ack = (req.query.acknowledged || 'false').toString();
+    if (ack === 'false') conditions.push('acknowledged = FALSE');
+    else if (ack === 'true') conditions.push('acknowledged = TRUE');
+    // 'all' → no acknowledged filter
+    if (req.query.severity) { params.push(req.query.severity); conditions.push(`severity = $${params.length}`); }
+    if (req.query.type) { params.push(req.query.type); conditions.push(`anomaly_type = $${params.length}`); }
+    if (req.query.since) { params.push(req.query.since); conditions.push(`detected_at > NOW() - $${params.length}::interval`); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Two-level rollup. Inner: one row per (anomaly_type, entity_type, entity_id)
+    // with that entity's event count, latest occurrence and a sample description.
+    // Outer (returned `groups`): one row per anomaly_type with total event count,
+    // distinct-entity count, max severity rank and the latest occurrence. The
+    // per-entity list rides along as JSON for drill-down (capped to keep payload
+    // bounded — full per-event detail is still reachable via GET /api/anomalies).
+    const sql = `
+      WITH filtered AS (
+        SELECT id, anomaly_type, severity, entity_type, entity_id, description, detected_at
+          FROM anomaly_events
+          ${where}
+      ),
+      per_entity AS (
+        SELECT anomaly_type,
+               entity_type,
+               entity_id,
+               COUNT(*)              AS event_count,
+               MAX(detected_at)      AS latest_at,
+               MIN(detected_at)      AS first_at,
+               MAX(severity)         AS severity,
+               (ARRAY_AGG(description ORDER BY detected_at DESC))[1] AS sample_description
+          FROM filtered
+         GROUP BY anomaly_type, entity_type, entity_id
+      )
+      SELECT pe.anomaly_type,
+             SUM(pe.event_count)::bigint                       AS total_count,
+             COUNT(*)::int                                     AS entity_count,
+             MAX(pe.latest_at)                                 AS latest_at,
+             MIN(pe.first_at)                                  AS first_at,
+             -- highest severity present in the group (critical > warning > info)
+             (ARRAY_AGG(pe.severity ORDER BY
+                CASE pe.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2
+                                 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC))[1] AS severity,
+             COALESCE(
+               jsonb_agg(
+                 jsonb_build_object(
+                   'entity_type', pe.entity_type,
+                   'entity_id',   pe.entity_id,
+                   'event_count', pe.event_count,
+                   'latest_at',   pe.latest_at,
+                   'severity',    pe.severity,
+                   'description', pe.sample_description
+                 ) ORDER BY pe.latest_at DESC
+               ) FILTER (WHERE pe.entity_id IS NOT NULL OR pe.entity_type IS NOT NULL),
+               '[]'::jsonb
+             ) AS entities
+        FROM per_entity pe
+       GROUP BY pe.anomaly_type
+       ORDER BY total_count DESC`;
+    const rows = await db.query(sql, params);
+    const groups = rows.rows.map(g => ({
+      anomaly_type: g.anomaly_type,
+      total_count: parseInt(g.total_count, 10),
+      entity_count: g.entity_count,
+      latest_at: g.latest_at,
+      first_at: g.first_at,
+      severity: g.severity,
+      // Cap the drill-down list per group to keep the payload bounded.
+      entities: Array.isArray(g.entities) ? g.entities.slice(0, 200) : [],
+    }));
+    res.json({ data: { groups, group_count: groups.length } });
+  } catch (err) {
+    console.error('[API] anomalies grouped error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bulk-acknowledge an entire root-cause group. Body: { anomaly_type, entity_id? }.
+// With entity_id → acks just that entity within the type; without → acks the whole
+// type. Ack-exempt from license write-blocking (see enforceLicense). Acks only
+// currently-unacknowledged rows so the operation is idempotent and auditable.
+app.post('/api/anomalies/group/ack', requireWrite, async (req, res) => {
+  try {
+    const anomalyType = (req.body.anomaly_type || '').toString();
+    if (!anomalyType) return res.status(400).json({ error: 'anomaly_type is required' });
+    const user = (req.body.user || 'admin').toString();
+    const conds = ['acknowledged = FALSE', 'anomaly_type = $2'];
+    const params = [user, anomalyType];
+    // entity_id is optional; null/absent means "whole type". Match NULL entity_id too.
+    if (req.body.entity_id !== undefined && req.body.entity_id !== null) {
+      params.push(req.body.entity_id.toString());
+      conds.push(`entity_id = $${params.length}`);
+    }
+    const r = await db.query(
+      `UPDATE anomaly_events
+          SET acknowledged = TRUE, acknowledged_by = $1, acknowledged_at = NOW()
+        WHERE ${conds.join(' AND ')}`,
+      params
+    );
+    res.json({ success: true, acknowledged: r.rowCount });
+  } catch (err) {
+    console.error('[API] anomalies group ack error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // ── Feature 5: Site health ────────────────────────────────────
 app.get('/api/site-health', async (req, res) => {

@@ -83,6 +83,53 @@ interface ScopeHistory {
   history: { percent_used: number; in_use: number; recorded_at: string }[];
 }
 
+// ── Anomaly root-cause rollup ─────────────────────────────────
+interface AnomalyEntity {
+  entity_type: string | null;
+  entity_id: string | null;
+  event_count: number;
+  latest_at: string;
+  severity: string;
+  description: string | null;
+}
+interface AnomalyGroup {
+  anomaly_type: string;
+  total_count: number;
+  entity_count: number;
+  latest_at: string;
+  first_at: string;
+  severity: string;
+  entities: AnomalyEntity[];
+}
+
+// Human labels for anomaly_type root causes (covers DHCP + DNS detectors).
+const ANOMALY_LABELS: Record<string, string> = {
+  dns_scavenging_disabled: 'DNS scavenging disabled',
+  dns_replication_lag: 'DNS replication lag',
+  dns_forwarder_down: 'DNS forwarder down',
+  dns_record_count_drop: 'DNS record count drop',
+  dns_stale_records: 'DNS stale records',
+  lease_spike: 'DHCP lease spike',
+  subnet_jumping: 'Subnet jumping',
+  after_hours_device: 'After-hours device',
+  mac_spoofing: 'MAC spoofing',
+  ip_conflict: 'IP conflict',
+  dhcp_starvation: 'DHCP starvation',
+  sensitive_subnet_new_device: 'New device on sensitive subnet',
+  unknown_device: 'Unknown device',
+};
+const anomalyLabel = (t: string) => ANOMALY_LABELS[t] || t.replace(/_/g, ' ');
+const ENTITY_LABELS: Record<string, string> = {
+  dns_zone: 'zone', scope: 'scope', device: 'device', server: 'server',
+};
+// Map anomaly severity → existing badge classes.
+function anomalySeverityBadge(sev: string): string {
+  const s = (sev || '').toLowerCase();
+  if (s === 'critical' || s === 'high') return 'badge-red';
+  if (s === 'warning' || s === 'medium') return 'badge-yellow';
+  return 'badge-gray';
+}
+
 type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'infra' | 'reports' | 'audit' | 'settings';
 
 // ── Shared styles ─────────────────────────────────────────────
