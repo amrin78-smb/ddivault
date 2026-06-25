@@ -5,6 +5,19 @@ DDIVault is the DNS, DHCP, and IP Address Management (DDI) monitoring product in
 It monitors Windows DHCP/DNS servers via PowerShell remoting (WinRM), provides IPAM subnet management,
 and integrates with NetVault for SSO and site data.
 
+## Installer parity (IMPORTANT — read before any deploy-affecting change)
+
+This app is provisioned two ways that BOTH must stay in sync: the per-app updater
+`installer/Update-DDIVault.ps1` (upgrades) and the shared **suite installer**
+`../netvault/installer/Install-NocVault-Suite.ps1` (fresh install of the whole NocVault
+suite — it lives in the **netvault** repo, a sibling of this one). Any change — even a
+small one — that affects how the app is provisioned MUST be reflected in BOTH, in the
+same change, or fresh installs silently break. This includes: a new/renamed env var the
+app reads, a new scheduled task, a new or changed schema file (or required DB
+extension/grant), a new NSSM service or changed entrypoint/port, a new firewall port, a
+new cross-DB grant, or a new build step. Update and commit the suite installer in the
+netvault repo too; if you can't, flag it explicitly so it isn't missed.
+
 ## Architecture
 
 ### Services (3 NSSM Windows services)
