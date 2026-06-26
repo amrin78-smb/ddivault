@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.1': [
+    'License changes now take effect within ~5 minutes instead of up to 24 hours: the hub-license cache TTL was cut from 24h to 5m, so a reduced or removed entitlement blocks the app promptly',
+    'Verified the full-screen license lock hard-blocks every entry path: when a license is disabled or DDIVault is not entitled, the lock screen fully replaces the app on both the main page and the SSO landing (no app left usable behind a banner)',
+    'Enforcement-only change — no database, schema, or data changes',
+  ],
   '1.15.0': [
     'Per-app license entitlement: DDIVault now honors the modules list on a NocVault license key — if an active key explicitly lists its entitled apps and DDIVault is not among them, the app locks to a clear "not included in this license" screen',
     'Fail-open by design: trial keys, licenses in their grace period, an unreachable hub, and legacy keys with no modules list all keep full access, so no existing install is ever bricked by this check',
