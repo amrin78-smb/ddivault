@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.3': [
+    'Security: upgraded Next.js to 14.2.35, the patched release addressing the December 2025 Next.js security advisory. No functional or UI changes',
+  ],
   '1.15.2': [
     'The full-screen license lock now covers every route, including the SSO landing — the lock is hoisted to the root layout so no entry path can bypass it',
     'License changes are reflected in the UI within ~5 minutes: the frontend re-checks the license status every 5 minutes to match the backend cache TTL',
