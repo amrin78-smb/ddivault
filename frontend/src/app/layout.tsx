@@ -7,7 +7,7 @@ import { ToastProvider } from '@/components/Toast';
 import { FetchInterceptor } from '@/components/FetchInterceptor';
 import { IdleTimeout } from '@/components/IdleTimeout';
 import { AuditActor } from '@/components/AuditActor';
-import { LicenseProvider } from '@/components/LicenseGuard';
+import { LicenseProvider, LicenseGate } from '@/components/LicenseGuard';
 
 export const metadata: Metadata = {
   title: 'DDIVault — DNS · DHCP · IPAM',
@@ -26,7 +26,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <ToastProvider>
                 <FetchInterceptor />
                 <LicenseProvider>
-                  {children}
+                  {/* LicenseGate hard-blocks EVERY route (incl. /sso) with the
+                      full-screen lock when the license is disabled/unlicensed —
+                      not just a banner with the app usable behind it. */}
+                  <LicenseGate>
+                    {children}
+                  </LicenseGate>
                 </LicenseProvider>
               </ToastProvider>
             </ThemeProvider>

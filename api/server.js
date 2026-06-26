@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.2': [
+    'The full-screen license lock now covers every route, including the SSO landing — the lock is hoisted to the root layout so no entry path can bypass it',
+    'License changes are reflected in the UI within ~5 minutes: the frontend re-checks the license status every 5 minutes to match the backend cache TTL',
+    'A 402 (license-disabled) response from any API call now immediately surfaces the lock instead of waiting for the next poll',
+  ],
   '1.15.1': [
     'License changes now take effect within ~5 minutes instead of up to 24 hours: the hub-license cache TTL was cut from 24h to 5m, so a reduced or removed entitlement blocks the app promptly',
     'Verified the full-screen license lock hard-blocks every entry path: when a license is disabled or DDIVault is not entitled, the lock screen fully replaces the app on both the main page and the SSO landing (no app left usable behind a banner)',
