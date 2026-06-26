@@ -25,6 +25,12 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.0': [
+    'Per-app license entitlement: DDIVault now honors the modules list on a NocVault license key — if an active key explicitly lists its entitled apps and DDIVault is not among them, the app locks to a clear "not included in this license" screen',
+    'Fail-open by design: trial keys, licenses in their grace period, an unreachable hub, and legacy keys with no modules list all keep full access, so no existing install is ever bricked by this check',
+    'The license-disabled screen now distinguishes "not licensed for this app" from "license expired", pointing you to your NocVault representative instead of a renewal prompt',
+    'Access-control only — no database, schema, or data changes',
+  ],
   '1.14.1': [
     'Fixed the notification bell that never cleared: it now counts only open alerts (acknowledged=FALSE AND resolved_at IS NULL), matching the Events page "Open" tab, instead of including alerts the collector had already auto-resolved',
     'The collector now marks auto-resolved alerts as acknowledged (by "system"), so cleared conditions no longer pile up unacknowledged behind the bell',

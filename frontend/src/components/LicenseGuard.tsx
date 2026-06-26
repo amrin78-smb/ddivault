@@ -3,7 +3,7 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 
 interface LicenseState {
-  mode: 'active' | 'trial' | 'grace' | 'disabled' | 'unreachable' | 'unknown';
+  mode: 'active' | 'trial' | 'grace' | 'disabled' | 'unlicensed' | 'unreachable' | 'unknown';
   canWrite: boolean;
   canRead: boolean;
   disabled: boolean;
@@ -82,6 +82,10 @@ export function LicenseBanner() {
       bg: '#b91c1c', text: '#fff',
       message: 'DDIVault license has expired and the grace period has ended. Please renew your NocVault license to restore access.',
     },
+    unlicensed: {
+      bg: '#b91c1c', text: '#fff',
+      message: 'DDIVault is not included in this license — contact your NocVault representative to add it to your plan.',
+    },
     unreachable: {
       bg: '#374151', text: '#fff',
       message: 'License server unreachable — running in offline mode. Verify NetVault hub is accessible.',
@@ -124,7 +128,9 @@ export function LicenseBanner() {
 }
 
 export function LicenseDisabledScreen() {
+  const { state } = useLicense();
   const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const unlicensed = state.mode === 'unlicensed';
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -132,16 +138,19 @@ export function LicenseDisabledScreen() {
       gap: 16, padding: 32, textAlign: 'center',
     }}>
       <div style={{ fontSize: 64 }}>🔒</div>
-      <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>DDIVault License Expired</h1>
+      <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+        {unlicensed ? 'DDIVault Not Licensed' : 'DDIVault License Expired'}
+      </h1>
       <p style={{ fontSize: 'var(--text-md)', color: 'var(--text-muted)', maxWidth: 480, margin: 0 }}>
-        Your NocVault license has expired and the 30-day grace period has ended.
-        Please renew your license to restore access to DDIVault.
+        {unlicensed
+          ? 'DDIVault is not included in this license — contact your NocVault representative to add it to your plan.'
+          : 'Your NocVault license has expired and the 30-day grace period has ended. Please renew your license to restore access to DDIVault.'}
       </p>
       <a
         href={`${hubUrl}/settings/license`}
         style={{ background: 'var(--primary)', color: '#fff', padding: '12px 28px', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 'var(--text-md)', marginTop: 8 }}
       >
-        Renew License at NocVault Hub →
+        {unlicensed ? 'Manage License at NocVault Hub →' : 'Renew License at NocVault Hub →'}
       </a>
       <p style={{ fontSize: 'var(--text-sm)', color: '#94a3b8', margin: 0 }}>Need help? Contact your NocVault administrator.</p>
     </div>
