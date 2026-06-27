@@ -151,6 +151,55 @@ if (Test-Path $psql) {
     $dbPass = (Get-Content $rootEnvPath | Select-String "DDI_DB_PASS=").ToString().Split("=",2)[1].Trim()
     $dbUser = (Get-Content $rootEnvPath | Select-String "DDI_DB_USER=").ToString().Split("=",2)[1].Trim()
     $dbName = (Get-Content $rootEnvPath | Select-String "DDI_DB_NAME=").ToString().Split("=",2)[1].Trim()
+
+    # Self-heal: on fresh installs the tables are owned by postgres, but the schema
+    # below is applied as ddivault_user (needs ownership) so CREATE OR REPLACE
+    # TRIGGER/FUNCTION and future ALTER TABLE/CREATE INDEX fail "must be owner"
+    # silently and migrations don't land. Reassign all public objects to
+    # ddivault_user once as the postgres superuser. Idempotent. Needs
+    # POSTGRES_PASSWORD from .env.local; soft-skip if absent. Non-fatal.
+    Write-Step "Reassigning table ownership (idempotent)..."
+    $pgPwLine = Get-Content $rootEnvPath -ErrorAction SilentlyContinue | Where-Object { $_ -match '^POSTGRES_PASSWORD=' } | Select-Object -First 1
+    $pgPw = if ($pgPwLine) { $pgPwLine.Substring('POSTGRES_PASSWORD='.Length).Trim() } else { '' }
+    if ($pgPw) {
+        $reassign = @'
+DO $$
+DECLARE r RECORD;
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'ddivault_user') THEN
+    FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP
+      EXECUTE format('ALTER TABLE public.%I OWNER TO ddivault_user', r.tablename);
+    END LOOP;
+    FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP
+      EXECUTE format('ALTER SEQUENCE public.%I OWNER TO ddivault_user', r.sequencename);
+    END LOOP;
+    FOR r IN SELECT viewname FROM pg_views WHERE schemaname='public' LOOP
+      EXECUTE format('ALTER VIEW public.%I OWNER TO ddivault_user', r.viewname);
+    END LOOP;
+    FOR r IN SELECT p.proname AS nm, pg_get_function_identity_arguments(p.oid) AS args
+             FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname='public'
+               AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e') LOOP
+      EXECUTE format('ALTER FUNCTION public.%I(%s) OWNER TO ddivault_user', r.nm, r.args);
+    END LOOP;
+    GRANT CREATE ON SCHEMA public TO ddivault_user;
+  END IF;
+END
+$$;
+'@
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $env:PGPASSWORD = $pgPw
+        $reassignOut = $reassign | & $psql -U postgres -h localhost -p 5432 -d $dbName -f - 2>&1
+        $env:PGPASSWORD = ""
+        $ErrorActionPreference = $prevPref
+        $reassignOut | Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
+            Out-File -FilePath "$LogDir\schema-migration.log" -Append
+        Write-OK "Reassigned public object ownership to ddivault_user"
+    } else {
+        Write-Warn "POSTGRES_PASSWORD not in .env.local - skipping ownership reassign"
+    }
+
     $env:PGPASSWORD = $dbPass
     $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
     foreach ($schema in $schemas) {

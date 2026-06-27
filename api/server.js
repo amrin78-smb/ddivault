@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.4': [
+    'The updater now self-heals table ownership before applying schema migrations: on fresh installs the tables were owned by postgres while migrations run as ddivault_user, so the updater now reassigns ownership of all public tables, sequences, views, and functions to ddivault_user (as the postgres superuser) first',
+    'Fixes silent "must be owner" migration skips on freshly-installed boxes, where CREATE OR REPLACE TRIGGER/FUNCTION and ALTER TABLE/CREATE INDEX statements failed without error and migrations never landed',
+    'Self-heal is idempotent and non-fatal: it reads POSTGRES_PASSWORD from .env.local and soft-skips with a warning on pre-existing installs where that value is absent. No schema or data changes',
+  ],
   '1.15.3': [
     'Security: upgraded Next.js to 14.2.35, the patched release addressing the December 2025 Next.js security advisory. No functional or UI changes',
   ],
