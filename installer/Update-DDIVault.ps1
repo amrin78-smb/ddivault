@@ -5,6 +5,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# This script runs as a SYSTEM scheduled task, which has a minimal PATH that does
+# not include git/node/npm. Without this, "git fetch/reset" and "npm install/build"
+# silently exit with no binary found and the update "succeeds" with the OLD code.
+# Prepend the standard install locations so the toolchain resolves under SYSTEM.
+$env:PATH = @(
+    "C:\Program Files\Git\cmd",
+    "C:\Program Files\Git\bin",
+    "C:\Program Files\nodejs",
+    $env:PATH
+) -join ";"
+
 $AppDir      = "$InstallDir"
 $FrontendDir = "$AppDir\frontend"
 $LogDir      = "$InstallDir\logs"
