@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.5': [
+    'The schema re-apply now self-heals the NocVault Hub cross-DB read grant: schema.sql re-grants SELECT (and USAGE on schema public) to the shared nocvault_readonly role on every updater run, so tables added by future releases or created at runtime stay visible to the Hub',
+    'Adds ALTER DEFAULT PRIVILEGES FOR ROLE ddivault_user so any table ddivault_user creates later is auto-readable by nocvault_readonly — no more invisible-to-Hub tables after an upgrade',
+    'Role-guarded and SELECT-only: the whole block no-ops on a standalone DDIVault with no Hub role, and never grants more than SELECT. Installer and tester parity is handled in the suite installer (GrantNocRoRead) and smoke tester separately',
+  ],
   '1.15.4': [
     'The updater now self-heals table ownership before applying schema migrations: on fresh installs the tables were owned by postgres while migrations run as ddivault_user, so the updater now reassigns ownership of all public tables, sequences, views, and functions to ddivault_user (as the postgres superuser) first',
     'Fixes silent "must be owner" migration skips on freshly-installed boxes, where CREATE OR REPLACE TRIGGER/FUNCTION and ALTER TABLE/CREATE INDEX statements failed without error and migrations never landed',

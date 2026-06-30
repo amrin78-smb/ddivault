@@ -703,6 +703,26 @@ ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS last_scavenged TIMESTAMPTZ;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS is_dns_primary BOOLEAN DEFAULT FALSE;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_forwarders TEXT[];
 
+-- ── Hub cross-DB read role ───────────────────────────────────
+-- The NocVault Hub reads across all suite DBs via the shared
+-- `nocvault_readonly` role. The suite installer grants it SELECT once at
+-- install time, but tables added by future releases (or created at runtime
+-- by ddivault_user) are never covered by that one-time grant — and the
+-- updater re-applies these schema files (as ddivault_user, which owns all
+-- public objects after the ownership-reassign step) but not the installer's
+-- grant. Re-granting here makes both installer and updater converge, and
+-- ALTER DEFAULT PRIVILEGES auto-covers future ddivault_user-created tables.
+-- SELECT-only (never more). No-op on a standalone DDIVault with no Hub role.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
+    GRANT USAGE ON SCHEMA public TO nocvault_readonly;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO nocvault_readonly;
+    ALTER DEFAULT PRIVILEGES FOR ROLE ddivault_user IN SCHEMA public GRANT SELECT ON TABLES TO nocvault_readonly;
+  END IF;
+END
+$$;
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt
