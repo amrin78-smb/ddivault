@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.7': [
+    'Settings: the update banner\'s "Go to Settings" now jumps to the Updates section even when you are already on the Settings page (previously it only worked when navigating in from another tab)',
+    'Hardening: the nocvault_readonly Hub read-grant self-heal can no longer be aborted by a non-owner USAGE grant on the updater path — the critical SELECT grant always applies',
+  ],
   '1.15.6': [
     'Fixed the "Go to Settings" link in the update-available banner — it now switches to Settings in-app instead of doing a full page reload, and opens the Updates section directly',
     'The reload was the bug: it re-loaded the session from scratch, and the role-based tab guard bounced you back to the Dashboard before your admin role finished loading. The in-app switch avoids that race entirely',

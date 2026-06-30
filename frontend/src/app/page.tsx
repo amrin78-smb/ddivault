@@ -1490,6 +1490,15 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
     }
   }, []);
 
+  // Sync the displayed sub-tab when the parent changes initialSubTab while
+  // Settings is already mounted (e.g. clicking the update banner's "Go to
+  // Settings" when already on the Settings tab). The parent resets
+  // settingsSubTab to 'general' on leaving Settings, so this only re-fires
+  // when the parent intentionally changes it and never blocks manual nav.
+  useEffect(() => {
+    if (initialSubTab) setSubTab(initialSubTab);
+  }, [initialSubTab]);
+
   const save = useCallback(async (key: string, value: string) => {
     await api('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
     setSettings(prev => ({ ...prev, [key]: value }));

@@ -716,7 +716,15 @@ ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_forwarders TEXT[];
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
-    GRANT USAGE ON SCHEMA public TO nocvault_readonly;
+    -- USAGE on schema public by a non-owner grantor (the updater applies this
+    -- schema as ddivault_user, not the owner of schema public) is only a
+    -- warning, but wrap it so a USAGE failure can NEVER abort the block before
+    -- the critical SELECT grant below runs.
+    BEGIN
+      GRANT USAGE ON SCHEMA public TO nocvault_readonly;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE NOTICE 'nocvault_readonly: USAGE on schema public skipped (grantor not owner)';
+    END;
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO nocvault_readonly;
     ALTER DEFAULT PRIVILEGES FOR ROLE ddivault_user IN SCHEMA public GRANT SELECT ON TABLES TO nocvault_readonly;
   END IF;
