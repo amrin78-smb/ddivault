@@ -1466,9 +1466,9 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
 
 type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'updates' | 'about';
 
-function SettingsTab() {
+function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSubTab }) {
   const [settings, setSettings] = useState<Record<string, string>>({});
-  const [subTab, setSubTab] = useState<SettingsSubTab>('general');
+  const [subTab, setSubTab] = useState<SettingsSubTab>(initialSubTab);
   const [updateAvail, setUpdateAvail] = useState(false);
   const { toast } = useToast();
 
@@ -1626,6 +1626,7 @@ export default function DDIVaultApp() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
+  const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>('general');
   const { canManageSystem, isViewer, isSiteAdmin } = useRBAC();
   const { state: licenseState, loading: licenseLoading } = useLicense();
 
@@ -1655,6 +1656,18 @@ export default function DDIVaultApp() {
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
     if (t) setTab(t as Tab);
+  }, []);
+
+  // Reset the Settings sub-tab hint whenever we leave Settings, so a later sidebar
+  // click opens General while the banner can still deep-link to Updates.
+  useEffect(() => { if (tab !== 'settings') setSettingsSubTab('general'); }, [tab]);
+
+  // Banner "Go to Settings" -> switch tabs IN-APP (no full reload) and land on the
+  // Updates sub-tab. Avoids the reload that re-hydrates the session and lets the
+  // RBAC visibleItems guard bounce Settings back to the dashboard.
+  const goToSettingsUpdates = useCallback(() => {
+    setSettingsSubTab('updates');
+    setTab('settings');
   }, []);
 
   // Global keyboard shortcut: "R" refreshes the current tab (broadcast event)
@@ -1776,7 +1789,7 @@ export default function DDIVaultApp() {
             root layout above the top bar, matching the rest of the NocVault suite. */}
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
           <LicenseBanner />
-          <UpdateNotifier />
+          <UpdateNotifier onGoToSettings={goToSettingsUpdates} />
           <ErrorBoundary name={tab}>
             {tab === 'dashboard' && <DashboardTab onNavigate={navigate} onFocusScope={focusScopeNav} />}
             {tab === 'scopes'    && <DHCPTab focusScope={focusScope} />}
@@ -1787,7 +1800,7 @@ export default function DDIVaultApp() {
             {tab === 'infra'     && <InfraHealthTab />}
             {tab === 'reports'   && <ReportsTab />}
             {tab === 'audit'     && !isViewer && !isSiteAdmin && <AuditTab />}
-            {tab === 'settings'  && canManageSystem && <SettingsTab />}
+            {tab === 'settings'  && canManageSystem && <SettingsTab initialSubTab={settingsSubTab} />}
           </ErrorBoundary>
         </main>
       </div>

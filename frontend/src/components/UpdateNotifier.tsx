@@ -10,7 +10,7 @@ interface UpdateInfo {
 
 const DISMISS_KEY_PREFIX = 'ddivault-update-dismissed-';
 
-export default function UpdateNotifier() {
+export default function UpdateNotifier({ onGoToSettings }: { onGoToSettings?: () => void }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -68,10 +68,25 @@ export default function UpdateNotifier() {
         <span>🔄</span>
         <span>DDIVault v{info.latest} is available</span>
         <span style={{ opacity: 0.7 }}>→</span>
-        <a href="/?tab=settings&settingsTab=updates"
-          style={{ color: '#fff', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-          Go to Settings
-        </a>
+        {onGoToSettings ? (
+          // In-app tab switch (no full-page reload). A reload would re-hydrate the
+          // session and the RBAC visibleItems guard would bounce the Settings tab
+          // back to the dashboard before the admin role loads — the bug this fixes.
+          <button
+            type="button"
+            onClick={onGoToSettings}
+            style={{
+              background: 'transparent', border: 'none', padding: 0, font: 'inherit',
+              color: '#fff', textDecoration: 'underline', whiteSpace: 'nowrap', cursor: 'pointer',
+            }}>
+            Go to Settings
+          </button>
+        ) : (
+          <a href="/?tab=settings&settingsTab=updates"
+            style={{ color: '#fff', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+            Go to Settings
+          </a>
+        )}
       </div>
       <button
         type="button"

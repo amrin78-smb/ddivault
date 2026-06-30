@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.6': [
+    'Fixed the "Go to Settings" link in the update-available banner — it now switches to Settings in-app instead of doing a full page reload, and opens the Updates section directly',
+    'The reload was the bug: it re-loaded the session from scratch, and the role-based tab guard bounced you back to the Dashboard before your admin role finished loading. The in-app switch avoids that race entirely',
+  ],
   '1.15.5': [
     'The schema re-apply now self-heals the NocVault Hub cross-DB read grant: schema.sql re-grants SELECT (and USAGE on schema public) to the shared nocvault_readonly role on every updater run, so tables added by future releases or created at runtime stay visible to the Hub',
     'Adds ALTER DEFAULT PRIVILEGES FOR ROLE ddivault_user so any table ddivault_user creates later is auto-readable by nocvault_readonly — no more invisible-to-Hub tables after an upgrade',
