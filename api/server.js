@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.8': [
+    'Fix: the in-app "Update" now works on suite installs. The updater resolved the app folder from a hardcoded path (C:\\Apps\\ddivault) instead of the actual install location (C:\\Apps\\DDIVault\\app), so it would run git/npm in the wrong directory. It now self-locates its app folder from the script path (matches the LogVault fix).',
+  ],
   '1.15.7': [
     'Settings: the update banner\'s "Go to Settings" now jumps to the Updates section even when you are already on the Settings page (previously it only worked when navigating in from another tab)',
     'Hardening: the nocvault_readonly Hub read-grant self-heal can no longer be aborted by a non-owner USAGE grant on the updater path — the critical SELECT grant always applies',

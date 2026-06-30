@@ -16,9 +16,17 @@ $env:PATH = @(
     $env:PATH
 ) -join ";"
 
-$AppDir      = "$InstallDir"
+# Self-locate the app root from the script's own location instead of trusting
+# -InstallDir. This script lives at <appRoot>\installer\Update-DDIVault.ps1, so the
+# real app root is the parent of the installer folder. This works on BOTH a suite
+# install (C:\Apps\DDIVault\app) and a standalone install (C:\Apps\ddivault).
+# The in-app updater (api/server.js) launches this with only -ServerIp and does NOT
+# pass -InstallDir, so the old "$AppDir = $InstallDir" default pointed at the parent
+# of the real app dir on a suite install and broke git/npm/schema. -InstallDir is
+# kept for backward-compat but no longer drives any path.
+$AppDir      = Split-Path -Parent $PSScriptRoot
 $FrontendDir = "$AppDir\frontend"
-$LogDir      = "$InstallDir\logs"
+$LogDir      = "$AppDir\logs"
 $Services    = @("DDIVault-API", "DDIVault-App", "DDIVault-Collector")
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
