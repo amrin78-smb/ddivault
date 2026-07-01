@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.10': [
+    'Fix: the Audit Log "Export CSV" failed with "Authentication required" for the same reason the report downloads did — it opened the export URL as a plain browser navigation, which does not carry the signed-in identity the super-admin-only export requires. It now downloads via an authenticated request, and surfaces any error as a toast.',
+  ],
   '1.15.9': [
     'Fix: report PDF and CSV downloads (Reports page) failed with "Authentication required". The download buttons opened the report URL as a plain browser navigation, which does not carry the signed-in user identity headers the API requires, so the reports API rejected it. Downloads now fetch the file as an authenticated request and save it directly — PDF and CSV both work again, from the report cards, the preview panel, and the "Download again" list.',
     'Download errors now surface as a toast instead of dumping a raw JSON error page in a new tab.',

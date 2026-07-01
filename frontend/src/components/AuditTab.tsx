@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { PageHeader, EmptyState, TableSkeleton, Skeleton, useRefreshKey } from '@/components/ui';
 import { useRBAC } from '@/components/RBACContext';
+import { useToast } from '@/components/Toast';
 
 // ── Types ─────────────────────────────────────────────────────
 interface AuditEntry {
@@ -84,6 +85,7 @@ function StatTile({ value, label, sub, color }: { value: React.ReactNode; label:
 
 export default function AuditTab() {
   const { canManageSystem } = useRBAC();
+  const { toast } = useToast();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [stats, setStats] = useState<AuditStats | null>(null);
   const [total, setTotal] = useState(0);
@@ -129,7 +131,12 @@ export default function AuditTab() {
   }, [load, page]);
   useRefreshKey(() => load(true));
 
-  const exportCsv = () => {
+  // Download via an AUTHENTICATED fetch, not window.open. /api/audit/export is
+  // requireSuperAdmin, and the identity is carried by the x-ddi-actor-* headers the
+  // global fetch patch injects — a plain window.open navigation sends none of them
+  // and gets a 401 "Authentication required" JSON page. fetch → blob → anchor keeps
+  // the request authenticated and still saves the file.
+  const exportCsv = async () => {
     const p = new URLSearchParams();
     if (action) p.set('action', action);
     if (entityType) p.set('entity_type', entityType);
@@ -137,7 +144,29 @@ export default function AuditTab() {
     if (from) p.set('from', new Date(from).toISOString());
     if (to) p.set('to', new Date(to).toISOString());
     if (search) p.set('q', search);
-    window.open(`/api/audit/export?${p.toString()}`, '_blank');
+    try {
+      const res = await fetch(`/api/audit/export?${p.toString()}`);
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      let filename = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      const cd = res.headers.get('content-disposition');
+      const m = cd && /filename\*?=(?:UTF-8'')?"?([^"';]+)"?/i.exec(cd);
+      if (m) { try { filename = decodeURIComponent(m[1]); } catch { filename = m[1]; } }
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      toast(`Audit export failed: ${(e as Error).message || 'error'}`, 'error');
+    }
   };
 
   const resetFilters = () => { setAction(''); setEntityType(''); setUsername(''); setFrom(''); setTo(''); setSearch(''); setPage(1); };
