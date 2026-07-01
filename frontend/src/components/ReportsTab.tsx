@@ -73,6 +73,37 @@ export default function ReportsTab() {
     setRecent(prev => [{ key: def.key, title: def.title, format: fmt, at: new Date().toLocaleString(), params }, ...prev].slice(0, 10));
   };
 
+  // Download a report file (PDF/CSV) via an AUTHENTICATED fetch. window.open() can't
+  // be used: it is a plain browser navigation that carries none of the x-ddi-actor-*
+  // auth headers the global fetch patch (AuditActor) injects, so the reports API
+  // rejects it with 401 "Authentication required". fetch → blob → anchor keeps the
+  // request authenticated and still triggers a file download.
+  const downloadReport = useCallback(async (key: string, query: string, fmt: string, title: string) => {
+    try {
+      const res = await fetch(`/api/reports/${key}?${query}`);
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON error body */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      let filename = `${key}-${new Date().toISOString().slice(0, 10)}.${fmt}`;
+      const cd = res.headers.get('content-disposition');
+      const m = cd && /filename\*?=(?:UTF-8'')?"?([^"';]+)"?/i.exec(cd);
+      if (m) { try { filename = decodeURIComponent(m[1]); } catch { filename = m[1]; } }
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      toast(`${title} (${fmt.toUpperCase()}) download failed: ${(e as Error).message || 'error'}`, 'error');
+    }
+  }, [toast]);
+
   const generate = useCallback(async (def: ReportDef) => {
     setActive(def);
     const params = buildParams(def);
@@ -89,17 +120,16 @@ export default function ReportsTab() {
       setLoading(false);
     } else {
       params.set('format', format);
-      window.open(`/api/reports/${def.key}?${params.toString()}`, '_blank');
+      downloadReport(def.key, params.toString(), format, def.title);
       logRecent(def, format, params.toString());
-      toast(`Generating ${def.title} (${format.toUpperCase()})…`, 'success');
     }
-  }, [buildParams, format, toast]);
+  }, [buildParams, format, toast, downloadReport]);
 
   const downloadActive = (fmt: 'csv' | 'pdf') => {
     if (!active) return;
     const params = buildParams(active);
     params.set('format', fmt);
-    window.open(`/api/reports/${active.key}?${params.toString()}`, '_blank');
+    downloadReport(active.key, params.toString(), fmt, active.title);
     logRecent(active, fmt, params.toString());
   };
 
@@ -126,8 +156,8 @@ export default function ReportsTab() {
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5, minHeight: 38 }}>{r.desc}</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { setFormat('view'); generate(r); }}>View</button>
-              <button className="btn" onClick={() => { setActive(r); setFormat('pdf'); const p = buildParams(r); p.set('format', 'pdf'); window.open(`/api/reports/${r.key}?${p.toString()}`, '_blank'); logRecent(r, 'pdf', p.toString()); }}>PDF</button>
-              <button className="btn" onClick={() => { setActive(r); setFormat('csv'); const p = buildParams(r); p.set('format', 'csv'); window.open(`/api/reports/${r.key}?${p.toString()}`, '_blank'); logRecent(r, 'csv', p.toString()); }}>CSV</button>
+              <button className="btn" onClick={() => { setActive(r); setFormat('pdf'); const p = buildParams(r); p.set('format', 'pdf'); downloadReport(r.key, p.toString(), 'pdf', r.title); logRecent(r, 'pdf', p.toString()); }}>PDF</button>
+              <button className="btn" onClick={() => { setActive(r); setFormat('csv'); const p = buildParams(r); p.set('format', 'csv'); downloadReport(r.key, p.toString(), 'csv', r.title); logRecent(r, 'csv', p.toString()); }}>CSV</button>
             </div>
           </div>
         ))}
@@ -226,7 +256,7 @@ export default function ReportsTab() {
                     <td>
                       {r.format !== 'view' && (
                         <button style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}
-                          onClick={() => window.open(`/api/reports/${r.key}?${r.params}`, '_blank')}>Download again</button>
+                          onClick={() => downloadReport(r.key, r.params, r.format, r.title)}>Download again</button>
                       )}
                     </td>
                   </tr>
