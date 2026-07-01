@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.11': [
+    'Security: the DHCP leases CSV export (/api/leases/export) now requires a signed-in user. It was previously unauthenticated — anyone who could reach the API could pull every lease (hostnames, MACs, IPs) without logging in. It now enforces authentication like the other exports.',
+    'The DHCP "Export CSV" button downloads via an authenticated request instead of a plain link, so it keeps working with the new guard.',
+  ],
   '1.15.10': [
     'Fix: the Audit Log "Export CSV" failed with "Authentication required" for the same reason the report downloads did — it opened the export URL as a plain browser navigation, which does not carry the signed-in identity the super-admin-only export requires. It now downloads via an authenticated request, and surfaces any error as a toast.',
   ],
@@ -315,7 +319,7 @@ db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 // ── Enterprise modules ────────────────────────────────────────
 const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
-const { requireWrite, requireSuperAdmin, attachSiteFilter } = require('./middleware/rbac');
+const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
 const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
@@ -1108,8 +1112,12 @@ app.get('/api/leases/ip/:ip/history', async (req, res) => {
   }
 });
 
-// Export leases as CSV
-app.get('/api/leases/export', async (req, res) => {
+// Export leases as CSV. Guarded by requireAuth so it can't be pulled without a
+// signed-in identity (the header-less /api/leases/export was previously open to
+// anyone who could reach the API). The download is triggered from the frontend by
+// an authenticated fetch (rides the x-ddi-actor-* header injection), not a plain
+// <a>/window.open navigation, which would carry no identity and 401.
+app.get('/api/leases/export', requireAuth, async (req, res) => {
   try {
     const rows = await db.query(
       `SELECT ip_address, hostname, mac_address, scope_id, address_state,

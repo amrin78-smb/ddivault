@@ -767,6 +767,36 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
   const { toast } = useToast();
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
+
+  // Download leases CSV via an AUTHENTICATED fetch. /api/leases/export now requires
+  // a signed-in identity (requireAuth), which is carried by the x-ddi-actor-* headers
+  // the global fetch patch injects — a plain <a>/window.open navigation sends none of
+  // them and would 401. fetch → blob → anchor keeps the request authenticated.
+  const downloadLeases = useCallback(async () => {
+    try {
+      const res = await fetch('/api/leases/export');
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      let filename = `leases-${new Date().toISOString().slice(0, 10)}.csv`;
+      const cd = res.headers.get('content-disposition');
+      const m = cd && /filename\*?=(?:UTF-8'')?"?([^"';]+)"?/i.exec(cd);
+      if (m) { try { filename = decodeURIComponent(m[1]); } catch { filename = m[1]; } }
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      toast(`Leases export failed: ${(e as Error).message || 'error'}`, 'error');
+    }
+  }, [toast]);
   const canWrite = rbacCanWrite && licenseState.canWrite;
 
   // Scopes state
@@ -1187,7 +1217,7 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
             </select>
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{leaseTotal.toLocaleString()} total</span>
-            <a href="/api/leases/export" download className="btn" style={{ textDecoration: 'none' }}>⬇ Export CSV</a>
+            <button type="button" onClick={downloadLeases} className="btn">⬇ Export CSV</button>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
