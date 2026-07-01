@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.15.12': [
+    'Security: the DHCP leases list (/api/leases) now requires a signed-in user. Like the leases export fixed in 1.15.11, the on-screen list route had no authentication guard — this closes that gap. (Broader: many other GET routes still rely only on the license gate; a full auth-hardening pass is tracked separately.)',
+  ],
   '1.15.11': [
     'Security: the DHCP leases CSV export (/api/leases/export) now requires a signed-in user. It was previously unauthenticated — anyone who could reach the API could pull every lease (hostnames, MACs, IPs) without logging in. It now enforces authentication like the other exports.',
     'The DHCP "Export CSV" button downloads via an authenticated request instead of a plain link, so it keeps working with the new guard.',
@@ -1034,7 +1037,7 @@ app.post('/api/scopes/:scopeId/exclusions', requireWrite, async (req, res) => {
 });
 
 // ── Leases ────────────────────────────────────────────────────
-app.get('/api/leases', async (req, res) => {
+app.get('/api/leases', requireAuth, async (req, res) => {
   try {
     const page    = safePage(req.query.page);
     const limit   = safeLimit(req.query.limit);
