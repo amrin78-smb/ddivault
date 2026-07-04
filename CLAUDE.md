@@ -173,17 +173,17 @@ DB_HOST=localhost
 DB_PORT=5432
 DDI_DB_NAME=ddivault
 DDI_DB_USER=ddivault_user
-DDI_DB_PASS=NVAdmin@2026
+DDI_DB_PASS=<set-in-NSSM-env>
 DDI_API_PORT=3007
 DDI_APP_PORT=3006
-NEXTAUTH_SECRET=bue3VdWszntJ24GMhfKg1QkPIEaZYC95
+NEXTAUTH_SECRET=<set-in-NSSM-env>
 NOCVAULT_HUB_URL=http://192.168.6.111:3000
 NEXT_PUBLIC_NOCVAULT_HUB_URL=http://192.168.6.111:3000
 NETVAULT_DB_HOST=localhost
 NETVAULT_DB_PORT=5432
 NETVAULT_DB_NAME=netvault
 NETVAULT_DB_USER=netvault
-NETVAULT_DB_PASS=PgAdmin@2026!
+NETVAULT_DB_PASS=<set-in-NSSM-env>
 PS_AUTH_MODE=kerberos
 PS_TIMEOUT_MS=30000
 SCOPE_WARNING_PCT=80
@@ -212,7 +212,7 @@ Existing installations must update their `.env.local` manually — this is a one
 ### Connection
 - Host: `localhost:5432`
 - Database: `ddivault`
-- User: `ddivault_user` / Password: `NVAdmin@2026`
+- User: `ddivault_user` / Password: <set-in-NSSM-env>
 
 ### Schema migration order (must run in this order)
 ```bash
@@ -608,7 +608,7 @@ CREATE INDEX IF NOT EXISTS idx_name ON table_name(column_name);
 ### Verify schema is in sync
 ```powershell
 # On server — check a table's actual columns
-$env:PGPASSWORD = "NVAdmin@2026"
+$env:PGPASSWORD = "<postgres-password>"
 & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U ddivault_user -h localhost -p 5432 -d ddivault -c "\d table_name"
 ```
 
