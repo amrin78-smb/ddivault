@@ -15,3 +15,7 @@ frontend/*.tsbuildinfo
 .claude-web-images/
 .claude-web-files/
 dns_insights.png
+
+# local demo-seed script (superseded by the bundled suite seeder in netvault/installer/seeds)
+frontend/demo-seed.js
+demo-seed.js
