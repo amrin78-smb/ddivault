@@ -274,6 +274,10 @@ GRANT SELECT ON sites, countries TO ddivault_user;
 | `dns_query_stats` | DNS query statistics history per server (qps, response time, NXDOMAIN) |
 | `dns_stale_records` | Stale DNS records (not refreshed within threshold) per zone |
 | `dns_forwarder_health` | DNS forwarder reachability + response time |
+| `saved_reports` | Named saved report "views" (report type + filter/range params JSONB) |
+| `report_schedules` | Scheduled report deliveries (cadence/hour/day, recipients TEXT[], next_run_at) |
+| `report_run_history` | Server-side history of every report generation (manual export + scheduled run) |
+| `report_email_log` | Per-recipient email delivery audit for scheduled reports (mirrors `alert_email_log`) |
 
 New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac_randomized,first_seen,last_seen_subnet}`, `ipam_addresses.{device_type,device_vendor,risk_level,is_sensitive}`, `ipam_subnets.is_sensitive`, `dns_zones.{soa_serial,soa_checked_at,replication_lag,record_count_a,record_count_ptr,record_count_cname,record_count_mx,scavenging_enabled,aging_enabled,last_scavenged}`, `ddi_servers.{health_score,health_checked_at,query_ms,is_dns_primary,dns_forwarders}`.
 
@@ -292,7 +296,8 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - **Audit trail** — `api/middleware/audit.js` (`auditContext` attaches per-request user/IP context, `writeAudit` records changes); writes to `audit_log`. Exposed via `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, and `/api/audit/export` (super-admin, CSV).
 - **RBAC** — `api/middleware/rbac.js` resolves role (`super_admin`/`admin`/`site_admin`/`viewer`) and site scope from NetVault `user_sites`; `attachSiteFilter`, `requireSuperAdmin` guards.
 - **Public REST API (v1)** — `api/v1.js` mounted at `/api/v1`, authenticated by API keys via `api/middleware/apiAuth.js` (SHA-256 hash lookup in `api_keys`, `read`/`write` permission gates, rate-limit headers, allowed-IP check, `request_count`/`last_used_at` tracking). Key management: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin).
-- **Reports** — `api/reports.js` mounted at `/api/reports`; generates PDF (via `pdfkit`) and CSV reports for IPAM/DHCP/DNS/audit. `GET /api/reports` lists types; `GET /api/reports/:type`.
+- **Reports** — `api/reports.js` mounted at `/api/reports`; generates PDF (via `pdfkit`) and CSV reports for IPAM/DHCP/DNS/audit. `GET /api/reports` lists types; `GET /api/reports/:type`. Trend reports include SVG charts drawn into the PDF; `renderPdf` is split into `buildPdfDoc`/`renderPdfToBuffer` so the renderer is reusable off-request. Exports `generateReport(db,opts)` and `generatePack(db,opts)` (multi-report "compliance pack" PDF) for the scheduler and the pack route.
+- **Report scheduling / saved views / history** — `api/reportsScheduling.js` (`createReportsSchedulingRouter`, mounted at `/api/reports` BEFORE the main reports router so `/saved`, `/schedules`, `/history`, `/pack` win over the catch-all `/:type`). Saved views + run history are open to any authenticated user (`requireAuth`/`requireWrite`); schedule create/edit/delete/run-now are `requireSuperAdmin`. Rolling date windows (`24h`/`7d`/`30d`/`90d`) persist as `range_preset` (re-resolved each run via `expandRangePreset` at the generation boundary), NOT frozen `from`/`to`. Delivery runs on the collector — see `collector/reportScheduler.js` (`runDueReports`/`deliverSchedule`/`computeNextRun`), wired into `collector.js` on a 5-min `setInterval` (re-entrancy-guarded); it generates via `generateReport` and emails via `emailer.sendReport` (attachments). **No new NSSM service or OS scheduled task** — piggybacks the existing `DDIVault-Collector`. New tables live in `scripts/schema.sql` so neither installer needs a schema edit; only `../netvault/installer/Test-NocVault-Suite.ps1` was updated (role-scoped SELECT check for the 4 new tables + version min).
 - **HA / failover monitoring** — `collector/haMonitor.js` polls DHCP failover pairs (`dhcp_failover_pairs`, `dhcp_scope_sync_status`) and DNS replication (SOA serial vs `dns_zones.soa_serial`), records `server_health_history`, fires alerts. Exposed via `GET /api/infrastructure/failover`.
 - **IPAM↔DHCP sync** — `collector/ipamSync.js` reconciles discovered DHCP scopes into IPAM supernets/subnets.
 - **Dependencies** — beyond `nodemailer` (email): `pdfkit` (+ `@types/pdfkit`) for report generation.
@@ -311,7 +316,10 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - Site health: `GET /api/site-health`, `/api/site-health/:siteId`
 - Audit: `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, `/api/audit/export` (super-admin CSV)
 - API keys: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin)
-- Reports: `GET /api/reports`, `GET /api/reports/:type` (PDF/CSV)
+- Reports: `GET /api/reports`, `GET /api/reports/:type` (PDF/CSV/JSON preview)
+- Report saved views: `GET/POST /api/reports/saved`, `PUT/DELETE /api/reports/saved/:id`
+- Report schedules: `GET /api/reports/schedules`, `POST /api/reports/schedules`, `PUT/DELETE /api/reports/schedules/:id`, `POST /api/reports/schedules/:id/run` (mutations super-admin)
+- Report history: `GET /api/reports/history?limit=` ; Compliance pack: `GET /api/reports/pack?types=a,b,c` (PDF)
 - Infrastructure: `GET /api/infrastructure/failover`
 - DNS health: `GET /api/dns/health`, `/api/dns/topology`, `/api/dns/zones/sync`, `/api/dns/zones/:name/sync`, `/api/dns/forwarders`, `/api/dns/stale-records`, `/api/dns/query-stats`, `/api/dns/scavenging`; writes `POST /api/dns/forwarders/test`, `POST /api/dns/scavenging/enable`, `POST /api/dns/stale-records/cleanup` (all under the already-proxied `/api/dns/*`)
 - Public API v1: `/api/v1/*` (API-key authenticated — subnets, supernets, dns, scopes, leases, dhcp/reservations, search, audit, health, version)
