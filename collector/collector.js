@@ -13,6 +13,7 @@ const forecastEngine  = require('./forecastEngine');   // { runForecasts(db) }
 const anomalyDetector = require('./anomalyDetector');   // { detectAnomalies(db), buildBaselines(db) }
 const healthScorer    = require('./healthScorer');      // { scoreSites(db) }
 const deviceClassifier = require('../api/deviceClassifier'); // { classifyDevice(mac,hostname), isMacRandomized(mac) }
+const reportScheduler = require('./reportScheduler'); // { runDueReports(db), deliverSchedule(db,s), computeNextRun(s,from) }
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err.message, err.stack);
@@ -52,6 +53,7 @@ const INTERVAL_ANOMALY     = 30  * 60 * 1000;      // 30 minutes
 const INTERVAL_SITEHEALTH  = 15  * 60 * 1000;      // 15 minutes
 const INTERVAL_DNS_MONITOR = 20  * 60 * 1000;      // 20 minutes — DNS infra monitoring (servers polled in parallel)
 const INTERVAL_DIGEST      = 60  * 60 * 1000;      // hourly digest + nightly-baseline tick
+const INTERVAL_REPORTS     = 5 * 60 * 1000; // scheduled report delivery check (every 5 min)
 
 const lastLogEventTime = {};
 
@@ -587,6 +589,7 @@ async function pollHealth(server)   { return ha.pollHealth(db, ps, server, serve
 async function runForecasts()   { try { const r = await forecastEngine.runForecasts(db);   log(`[Forecast] ${JSON.stringify(r)}`); } catch (e) { console.error('[Forecast] error:', e.message); } }
 async function runAnomalies()   { try { const r = await anomalyDetector.detectAnomalies(db); log(`[Anomaly] ${JSON.stringify(r)}`); } catch (e) { console.error('[Anomaly] error:', e.message); } }
 async function runSiteHealth()  { try { const r = await healthScorer.scoreSites(db);         log(`[Health] sites ${JSON.stringify(r)}`); } catch (e) { console.error('[SiteHealth] error:', e.message); } }
+async function runReportScheduler() { try { const r = await reportScheduler.runDueReports(db); if (r && (r.ran || r.failed)) log('[Reports] ' + JSON.stringify(r)); } catch (e) { console.error('[Reports] error:', e.message); } }
 
 // Poll scopes across all servers, then record one IPAM utilization snapshot per
 // cycle (self-throttled to ~hourly) for the trend chart.
@@ -707,6 +710,7 @@ async function main() {
   try { await runSiteHealth(); } catch (e) { console.error('[SiteHealth] startup error:', e.message); }
   try { await runAnomalies(); }  catch (e) { console.error('[Anomaly] startup error:', e.message); }
   try { await runDnsMonitor(); } catch (e) { console.error('[DNS-Monitor] startup error:', e.message); }
+  try { await runReportScheduler(); } catch (e) { console.error('[Reports] startup error:', e.message); }
 
   setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
   setInterval(() => pollScopesCycle(),                          INTERVAL_SCOPE_STATS);
@@ -722,6 +726,7 @@ async function main() {
   setInterval(runSiteHealth, INTERVAL_SITEHEALTH);
   setInterval(runDnsMonitor, INTERVAL_DNS_MONITOR);
   setInterval(hourlyTick,    INTERVAL_DIGEST);
+  setInterval(runReportScheduler, INTERVAL_REPORTS);
 
   log('=== DDIVault Collector running ===');
 }

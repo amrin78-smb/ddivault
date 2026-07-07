@@ -85,6 +85,18 @@ function resolveRange(q) {
   };
 }
 
+// Rolling-window presets persisted by saved views / scheduled reports. Stored as
+// `range_preset` (not frozen from/to) so a recurring report re-resolves the window on
+// each run. Expanded at the request/generation boundary so EVERY report — whether it
+// reads q.from/q.to directly or via resolveRange — sees concrete timestamps.
+const RANGE_PRESET_DAYS = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
+function expandRangePreset(q) {
+  if (!q || !q.range_preset || !RANGE_PRESET_DAYS[q.range_preset]) return q;
+  const now = new Date();
+  const from = new Date(now.getTime() - RANGE_PRESET_DAYS[q.range_preset] * 86400000);
+  return { ...q, from: from.toISOString(), to: now.toISOString() };
+}
+
 // Human-friendly duration from seconds (used for MTTR).
 function humanDuration(secs) {
   if (secs == null || isNaN(secs)) return '—';
@@ -1005,20 +1017,12 @@ function toCsv(columns, rows) {
 // ════════════════════════════════════════════════════════════
 // PDF RENDERER
 // ════════════════════════════════════════════════════════════
-function renderPdf(res, { title, company, generatedBy, dateRange, columns, rows, summary, charts, landscape, filename }) {
-  const doc = new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 36, bufferPages: true });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  doc.pipe(res);
+// ── Cover page (single report) ───────────────────────────────
+// `opts` carries the render payload plus a computed `generatedAt`.
+function drawCover(doc, opts, layout) {
+  const { title, company, generatedBy, dateRange, summary, rows, generatedAt } = opts;
+  const { pageW, left, contentW } = layout;
 
-  const pageW = doc.page.width;
-  const pageH = doc.page.height;
-  const left = doc.page.margins.left;
-  const right = pageW - doc.page.margins.right;
-  const contentW = right - left;
-  const generatedAt = new Date().toLocaleString('en-GB', { hour12: false });
-
-  // ── Cover page ───────────────────────────────────────────
   doc.rect(0, 0, pageW, 150).fill(NAVY);
   doc.rect(0, 150, pageW, 6).fill(RED);
   // logo placeholder
@@ -1059,11 +1063,21 @@ function renderPdf(res, { title, company, generatedBy, dateRange, columns, rows,
       cx += chipW;
     });
   }
+}
 
-  // ── Charts (trend reports) ───────────────────────────────
+// ── Charts (trend reports) ───────────────────────────────────
+// Adds a page and draws each ChartSpec. No-op when there are no charts,
+// so single-report output is unchanged.
+function drawCharts(doc, opts, layout, o2 = {}) {
+  const { charts } = opts;
+  const { left, contentW, pageH } = layout;
   if (Array.isArray(charts) && charts.length) {
-    doc.addPage();
-    let cy = doc.page.margins.top;
+    let cy;
+    // o2.continueOnPage: keep drawing on the current page (used by the compliance pack
+    // so a section title isn't stranded on its own blank page). Default: fresh page
+    // (single-report path — byte-identical to before).
+    if (o2.continueOnPage) { cy = doc.y + 10; }
+    else { doc.addPage(); cy = doc.page.margins.top; }
     const chartH = 150;
     const titleH = 18;
     for (const chart of charts) {
@@ -1078,9 +1092,18 @@ function renderPdf(res, { title, company, generatedBy, dateRange, columns, rows,
       cy += chartH + 24;
     }
   }
+}
 
-  // ── Data table ───────────────────────────────────────────
-  doc.addPage();
+// ── Data table ───────────────────────────────────────────────
+// Adds a page, then draws the zebra-striped table (recomputes its own
+// column geometry from `opts.columns`, so it is reusable per section).
+function drawTable(doc, opts, layout, o2 = {}) {
+  const { columns, rows } = opts;
+  const { left, contentW, pageH } = layout;
+  // o2.continueOnPage: draw on the current page instead of a fresh one (pack sections
+  // with no charts). Default: fresh page (single-report path — byte-identical).
+  if (o2.continueOnPage) { doc.y = doc.y + 10; }
+  else { doc.addPage(); }
   const rowH = 18;
   const headerH = 22;
   // scale column widths to content width
@@ -1122,8 +1145,16 @@ function renderPdf(res, { title, company, generatedBy, dateRange, columns, rows,
   if (rows.length === 0) {
     doc.fillColor(MUTED).fontSize(11).font('Helvetica-Oblique').text('No data matched the selected filters.', left, doc.y + 16, { width: contentW, align: 'center' });
   }
+}
 
-  // ── Header / footer / page numbers on every page ─────────
+// ── Header / footer / page numbers on every buffered page ────
+// Runs the bufferedPageRange loop; must be called before doc.end().
+function stampHeadersFooters(doc, { title, company, generatedAt }) {
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const left = doc.page.margins.left;
+  const right = pageW - doc.page.margins.right;
+  const contentW = right - left;
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
@@ -1139,8 +1170,157 @@ function renderPdf(res, { title, company, generatedBy, dateRange, columns, rows,
       .text(`Generated ${generatedAt}`, left, pageH - 26, { width: contentW / 2, align: 'left' });
     doc.text(`Page ${i - range.start + 1} of ${range.count}`, left + contentW / 2, pageH - 26, { width: contentW / 2, align: 'right' });
   }
+}
 
+// Build a fully-drawn single-report PDFDocument. Does NOT pipe or end() it —
+// callers choose the sink (renderPdf → res, renderPdfToBuffer → Buffer).
+function buildPdfDoc(opts) {
+  const { title, company, landscape } = opts;
+  const doc = new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 36, bufferPages: true });
+
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const left = doc.page.margins.left;
+  const right = pageW - doc.page.margins.right;
+  const contentW = right - left;
+  const generatedAt = new Date().toLocaleString('en-GB', { hour12: false });
+  const layout = { pageW, pageH, left, right, contentW };
+  const o = { ...opts, generatedAt };
+
+  drawCover(doc, o, layout);
+  drawCharts(doc, o, layout);
+  drawTable(doc, o, layout);
+  stampHeadersFooters(doc, { title, company, generatedAt });
+
+  return doc;
+}
+
+function renderPdf(res, opts) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${opts.filename}"`);
+  const doc = buildPdfDoc(opts);
+  doc.pipe(res);
   doc.end();
+}
+
+// Off-request rendering — resolves to the full PDF as a Buffer.
+function renderPdfToBuffer(opts) {
+  return new Promise((resolve, reject) => {
+    const doc = buildPdfDoc(opts);
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    doc.end();
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// OFF-REQUEST GENERATION (scheduler / emailer / multi-report pack)
+// ════════════════════════════════════════════════════════════
+
+// Runs a report's gather() and renders it to a deliverable payload — no req/res.
+async function generateReport(db, { type, query = {}, allowedSiteIds = null, format = 'pdf', actor = 'system', company }) {
+  const def = REPORTS[type];
+  if (!def) throw new Error('Unknown report type: ' + type);
+  query = expandRangePreset(query);   // rolling saved/scheduled window → concrete from/to
+  const { columns, rows, summary, charts } = await def.gather(db, query, allowedSiteIds);
+  const comp = company || await companyName(db);
+  const dateRange = (query.from || query.to)
+    ? `${query.from ? fmtDay(query.from) : '…'} → ${query.to ? fmtDay(query.to) : 'now'}`
+    : (query.as_of ? `As of ${fmtDay(query.as_of)}` : 'All time');
+  const stamp = Date.now();
+  if (format === 'csv') {
+    return { buffer: Buffer.from(toCsv(columns, rows), 'utf8'), contentType: 'text/csv', filename: `${type}-${stamp}.csv`, rowCount: rows.length, title: def.title };
+  }
+  const buffer = await renderPdfToBuffer({ title: def.title, company: comp, generatedBy: actor, dateRange, columns, rows, summary, charts, landscape: def.landscape, filename: `${type}-${stamp}.pdf` });
+  return { buffer, contentType: 'application/pdf', filename: `${type}-${stamp}.pdf`, rowCount: rows.length, title: def.title };
+}
+
+// Draws several reports into ONE PDF: a pack cover, then each report as a section
+// (its charts + table). allowedSiteIds=null for an estate-wide export.
+async function generatePack(db, { types = [], query = {}, allowedSiteIds = null, actor = 'system', company, title = 'Compliance Pack' }) {
+  query = expandRangePreset(query);   // rolling window → concrete from/to for all sections
+  const comp = company || await companyName(db);
+  const generatedAt = new Date().toLocaleString('en-GB', { hour12: false });
+  const included = (Array.isArray(types) ? types : []).filter(t => REPORTS[t]);
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const left = doc.page.margins.left;
+  const right = pageW - doc.page.margins.right;
+  const contentW = right - left;
+  const layout = { pageW, pageH, left, right, contentW };
+
+  // ── Pack cover (reuses the single-report cover style) ────
+  doc.rect(0, 0, pageW, 150).fill(NAVY);
+  doc.rect(0, 150, pageW, 6).fill(RED);
+  doc.roundedRect(left, 44, 64, 64, 10).fill(RED);
+  doc.fillColor('#fff').fontSize(30).font('Helvetica-Bold').text('N', left, 60, { width: 64, align: 'center' });
+  doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('NocVault', left + 80, 56);
+  doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DDIVault — DNS · DHCP · IPAM', left + 80, 86);
+
+  doc.fillColor(NAVY).fontSize(28).font('Helvetica-Bold').text(title, left, 230, { width: contentW });
+  doc.moveTo(left, 274).lineTo(left + 120, 274).lineWidth(3).stroke(RED);
+
+  const meta = [
+    ['Company', comp],
+    ['Generated', generatedAt],
+    ['Generated by', actor || 'system'],
+    ['Reports', String(included.length)],
+  ];
+  let my = 310;
+  doc.fontSize(11);
+  meta.forEach(([k, v]) => {
+    doc.fillColor(MUTED).font('Helvetica-Bold').text(k, left, my, { width: 120, continued: false });
+    doc.fillColor('#0f172a').font('Helvetica').text(v, left + 130, my, { width: contentW - 130 });
+    my += 24;
+  });
+
+  my += 12;
+  doc.fillColor(NAVY).fontSize(13).font('Helvetica-Bold').text('Included reports', left, my);
+  my += 22;
+  doc.fontSize(11).font('Helvetica');
+  if (included.length) {
+    included.forEach((t, i) => {
+      doc.fillColor('#0f172a').text(`${i + 1}.  ${REPORTS[t].title}`, left, my, { width: contentW });
+      my += 20;
+    });
+  } else {
+    doc.fillColor(MUTED).font('Helvetica-Oblique').text('No valid report types selected.', left, my, { width: contentW });
+  }
+
+  // ── One section per report ───────────────────────────────
+  for (const type of included) {
+    const def = REPORTS[type];
+    doc.addPage();
+    doc.fillColor(NAVY).fontSize(16).font('Helvetica-Bold').text(def.title, left, doc.page.margins.top, { width: contentW });
+    doc.moveTo(left, doc.y + 4).lineTo(left + 120, doc.y + 4).lineWidth(2).stroke(RED);
+    try {
+      const { columns, rows, summary, charts } = await def.gather(db, query, allowedSiteIds);
+      const o = { title: def.title, company: comp, columns, rows, summary, charts };
+      const hasCharts = Array.isArray(charts) && charts.length > 0;
+      // Charts (if any) continue on the section-title page; the table then flows on
+      // (its own fresh page after charts, or the title page when there are no charts).
+      drawCharts(doc, o, layout, { continueOnPage: true });
+      drawTable(doc, o, layout, { continueOnPage: !hasCharts });
+    } catch (err) {
+      doc.fillColor(RED).fontSize(11).font('Helvetica-Oblique')
+        .text(`This section failed to generate: ${err.message}`, left, doc.y + 16, { width: contentW });
+    }
+  }
+
+  stampHeadersFooters(doc, { title, company: comp, generatedAt });
+
+  const buffer = await new Promise((resolve, reject) => {
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    doc.end();
+  });
+  return { buffer, contentType: 'application/pdf', filename: 'compliance-pack-' + Date.now() + '.pdf', title };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1325,10 +1505,25 @@ function createReportsRouter(db) {
     if (!def) return res.status(404).json({ error: 'Unknown report type' });
     const format = (req.query.format || 'json').toLowerCase();
     try {
-      const { columns, rows, summary, charts, drill } = await def.gather(db, req.query, req.allowedSiteIds);
+      const query = expandRangePreset(req.query);   // rolling saved-view window → concrete from/to
+      const { columns, rows, summary, charts, drill } = await def.gather(db, query, req.allowedSiteIds);
       const safeCols = columns.map(c => ({ key: c.key, label: c.label, align: c.align || 'left' }));
 
+      // Best-effort audit of manual downloads to report_run_history. A logging
+      // failure must NEVER break the actual export, so this is wrapped + swallowed.
+      const logRun = async (fmt) => {
+        try {
+          await db.query(
+            `INSERT INTO report_run_history (report_type, format, params, row_count, status, trigger_type, generated_by)
+             VALUES ($1, $2, $3::jsonb, $4, 'success', 'manual', $5)`,
+            [req.params.type, fmt, JSON.stringify(req.query), rows.length, req.headers['x-ddi-actor'] || 'system']);
+        } catch (e) {
+          console.error(`[Reports] run-history log failed:`, e.message);
+        }
+      };
+
       if (format === 'csv') {
+        await logRun('csv');
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', `attachment; filename="${req.params.type}-${Date.now()}.csv"`);
         return res.send(toCsv(columns, rows));
@@ -1336,9 +1531,10 @@ function createReportsRouter(db) {
       if (format === 'pdf') {
         const company = await companyName(db);
         const actor = req.headers['x-ddi-actor'] || 'system';
-        const dateRange = req.query.from || req.query.to
-          ? `${req.query.from ? fmtDay(req.query.from) : '…'} → ${req.query.to ? fmtDay(req.query.to) : 'now'}`
-          : 'All time';
+        const dateRange = query.from || query.to
+          ? `${query.from ? fmtDay(query.from) : '…'} → ${query.to ? fmtDay(query.to) : 'now'}`
+          : (query.as_of ? `As of ${fmtDay(query.as_of)}` : 'All time');
+        await logRun('pdf');
         if (req.audit) req.audit({ action: 'export', entity_type: 'report', entity_name: def.title, change_summary: `Exported "${def.title}" as PDF (${rows.length} rows)` });
         return renderPdf(res, {
           title: def.title, company, generatedBy: actor, dateRange,
@@ -1361,4 +1557,4 @@ function createReportsRouter(db) {
   return router;
 }
 
-module.exports = { createReportsRouter, REPORTS };
+module.exports = { createReportsRouter, REPORTS, generateReport, generatePack };

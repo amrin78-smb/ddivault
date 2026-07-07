@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { PageHeader, EmptyState, TableSkeleton } from '@/components/ui';
 import { useToast } from '@/components/Toast';
 import { TrendChart } from './TrendChart';
 import { DateRangePicker } from './DateRangePicker';
 import { ReportDrillDrawer } from './ReportDrillDrawer';
-import { rangeToParams } from './reportTypes';
-import type { ChartSpec, DrillMeta, RangeValue } from './reportTypes';
+import { ReportScheduleModal } from './ReportScheduleModal';
+import { ReportsManagePanel } from './ReportsManagePanel';
+import { rangeToParams, rangeToDurableParams } from './reportTypes';
+import type { ChartSpec, DrillMeta, RangeValue, SavedRow, ScheduleRow } from './reportTypes';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
 const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
@@ -24,7 +26,6 @@ interface Summary { label: string; value: string | number; color?: string }
 interface ReportData { title: string; columns: Column[]; rows: Record<string, unknown>[]; summary?: Summary[]; charts?: ChartSpec[]; drill?: DrillMeta }
 interface Site { id: number; name: string }
 interface Server { id: number; hostname: string }
-interface RecentReport { key: string; title: string; format: string; at: string; params: string }
 
 // icon factory
 const I = (p: React.ReactNode) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{p}</svg>;
@@ -54,19 +55,33 @@ export default function ReportsTab() {
   const [active, setActive] = useState<ReportDef | null>(null);
   const [preview, setPreview] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [recent, setRecent] = useState<RecentReport[]>([]);
 
   // shared filter state
   const [siteId, setSiteId] = useState('');
   const [serverId, setServerId] = useState('');
   const [range, setRange] = useState<RangeValue>({ preset: '30d' });
   const [retentionDays, setRetentionDays] = useState(90);
-  const [format, setFormat] = useState<'view' | 'csv' | 'pdf'>('view');
 
   // drill-down state
   const [drillOpen, setDrillOpen] = useState(false);
   const [drillEntity, setDrillEntity] = useState<string | null>(null);
   const [drillId, setDrillId] = useState<string | number | null>(null);
+
+  // manage panel + schedule modal (server-side history / saved views)
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleInitial, setScheduleInitial] = useState<ScheduleRow | null>(null);
+
+  // preview table controls (Phase 5): pagination, column chooser, sort
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+
+  // compliance pack selection
+  const [packSel, setPackSel] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api('/sites').then(d => setSites(d.data || [])).catch(() => {});
@@ -91,6 +106,14 @@ export default function ReportsTab() {
     }).catch(() => {});
   }, []);
 
+  // Reset preview-table controls whenever a new preview loads.
+  useEffect(() => {
+    setPage(1);
+    setSortKey(null);
+    setHiddenCols(new Set());
+    setColMenuOpen(false);
+  }, [preview]);
+
   const buildParams = useCallback((def: ReportDef) => {
     const p = new URLSearchParams();
     // Every report now accepts a universal date range.
@@ -99,10 +122,6 @@ export default function ReportsTab() {
     if (def.filters.includes('server') && serverId) p.set('server_id', serverId);
     return p;
   }, [siteId, serverId, range]);
-
-  const logRecent = (def: ReportDef, fmt: string, params: string) => {
-    setRecent(prev => [{ key: def.key, title: def.title, format: fmt, at: new Date().toLocaleString(), params }, ...prev].slice(0, 10));
-  };
 
   // Download a report file (PDF/CSV) via an AUTHENTICATED fetch. window.open() can't
   // be used: it is a plain browser navigation that carries none of the x-ddi-actor-*
@@ -135,37 +154,152 @@ export default function ReportsTab() {
     }
   }, [toast]);
 
-  const generate = useCallback(async (def: ReportDef) => {
+  // mode is passed EXPLICITLY (not read from state): relying on a `format` state var
+  // meant a prior PDF/CSV click left it stale so the next "View" downloaded a file
+  // instead of previewing.
+  const generate = useCallback(async (def: ReportDef, mode: 'view' | 'csv' | 'pdf' = 'view') => {
     setActive(def);
     const params = buildParams(def);
-    if (format === 'view') {
+    if (mode === 'view') {
       setLoading(true);
       setPreview(null);
       try {
         const data = await api(`/reports/${def.key}?${params.toString()}`);
         setPreview(data);
-        logRecent(def, 'view', params.toString());
       } catch (e) {
         toast((e as Error).message || 'Report failed', 'error');
       }
       setLoading(false);
     } else {
-      params.set('format', format);
-      downloadReport(def.key, params.toString(), format, def.title);
-      logRecent(def, format, params.toString());
+      params.set('format', mode);
+      downloadReport(def.key, params.toString(), mode, def.title);
     }
-  }, [buildParams, format, toast, downloadReport]);
+  }, [buildParams, toast, downloadReport]);
+
+  // Durable params for PERSISTED contexts (save-view / schedule): rolling presets are
+  // stored as range_preset so a recurring report re-resolves the window each run,
+  // instead of freezing today's absolute from/to. Mirrors buildParams for site/server.
+  const buildDurableParams = useCallback((def: ReportDef) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(rangeToDurableParams(range))) p.set(k, v);
+    if (def.filters.includes('site') && siteId) p.set('site_id', siteId);
+    if (def.filters.includes('server') && serverId) p.set('server_id', serverId);
+    return p;
+  }, [siteId, serverId, range]);
 
   const downloadActive = (fmt: 'csv' | 'pdf') => {
     if (!active) return;
     const params = buildParams(active);
     params.set('format', fmt);
     downloadReport(active.key, params.toString(), fmt, active.title);
-    logRecent(active, fmt, params.toString());
+  };
+
+  // Load a saved view: switch to its report and fetch the preview from its stored params.
+  const handleLoadSaved = useCallback(async (row: SavedRow) => {
+    const def = REPORTS.find(r => r.key === row.report_type);
+    if (!def) return;
+    setActive(def);
+    const strParams: Record<string, string> = {};
+    for (const [k, v] of Object.entries(row.params)) strParams[k] = String(v);
+    const qs = new URLSearchParams(strParams).toString();
+    setLoading(true);
+    setPreview(null);
+    try {
+      const data = await api(`/reports/${def.key}?${qs}`);
+      setPreview(data);
+    } catch (e) {
+      toast((e as Error).message || 'Report failed', 'error');
+    }
+    setLoading(false);
+  }, [toast]);
+
+  const handleOpenSchedule = useCallback((row: ScheduleRow | null) => {
+    setScheduleInitial(row);
+    setScheduleOpen(true);
+  }, []);
+
+  const togglePack = (key: string) => {
+    setPackSel(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const generatePack = () => {
+    const selected = Array.from(packSel);
+    if (selected.length === 0) return;
+    const packParams = new URLSearchParams(rangeToParams(range));
+    if (siteId) packParams.set('site_id', siteId);
+    if (serverId) packParams.set('server_id', serverId);
+    const qs = 'types=' + encodeURIComponent(selected.join(',')) + '&' + packParams.toString();
+    downloadReport('pack', qs, 'pdf', 'Compliance Pack');
+  };
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const toggleCol = (key: string) => {
+    setHiddenCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        // Guard: never hide the last visible column.
+        if (preview && preview.columns.length - next.size <= 1) return prev;
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const showSite = active?.filters.includes('site');
   const showServer = active?.filters.includes('server');
+
+  const reportsList = REPORTS.map(r => ({ key: r.key, title: r.title }));
+  // Persisted contexts use durable params (rolling range_preset, not frozen from/to).
+  const currentContext = active
+    ? { report_type: active.key, title: active.title, params: Object.fromEntries(buildDurableParams(active)) }
+    : null;
+  // Memoized so a ReportsTab re-render while the create-schedule modal is open doesn't
+  // hand it a fresh `defaults` object and wipe the user's in-progress form.
+  const scheduleDefaults = useMemo(
+    () => (scheduleInitial
+      ? null
+      : (active ? { report_type: active.key, params: Object.fromEntries(buildDurableParams(active)), name: active.title + ' report' } : null)),
+    [scheduleInitial, active, buildDurableParams],
+  );
+
+  // Derived preview-table data (sorting / column filtering / pagination).
+  const sortedRows = (() => {
+    if (!preview) return [] as Record<string, unknown>[];
+    const rows = preview.rows.slice();
+    if (sortKey) {
+      const k = sortKey;
+      rows.sort((a, b) => {
+        const as = String(a[k] ?? '').trim();
+        const bs = String(b[k] ?? '').trim();
+        // Only treat as numeric when the WHOLE cell is a number — parseFloat would
+        // accept "192.168.1.5" as 192.168 (mis-sorting IPs/CIDRs/dates by prefix).
+        const an = as !== '' && !isNaN(Number(as)) ? Number(as) : NaN;
+        const bn = bs !== '' && !isNaN(Number(bs)) ? Number(bs) : NaN;
+        let cmp: number;
+        if (Number.isFinite(an) && Number.isFinite(bn)) cmp = an - bn;
+        else cmp = as.localeCompare(bs, undefined, { numeric: true });
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return rows;
+  })();
+  const visibleCols = preview ? preview.columns.filter(c => !hiddenCols.has(c.key)) : [];
+  const total = sortedRows.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const clampedPage = Math.min(Math.max(1, page), pageCount);
+  const pagedRows = sortedRows.slice((clampedPage - 1) * pageSize, (clampedPage - 1) * pageSize + pageSize);
+  const firstRow = total === 0 ? 0 : (clampedPage - 1) * pageSize + 1;
+  const lastRow = Math.min(total, clampedPage * pageSize);
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -184,12 +318,31 @@ export default function ReportsTab() {
             </div>
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5, minHeight: 38 }}>{r.desc}</div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { setFormat('view'); generate(r); }}>View</button>
-              <button className="btn" onClick={() => { setActive(r); setFormat('pdf'); const p = buildParams(r); p.set('format', 'pdf'); downloadReport(r.key, p.toString(), 'pdf', r.title); logRecent(r, 'pdf', p.toString()); }}>PDF</button>
-              <button className="btn" onClick={() => { setActive(r); setFormat('csv'); const p = buildParams(r); p.set('format', 'csv'); downloadReport(r.key, p.toString(), 'csv', r.title); logRecent(r, 'csv', p.toString()); }}>CSV</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => generate(r, 'view')}>View</button>
+              <button className="btn" onClick={() => { setActive(r); const p = buildParams(r); p.set('format', 'pdf'); downloadReport(r.key, p.toString(), 'pdf', r.title); }}>PDF</button>
+              <button className="btn" onClick={() => { setActive(r); const p = buildParams(r); p.set('format', 'csv'); downloadReport(r.key, p.toString(), 'csv', r.title); }}>CSV</button>
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Compliance Pack */}
+      <div style={{ ...CARD, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <div style={TITLE}>Compliance Pack</div>
+          <div style={MUTED}>Bundle multiple reports into a single PDF using the current date range and filters.</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {REPORTS.map(r => (
+            <label key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: packSel.has(r.key) ? 'var(--surface-subtle)' : 'var(--bg-card)' }}>
+              <input type="checkbox" checked={packSel.has(r.key)} onChange={() => togglePack(r.key)} />
+              {r.title}
+            </label>
+          ))}
+        </div>
+        <div>
+          <button className="btn btn-primary" disabled={packSel.size === 0} onClick={generatePack}>Generate Pack (PDF)</button>
+        </div>
       </div>
 
       {/* Filters for the active report */}
@@ -209,7 +362,7 @@ export default function ReportsTab() {
               {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}</option>)}
             </select>
           )}
-          <button className="btn btn-primary" onClick={() => { setFormat('view'); generate(active); }}>Apply &amp; View</button>
+          <button className="btn btn-primary" onClick={() => generate(active, 'view')}>Apply &amp; View</button>
         </div>
       )}
 
@@ -219,8 +372,25 @@ export default function ReportsTab() {
           <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={TITLE}>{preview?.title || active?.title || 'Report preview'}</div>
             {preview && (
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ ...MUTED, padding: '6px 0' }}>{preview.rows.length} rows</span>
+                {preview.rows.length > 0 && (
+                  <div style={{ position: 'relative' }}>
+                    <button className="btn" onClick={() => setColMenuOpen(o => !o)}>Columns ▾</button>
+                    {colMenuOpen && (
+                      <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
+                        {preview.columns.map(c => (
+                          <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                            <input type="checkbox" checked={!hiddenCols.has(c.key)} onChange={() => toggleCol(c.key)} />
+                            {c.label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button className="btn" onClick={() => downloadActive('csv')}>Download CSV</button>
                 <button className="btn btn-primary" onClick={() => downloadActive('pdf')}>Download PDF</button>
               </div>
@@ -249,81 +419,72 @@ export default function ReportsTab() {
           {loading ? <TableSkeleton rows={8} cols={6} /> : preview && preview.rows.length === 0 ? (
             <EmptyState title="No data" message="No records matched the selected filters." />
           ) : preview && (
-            <div style={{ maxHeight: 520, overflow: 'auto' }}>
-              <table className="data-table">
-                <thead><tr>{preview.columns.map(c => <th key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left' }}>{c.label}</th>)}</tr></thead>
-                <tbody>
-                  {preview.rows.map((row, ri) => (
-                    <tr
-                      key={ri}
-                      style={preview.drill ? { cursor: 'pointer' } : undefined}
-                      title={preview.drill ? 'Click for detail' : undefined}
-                      onClick={preview.drill ? () => {
-                        const idv = row[preview.drill!.idKey];
-                        if (idv != null) {
-                          setDrillEntity(preview.drill!.entity);
-                          setDrillId(idv as string | number);
-                          setDrillOpen(true);
-                        }
-                      } : undefined}
-                    >
-                      {preview.columns.map(c => (
-                        <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
-                          {String(row[c.key] ?? '—')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div style={{ maxHeight: 520, overflow: 'auto' }}>
+                <table className="data-table">
+                  <thead><tr>{visibleCols.map(c => (
+                    <th key={c.key} onClick={() => handleSort(c.key)} title="Sort" style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', cursor: 'pointer' }}>
+                      {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </th>
+                  ))}</tr></thead>
+                  <tbody>
+                    {pagedRows.map((row, ri) => (
+                      <tr
+                        key={ri}
+                        style={preview.drill ? { cursor: 'pointer' } : undefined}
+                        title={preview.drill ? 'Click for detail' : undefined}
+                        onClick={preview.drill ? () => {
+                          const idv = row[preview.drill!.idKey];
+                          if (idv != null) {
+                            setDrillEntity(preview.drill!.entity);
+                            setDrillId(idv as string | number);
+                            setDrillOpen(true);
+                          }
+                        } : undefined}
+                      >
+                        {visibleCols.map(c => (
+                          <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
+                            {String(row[c.key] ?? '—')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* pagination footer */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 18px', borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+                <span style={MUTED}>Showing {firstRow}–{lastRow} of {total}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button className="btn" disabled={clampedPage <= 1} onClick={() => setPage(Math.max(1, clampedPage - 1))}>Prev</button>
+                  <span style={{ ...MUTED, minWidth: 90, textAlign: 'center' }}>Page {clampedPage} of {pageCount}</span>
+                  <button className="btn" disabled={clampedPage >= pageCount} onClick={() => setPage(Math.min(pageCount, clampedPage + 1))}>Next</button>
+                  <select className="input" value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}>
+                    <option value={25}>25 / page</option>
+                    <option value={50}>50 / page</option>
+                    <option value={100}>100 / page</option>
+                  </select>
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {/* Two-column footer: recent + scheduled */}
-      <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 14 }}>
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>Recent Reports</div></div>
-          {recent.length === 0 ? (
-            <EmptyState title="No reports generated yet" message="Generate a report above and it will be listed here for quick re-download." />
-          ) : (
-            <table className="data-table">
-              <thead><tr><th>Report</th><th>Format</th><th>Generated</th><th></th></tr></thead>
-              <tbody>
-                {recent.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{ fontWeight: 600 }}>{r.title}</td>
-                    <td><span className="badge badge-gray">{r.format.toUpperCase()}</span></td>
-                    <td style={{ ...MUTED }}>{r.at}</td>
-                    <td>
-                      {r.format !== 'view' && (
-                        <button style={{ fontSize: 'var(--text-xs)', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer' }}
-                          onClick={() => downloadReport(r.key, r.params, r.format, r.title)}>Download again</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)' }}><div style={TITLE}>Scheduled Reports</div></div>
-          <div style={{ padding: 28, textAlign: 'center' }}>
-            <div style={{ display: 'inline-flex', padding: 12, borderRadius: 12, background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-muted)', marginBottom: 12 }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            </div>
-            <div style={{ fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' }}>Coming soon</div>
-            <div style={{ ...MUTED, marginTop: 6, maxWidth: 280, marginLeft: 'auto', marginRight: 'auto' }}>
-              Schedule any report to be generated and emailed on a recurring basis — daily, weekly or monthly.
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Saved views · run history · schedules */}
+      <ReportsManagePanel reports={reportsList} currentContext={currentContext} refreshKey={refreshKey} onLoadSaved={handleLoadSaved} onOpenSchedule={handleOpenSchedule} />
 
       <ReportDrillDrawer open={drillOpen} entity={drillEntity} id={drillId} onClose={() => setDrillOpen(false)} />
+
+      <ReportScheduleModal
+        open={scheduleOpen}
+        initial={scheduleInitial}
+        reports={reportsList}
+        defaults={scheduleDefaults}
+        onClose={() => setScheduleOpen(false)}
+        onSaved={() => { setRefreshKey(k => k + 1); }}
+      />
     </div>
   );
 }

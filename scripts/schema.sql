@@ -731,6 +731,76 @@ BEGIN
 END
 $$;
 
+-- ═══════════════════════════════════════════════════════════════
+-- Reporting Phase 4 — saved views, scheduled delivery, run history,
+-- per-recipient email log. All idempotent (CREATE ... IF NOT EXISTS).
+-- Driven by api/reportsScheduling.js (CRUD) and collector/reportScheduler.js
+-- (the DDIVault-Collector process picks up due schedules — no OS task).
+-- ═══════════════════════════════════════════════════════════════
+
+-- Saved report "views": a report type + its filter/range params, named and reusable.
+CREATE TABLE IF NOT EXISTS saved_reports (
+  id           SERIAL PRIMARY KEY,
+  name         TEXT NOT NULL,
+  report_type  TEXT NOT NULL,
+  params       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_saved_reports_type ON saved_reports(report_type);
+
+-- Scheduled report deliveries: generate a report on a cadence and email it.
+CREATE TABLE IF NOT EXISTS report_schedules (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL,
+  report_type   TEXT NOT NULL,
+  params        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  format        TEXT NOT NULL DEFAULT 'pdf',          -- 'pdf' | 'csv'
+  cadence       TEXT NOT NULL DEFAULT 'weekly',       -- 'daily' | 'weekly' | 'monthly'
+  hour          INT  NOT NULL DEFAULT 7,              -- 0-23, local server time
+  day_of_week   INT,                                  -- 0(Sun)..6(Sat) for weekly
+  day_of_month  INT,                                  -- 1..28 for monthly
+  recipients    TEXT[] NOT NULL DEFAULT '{}',         -- email addresses
+  enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+  last_run_at   TIMESTAMPTZ,
+  last_status   TEXT,
+  next_run_at   TIMESTAMPTZ,
+  created_by    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_report_schedules_due ON report_schedules(enabled, next_run_at);
+
+-- Server-side history of every report generation (manual export or scheduled run).
+CREATE TABLE IF NOT EXISTS report_run_history (
+  id            BIGSERIAL PRIMARY KEY,
+  schedule_id   INT REFERENCES report_schedules(id) ON DELETE SET NULL,
+  report_type   TEXT NOT NULL,
+  format        TEXT NOT NULL DEFAULT 'pdf',
+  params        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  row_count     INT,
+  status        TEXT NOT NULL DEFAULT 'success',       -- 'success' | 'failed'
+  error_msg     TEXT,
+  trigger_type  TEXT NOT NULL DEFAULT 'manual',        -- 'manual' | 'scheduled'
+  generated_by  TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_report_run_history_time ON report_run_history(created_at DESC);
+
+-- Per-recipient email delivery audit for scheduled reports (mirrors alert_email_log).
+CREATE TABLE IF NOT EXISTS report_email_log (
+  id            BIGSERIAL PRIMARY KEY,
+  schedule_id   INT REFERENCES report_schedules(id) ON DELETE SET NULL,
+  run_id        BIGINT REFERENCES report_run_history(id) ON DELETE SET NULL,
+  recipient     TEXT NOT NULL,
+  subject       TEXT,
+  status        TEXT NOT NULL,                          -- 'sent' | 'failed' | 'skipped'
+  error_msg     TEXT,
+  sent_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_report_email_log_time ON report_email_log(sent_at DESC);
+
 -- ── Done ─────────────────────────────────────────────────────
 -- Verify with:
 --   \dt

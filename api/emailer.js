@@ -267,6 +267,45 @@ async function sendTestEmail(db, toEmail) {
   }
 }
 
+// Branded HTML body for a scheduled report email. `meta` rows are [label, value].
+function renderReportHtml(reportTitle, intro, meta) {
+  const rows = (meta || []).map(([k, v]) => detailRow(k, v)).join('');
+  return (
+    '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">' +
+    headerBar() +
+    '<div style="padding:24px;font-family:Inter,Arial,sans-serif;font-size:14px;color:#1a2744;">' +
+    '<p style="margin:0 0 8px 0;font-weight:700;font-size:16px;">' + esc(reportTitle) + '</p>' +
+    '<p style="margin:0 0 16px 0;color:#64748b;">' + esc(intro || 'Your scheduled DDIVault report is attached.') + '</p>' +
+    (rows ? '<table style="width:100%;border-collapse:collapse;">' + rows + '</table>' : '') +
+    '</div>' +
+    footerBar() +
+    '</div>'
+  );
+}
+
+// Send a scheduled report email with an attachment (PDF or CSV). Safe to call from
+// the collector process — reads smtp_config from the DB and decrypts via credStore
+// (NEXTAUTH_SECRET). Returns { ok, error?, skipped? }.
+async function sendReport(db, toEmail, subject, html, attachments) {
+  try {
+    const cfg = await getSmtpConfig(db);
+    if (!cfg || !cfg.enabled) {
+      return { ok: false, skipped: true, error: 'SMTP not enabled' };
+    }
+    const transport = buildTransport(cfg);
+    await transport.sendMail({
+      from: fromHeader(cfg),
+      to: toEmail,
+      subject,
+      html,
+      attachments: attachments || [],   // [{ filename, content: <Buffer> }]
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 async function sendAlert(db, alert, recipients) {
   recipients = recipients || [];
 
@@ -420,6 +459,8 @@ module.exports = {
   sendTestEmail,
   sendAlert,
   sendDigest,
+  sendReport,
+  renderReportHtml,
   ackToken,
   verifyAckToken,
 };

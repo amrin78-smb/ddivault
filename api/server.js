@@ -25,6 +25,13 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.17.0': [
+    'Reports: scheduled delivery — schedule any report to be generated and emailed (PDF or CSV attachment) on a daily, weekly or monthly cadence to a chosen recipient list. Runs on the collector; managed under Reports (super-admin).',
+    'Reports: saved views — name and save a report with its filters and time range, then reload it in one click.',
+    'Reports: server-side report history replaces the old in-session "recent" list — every manual export and scheduled run is recorded (type, format, rows, status, who, when).',
+    'Reports: compliance pack — combine several reports into a single downloadable PDF for audits.',
+    'Reports: preview table now paginates, supports show/hide columns and click-to-sort for large result sets.',
+  ],
   '1.16.0': [
     'Reports: added a universal time-period chooser (24h / 7d / 30d / 90d / custom range / point-in-time "as of") that applies to every report, replacing the old per-report date and 7/30/90-day controls.',
     'Reports: five new trend reports with charts — DHCP Utilization Trend, IPAM Growth Trend, DNS Query Trend, Alerts & Anomalies Trend (with MTTR), and Site Health Trend — driven by the historical snapshot tables the collector already records.',
@@ -331,6 +338,7 @@ const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
 const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
+const { createReportsSchedulingRouter } = require('./reportsScheduling');
 const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
@@ -4295,6 +4303,10 @@ app.get('/api/dashboard/pillars', async (req, res) => {
 });
 
 // ── Reports router + public REST API v1 ───────────────────────
+// The scheduling/admin router (saved views, schedules, history, compliance pack)
+// mounts FIRST so its specific paths (/saved, /schedules, /history, /pack) win over
+// the main reports router's catch-all /:type route.
+app.use('/api/reports', createReportsSchedulingRouter(db));
 app.use('/api/reports', createReportsRouter(db));
 app.use('/api/v1', createV1Router({ db, psWrite, getServerWithAuth }));
 

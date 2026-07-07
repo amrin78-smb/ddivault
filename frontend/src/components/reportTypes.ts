@@ -30,6 +30,45 @@ export interface RangeValue {
 
 export const SERIES_COLORS = ['#3b82f6', '#C8102E', '#16a34a', '#d97706', '#8b5cf6', '#0ea5e9'];
 
+// ── Phase 4 — saved views, schedules, run history (server-side) ──
+export interface SavedRow {
+  id: number;
+  name: string;
+  report_type: string;
+  params: Record<string, unknown>;
+  created_by?: string | null;
+  created_at?: string;
+}
+
+export interface ScheduleRow {
+  id: number;
+  name: string;
+  report_type: string;
+  params: Record<string, unknown>;
+  format: 'pdf' | 'csv';
+  cadence: 'daily' | 'weekly' | 'monthly';
+  hour: number;
+  day_of_week: number | null;
+  day_of_month: number | null;
+  recipients: string[];
+  enabled: boolean;
+  last_run_at?: string | null;
+  last_status?: string | null;
+  next_run_at?: string | null;
+}
+
+export interface HistoryRow {
+  id: number | string;   // BIGSERIAL — node-postgres returns int8 as a string
+  report_type: string;
+  format: string;
+  status: string;
+  row_count: number | null;
+  trigger_type: string;
+  generated_by?: string | null;
+  created_at: string;
+  schedule_id?: number | null;
+}
+
 // days each fixed preset covers
 const PRESET_DAYS: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
 
@@ -72,6 +111,30 @@ export function rangeToParams(v: RangeValue): Record<string, string> {
     out.from = from.toISOString();
     out.to = now.toISOString();
   }
+  return out;
+}
+
+// Like rangeToParams but for PERSISTED contexts (saved views, scheduled reports):
+// a rolling preset is stored as `range_preset` and re-resolved to a fresh window
+// server-side at generation time — NOT frozen into absolute from/to (which would make
+// a recurring "last 30 days" schedule report the same stale window forever). Custom /
+// as-of ranges are inherently fixed, so they stay absolute.
+export function rangeToDurableParams(v: RangeValue): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v) return out;
+  if (v.preset === 'custom') {
+    const from = dateStrToIso(v.from || '');
+    const to = dateStrToIso(v.to || '', true);
+    if (from) out.from = from;
+    if (to) out.to = to;
+    return out;
+  }
+  if (v.preset === 'asof') {
+    const asOf = dateStrToIso(v.asOf || '', true);
+    if (asOf) out.as_of = asOf;
+    return out;
+  }
+  if (PRESET_DAYS[v.preset]) out.range_preset = v.preset;
   return out;
 }
 
