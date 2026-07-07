@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.17.2': [
+    'Security: CSV report exports now neutralize spreadsheet formula injection — a cell beginning with =, +, -, @ (or a tab/return) is prefixed with a quote so Excel/Sheets treats it as text, not a formula.',
+    'Security: report and drill-down errors no longer return the raw database error text to the client — the detail is logged server-side and the response is a generic message.',
+  ],
   '1.17.1': [
     'Reports fix: scheduled deliveries are now crash- and concurrency-safe — a schedule is atomically "claimed" before it runs, so a collector restart mid-send or an overlapping tick can no longer email the same report twice, and a failed delivery no longer re-fires every cycle.',
     'Reports fix: "Run now" no longer double-sends — it is guarded against running at the same time as the scheduled run and no longer shifts the schedule\'s cadence (so it will not cause a same-day duplicate).',

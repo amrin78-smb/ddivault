@@ -1068,7 +1068,12 @@ const REPORTS = {
 // ════════════════════════════════════════════════════════════
 function toCsv(columns, rows) {
   const esc = (v) => {
-    const s = v == null ? '' : String(v);
+    let s = v == null ? '' : String(v);
+    // CSV/formula-injection guard: a cell that starts with = + - @ (or a leading
+    // tab/CR) is treated as a formula by Excel/Sheets. Report cells include
+    // network-sourced strings (hostnames, DNS records, device names), so neutralize
+    // by prefixing a single quote before the normal quote-escaping below.
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const header = columns.map(c => esc(c.label)).join(',');
@@ -1558,7 +1563,9 @@ function createReportsRouter(db) {
       return res.status(404).json({ error: 'Unknown entity' });
     } catch (err) {
       console.error(`[Reports] drill ${entity} error:`, err.message);
-      res.status(500).json({ error: 'Drill failed', detail: err.message });
+      // Log the detail server-side only; do NOT return err.message to the client
+      // (it can carry raw Postgres text — table/constraint names, etc.).
+      res.status(500).json({ error: 'Drill failed' });
     }
   });
 
@@ -1616,7 +1623,9 @@ function createReportsRouter(db) {
       // mid-render throw can't be answered with a 500 JSON — that would emit a second
       // set of headers (ERR_HTTP_HEADERS_SENT). Just tear the stream down cleanly.
       if (res.headersSent) { try { res.end(); } catch { /* stream already gone */ } return; }
-      res.status(500).json({ error: 'Report generation failed', detail: err.message });
+      // Detail logged above; return a generic message so raw DB error text is not
+      // disclosed to the client.
+      res.status(500).json({ error: 'Report generation failed' });
     }
   });
 
