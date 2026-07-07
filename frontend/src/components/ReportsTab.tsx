@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PageHeader, EmptyState, TableSkeleton } from '@/components/ui';
 import { useToast } from '@/components/Toast';
+import { TrendChart } from './TrendChart';
+import { DateRangePicker } from './DateRangePicker';
+import { ReportDrillDrawer } from './ReportDrillDrawer';
+import { rangeToParams } from './reportTypes';
+import type { ChartSpec, DrillMeta, RangeValue } from './reportTypes';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
 const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
@@ -16,7 +21,7 @@ async function api(path: string, opts?: RequestInit) {
 
 interface Column { key: string; label: string; align?: string }
 interface Summary { label: string; value: string | number; color?: string }
-interface ReportData { title: string; columns: Column[]; rows: Record<string, unknown>[]; summary?: Summary[] }
+interface ReportData { title: string; columns: Column[]; rows: Record<string, unknown>[]; summary?: Summary[]; charts?: ChartSpec[]; drill?: DrillMeta }
 interface Site { id: number; name: string }
 interface Server { id: number; hostname: string }
 interface RecentReport { key: string; title: string; format: string; at: string; params: string }
@@ -26,15 +31,20 @@ const I = (p: React.ReactNode) => <svg width="22" height="22" viewBox="0 0 24 24
 
 interface ReportDef {
   key: string; title: string; desc: string; icon: React.ReactNode; color: string;
-  filters: ('site' | 'server' | 'dates' | 'days')[];
+  filters: ('site' | 'server')[];
 }
 const REPORTS: ReportDef[] = [
   { key: 'subnet-utilization', title: 'Subnet Utilization', desc: 'Per-subnet usage, exhaustion forecast and site breakdown.', color: 'var(--blue)', filters: ['site'], icon: I(<><line x1="4" y1="20" x2="4" y2="10"/><line x1="10" y1="20" x2="10" y2="4"/><line x1="16" y1="20" x2="16" y2="14"/><line x1="22" y1="20" x2="2" y2="20"/></>) },
   { key: 'ip-inventory', title: 'IP Address Inventory', desc: 'Every assigned IP with hostname, MAC, lease status and stale flags.', color: 'var(--teal)', filters: ['site'], icon: I(<><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></>) },
   { key: 'dhcp-health', title: 'DHCP Scope Health', desc: 'Current vs peak utilization, trend and days-to-exhaustion per scope.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
   { key: 'dns-zones', title: 'DNS Zone Report', desc: 'Record counts by type, SOA serials and stale-record analysis.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></>) },
-  { key: 'network-changes', title: 'Network Change Report', desc: 'Who changed what and when — built for change-management reviews.', color: 'var(--purple)', filters: ['dates'], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
-  { key: 'rogue-devices', title: 'Security / Rogue Devices', desc: 'Unknown live devices with no DHCP lease — first/last seen.', color: 'var(--red)', filters: ['site', 'days'], icon: I(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>) },
+  { key: 'network-changes', title: 'Network Change Report', desc: 'Who changed what and when — built for change-management reviews.', color: 'var(--purple)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'rogue-devices', title: 'Security / Rogue Devices', desc: 'Unknown live devices with no DHCP lease — first/last seen.', color: 'var(--red)', filters: ['site'], icon: I(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>) },
+  { key: 'dhcp-utilization-trend', title: 'DHCP Utilization Trend', desc: 'Utilization over time across scopes with peak tracking.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'ipam-growth-trend', title: 'IPAM Growth Trend', desc: 'IP consumption growth across the estate over time.', color: 'var(--teal)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'dns-query-trend', title: 'DNS Query Trend', desc: 'Query volume, NXDOMAIN rate and response time over time.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><polyline points="7 14 11 10 14 13 19 7"/></>) },
+  { key: 'alert-anomaly-trend', title: 'Alerts & Anomalies Trend', desc: 'Alert and anomaly volume per day with MTTR.', color: 'var(--purple)', filters: ['site'], icon: I(<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>) },
+  { key: 'site-health-trend', title: 'Site Health Trend', desc: 'Per-site health score trend over time.', color: 'var(--blue)', filters: ['site'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
 ];
 
 export default function ReportsTab() {
@@ -49,25 +59,46 @@ export default function ReportsTab() {
   // shared filter state
   const [siteId, setSiteId] = useState('');
   const [serverId, setServerId] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [days, setDays] = useState('30');
+  const [range, setRange] = useState<RangeValue>({ preset: '30d' });
+  const [retentionDays, setRetentionDays] = useState(90);
   const [format, setFormat] = useState<'view' | 'csv' | 'pdf'>('view');
+
+  // drill-down state
+  const [drillOpen, setDrillOpen] = useState(false);
+  const [drillEntity, setDrillEntity] = useState<string | null>(null);
+  const [drillId, setDrillId] = useState<string | number | null>(null);
 
   useEffect(() => {
     api('/sites').then(d => setSites(d.data || [])).catch(() => {});
     api('/servers').then(d => setServers(d.data || [])).catch(() => {});
+    // Best-effort: read retention_days from app settings (defaults to 90).
+    api('/settings').then(d => {
+      try {
+        let rows: unknown = d;
+        if (d && typeof d === 'object' && Array.isArray((d as { data?: unknown }).data)) {
+          rows = (d as { data: unknown[] }).data;
+        }
+        let val: unknown;
+        if (Array.isArray(rows)) {
+          const hit = (rows as Array<Record<string, unknown>>).find(r => r.key === 'retention_days');
+          val = hit?.value;
+        } else if (rows && typeof rows === 'object') {
+          val = (rows as Record<string, unknown>).retention_days;
+        }
+        const n = Number(val);
+        if (Number.isFinite(n) && n > 0) setRetentionDays(n);
+      } catch { /* fall back to default 90 */ }
+    }).catch(() => {});
   }, []);
 
   const buildParams = useCallback((def: ReportDef) => {
     const p = new URLSearchParams();
+    // Every report now accepts a universal date range.
+    for (const [k, v] of Object.entries(rangeToParams(range))) p.set(k, v);
     if (def.filters.includes('site') && siteId) p.set('site_id', siteId);
     if (def.filters.includes('server') && serverId) p.set('server_id', serverId);
-    if (def.filters.includes('dates') && from) p.set('from', new Date(from).toISOString());
-    if (def.filters.includes('dates') && to) p.set('to', new Date(to).toISOString());
-    if (def.filters.includes('days') && days) p.set('days', days);
     return p;
-  }, [siteId, serverId, from, to, days]);
+  }, [siteId, serverId, range]);
 
   const logRecent = (def: ReportDef, fmt: string, params: string) => {
     setRecent(prev => [{ key: def.key, title: def.title, format: fmt, at: new Date().toLocaleString(), params }, ...prev].slice(0, 10));
@@ -135,8 +166,6 @@ export default function ReportsTab() {
 
   const showSite = active?.filters.includes('site');
   const showServer = active?.filters.includes('server');
-  const showDates = active?.filters.includes('dates');
-  const showDays = active?.filters.includes('days');
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -164,9 +193,10 @@ export default function ReportsTab() {
       </div>
 
       {/* Filters for the active report */}
-      {active && (active.filters.length > 0) && (
+      {active && (
         <div style={{ ...CARD, padding: 14, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ ...TITLE, fontSize: 'var(--text-base)' }}>{active.title} filters:</span>
+          <DateRangePicker value={range} onChange={setRange} maxDays={retentionDays} />
           {showSite && (
             <select className="input" value={siteId} onChange={e => setSiteId(e.target.value)}>
               <option value="">All sites</option>
@@ -177,12 +207,6 @@ export default function ReportsTab() {
             <select className="input" value={serverId} onChange={e => setServerId(e.target.value)}>
               <option value="">All servers</option>
               {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}</option>)}
-            </select>
-          )}
-          {showDates && <><input className="input" type="date" value={from} onChange={e => setFrom(e.target.value)} title="From" /><input className="input" type="date" value={to} onChange={e => setTo(e.target.value)} title="To" /></>}
-          {showDays && (
-            <select className="input" value={days} onChange={e => setDays(e.target.value)}>
-              {['7', '30', '90'].map(d => <option key={d} value={d}>Last {d} days</option>)}
             </select>
           )}
           <button className="btn btn-primary" onClick={() => { setFormat('view'); generate(active); }}>Apply &amp; View</button>
@@ -215,6 +239,13 @@ export default function ReportsTab() {
             </div>
           )}
 
+          {/* trend charts */}
+          {preview?.charts && preview.charts.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 18px', borderBottom: '1px solid var(--border-light)' }}>
+              {preview.charts.map((c, i) => <TrendChart key={i} chart={c} />)}
+            </div>
+          )}
+
           {loading ? <TableSkeleton rows={8} cols={6} /> : preview && preview.rows.length === 0 ? (
             <EmptyState title="No data" message="No records matched the selected filters." />
           ) : preview && (
@@ -223,7 +254,19 @@ export default function ReportsTab() {
                 <thead><tr>{preview.columns.map(c => <th key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left' }}>{c.label}</th>)}</tr></thead>
                 <tbody>
                   {preview.rows.map((row, ri) => (
-                    <tr key={ri}>
+                    <tr
+                      key={ri}
+                      style={preview.drill ? { cursor: 'pointer' } : undefined}
+                      title={preview.drill ? 'Click for detail' : undefined}
+                      onClick={preview.drill ? () => {
+                        const idv = row[preview.drill!.idKey];
+                        if (idv != null) {
+                          setDrillEntity(preview.drill!.entity);
+                          setDrillId(idv as string | number);
+                          setDrillOpen(true);
+                        }
+                      } : undefined}
+                    >
                       {preview.columns.map(c => (
                         <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
                           {String(row[c.key] ?? '—')}
@@ -279,6 +322,8 @@ export default function ReportsTab() {
           </div>
         </div>
       </div>
+
+      <ReportDrillDrawer open={drillOpen} entity={drillEntity} id={drillId} onClose={() => setDrillOpen(false)} />
     </div>
   );
 }

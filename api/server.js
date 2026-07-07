@@ -25,6 +25,13 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.16.0': [
+    'Reports: added a universal time-period chooser (24h / 7d / 30d / 90d / custom range / point-in-time "as of") that applies to every report, replacing the old per-report date and 7/30/90-day controls.',
+    'Reports: five new trend reports with charts — DHCP Utilization Trend, IPAM Growth Trend, DNS Query Trend, Alerts & Anomalies Trend (with MTTR), and Site Health Trend — driven by the historical snapshot tables the collector already records.',
+    'Reports: trend charts now render both on-screen (interactive SVG) and inside the exported PDF (vector-drawn line/area/bar charts with axes, gridlines and legends).',
+    'Reports: drill-down — click any DHCP scope, IPAM subnet or DNS zone row to open a detail drawer with its history chart, key facts and underlying records.',
+    'Reports: point-in-time DHCP scope health can now be resolved "as of" a past date from utilization history.',
+  ],
   '1.15.12': [
     'Security: the DHCP leases list (/api/leases) now requires a signed-in user. Like the leases export fixed in 1.15.11, the on-screen list route had no authentication guard — this closes that gap. (Broader: many other GET routes still rely only on the license gate; a full auth-hardening pass is tracked separately.)',
   ],
