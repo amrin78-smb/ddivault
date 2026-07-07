@@ -72,6 +72,12 @@ export interface HistoryRow {
 // days each fixed preset covers
 const PRESET_DAYS: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
 
+// True when a custom range is inverted (from is after to). Compared as YYYY-MM-DD
+// strings, which sort chronologically. Used to block emitting a degenerate window.
+export function isCustomRangeInverted(v: RangeValue): boolean {
+  return v?.preset === 'custom' && !!v.from && !!v.to && v.from > v.to;
+}
+
 // Convert a `YYYY-MM-DD` date-input string to an ISO timestamp.
 // endOfDay=true snaps to 23:59:59.999 local time so a `to` bound is inclusive.
 function dateStrToIso(d: string, endOfDay = false): string | null {
@@ -91,8 +97,14 @@ export function rangeToParams(v: RangeValue): Record<string, string> {
   if (!v) return out;
 
   if (v.preset === 'custom') {
-    const from = dateStrToIso(v.from || '');
-    const to = dateStrToIso(v.to || '', true);
+    // Normalize an inverted range (from > to) by swapping, so a degenerate window is
+    // never emitted even if the UI guard is bypassed. The picker also surfaces an
+    // inline message and blocks Apply & View before it reaches here.
+    let fromStr = v.from || '';
+    let toStr = v.to || '';
+    if (fromStr && toStr && fromStr > toStr) { const t = fromStr; fromStr = toStr; toStr = t; }
+    const from = dateStrToIso(fromStr);
+    const to = dateStrToIso(toStr, true);
     if (from) out.from = from;
     if (to) out.to = to;
     return out;

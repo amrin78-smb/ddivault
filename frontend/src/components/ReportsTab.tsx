@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PageHeader, EmptyState, TableSkeleton } from '@/components/ui';
 import { useToast } from '@/components/Toast';
 import { TrendChart } from './TrendChart';
@@ -8,12 +8,17 @@ import { DateRangePicker } from './DateRangePicker';
 import { ReportDrillDrawer } from './ReportDrillDrawer';
 import { ReportScheduleModal } from './ReportScheduleModal';
 import { ReportsManagePanel } from './ReportsManagePanel';
-import { rangeToParams, rangeToDurableParams } from './reportTypes';
+import { rangeToParams, rangeToDurableParams, isCustomRangeInverted } from './reportTypes';
 import type { ChartSpec, DrillMeta, RangeValue, SavedRow, ScheduleRow } from './reportTypes';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
 const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
 const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
+
+// Fixed-window presets and the days they span (ascending) — used to clamp the active
+// preset to what retention actually allows (falls back to the widest allowed window).
+const PRESET_DAY_MAP: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
+const PRESET_ORDER_ASC: Array<'24h' | '7d' | '30d' | '90d'> = ['24h', '7d', '30d', '90d'];
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
@@ -62,6 +67,11 @@ export default function ReportsTab() {
   const [range, setRange] = useState<RangeValue>({ preset: '30d' });
   const [retentionDays, setRetentionDays] = useState(90);
 
+  // Sequence guard for the preview loaders: a slow earlier request must not overwrite a
+  // newer one. Every generate()/handleLoadSaved() bumps this and only commits if it is
+  // still the latest call by the time its fetch resolves. Mirrors ReportsManagePanel.
+  const previewSeq = useRef(0);
+
   // drill-down state
   const [drillOpen, setDrillOpen] = useState(false);
   const [drillEntity, setDrillEntity] = useState<string | null>(null);
@@ -105,6 +115,22 @@ export default function ReportsTab() {
       } catch { /* fall back to default 90 */ }
     }).catch(() => {});
   }, []);
+
+  // Clamp the active date preset to what retention allows. When retentionDays loads (or
+  // changes) and the current preset's window exceeds it, fall back to the WIDEST allowed
+  // fixed preset (e.g. 30d→7d→24h). Custom / as-of ranges are exempt. This keeps the
+  // picker from showing a disabled preset as active and stops "Apply & View" emitting a
+  // window wider than retention.
+  useEffect(() => {
+    setRange(prev => {
+      const days = PRESET_DAY_MAP[prev.preset];
+      if (days == null || days <= retentionDays) return prev; // custom/asof or already fits
+      const allowed = PRESET_ORDER_ASC.filter(p => PRESET_DAY_MAP[p] <= retentionDays);
+      const best = allowed.length ? allowed[allowed.length - 1] : '24h';
+      if (best === prev.preset) return prev;
+      return { ...prev, preset: best };
+    });
+  }, [retentionDays]);
 
   // Reset preview-table controls whenever a new preview loads.
   useEffect(() => {
@@ -158,23 +184,33 @@ export default function ReportsTab() {
   // meant a prior PDF/CSV click left it stale so the next "View" downloaded a file
   // instead of previewing.
   const generate = useCallback(async (def: ReportDef, mode: 'view' | 'csv' | 'pdf' = 'view') => {
+    // Block a degenerate custom window before it is emitted (F4).
+    if (isCustomRangeInverted(range)) {
+      toast('Start date must be on or before end date.', 'error');
+      return;
+    }
     setActive(def);
     const params = buildParams(def);
     if (mode === 'view') {
+      // Out-of-order guard (F1): capture this call's sequence; only the newest call may
+      // commit its result so a slow earlier fetch can't overwrite a newer report.
+      const seq = ++previewSeq.current;
       setLoading(true);
       setPreview(null);
       try {
         const data = await api(`/reports/${def.key}?${params.toString()}`);
+        if (seq !== previewSeq.current) return; // superseded by a newer request
         setPreview(data);
       } catch (e) {
+        if (seq !== previewSeq.current) return;
         toast((e as Error).message || 'Report failed', 'error');
       }
-      setLoading(false);
+      if (seq === previewSeq.current) setLoading(false);
     } else {
       params.set('format', mode);
       downloadReport(def.key, params.toString(), mode, def.title);
     }
-  }, [buildParams, toast, downloadReport]);
+  }, [buildParams, toast, downloadReport, range]);
 
   // Durable params for PERSISTED contexts (save-view / schedule): rolling presets are
   // stored as range_preset so a recurring report re-resolves the window each run,
@@ -202,15 +238,20 @@ export default function ReportsTab() {
     const strParams: Record<string, string> = {};
     for (const [k, v] of Object.entries(row.params)) strParams[k] = String(v);
     const qs = new URLSearchParams(strParams).toString();
+    // Out-of-order guard (F1): shares previewSeq with generate() so whichever loader fires
+    // last wins and header/preview can't desync.
+    const seq = ++previewSeq.current;
     setLoading(true);
     setPreview(null);
     try {
       const data = await api(`/reports/${def.key}?${qs}`);
+      if (seq !== previewSeq.current) return;
       setPreview(data);
     } catch (e) {
+      if (seq !== previewSeq.current) return;
       toast((e as Error).message || 'Report failed', 'error');
     }
-    setLoading(false);
+    if (seq === previewSeq.current) setLoading(false);
   }, [toast]);
 
   const handleOpenSchedule = useCallback((row: ScheduleRow | null) => {
@@ -248,7 +289,7 @@ export default function ReportsTab() {
         next.delete(key);
       } else {
         // Guard: never hide the last visible column.
-        if (preview && preview.columns.length - next.size <= 1) return prev;
+        if (preview && (preview.columns?.length ?? 0) - next.size <= 1) return prev;
         next.add(key);
       }
       return next;
@@ -275,7 +316,7 @@ export default function ReportsTab() {
   // Derived preview-table data (sorting / column filtering / pagination).
   const sortedRows = (() => {
     if (!preview) return [] as Record<string, unknown>[];
-    const rows = preview.rows.slice();
+    const rows = (preview.rows ?? []).slice();
     if (sortKey) {
       const k = sortKey;
       rows.sort((a, b) => {
@@ -293,7 +334,7 @@ export default function ReportsTab() {
     }
     return rows;
   })();
-  const visibleCols = preview ? preview.columns.filter(c => !hiddenCols.has(c.key)) : [];
+  const visibleCols = preview ? (preview.columns ?? []).filter(c => !hiddenCols.has(c.key)) : [];
   const total = sortedRows.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const clampedPage = Math.min(Math.max(1, page), pageCount);
@@ -373,13 +414,13 @@ export default function ReportsTab() {
             <div style={TITLE}>{preview?.title || active?.title || 'Report preview'}</div>
             {preview && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ ...MUTED, padding: '6px 0' }}>{preview.rows.length} rows</span>
-                {preview.rows.length > 0 && (
+                <span style={{ ...MUTED, padding: '6px 0' }}>{preview.rows?.length ?? 0} rows</span>
+                {(preview.rows?.length ?? 0) > 0 && (
                   <div style={{ position: 'relative' }}>
                     <button className="btn" onClick={() => setColMenuOpen(o => !o)}>Columns ▾</button>
                     {colMenuOpen && (
                       <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
-                        {preview.columns.map(c => (
+                        {(preview.columns ?? []).map(c => (
                           <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
@@ -416,7 +457,7 @@ export default function ReportsTab() {
             </div>
           )}
 
-          {loading ? <TableSkeleton rows={8} cols={6} /> : preview && preview.rows.length === 0 ? (
+          {loading ? <TableSkeleton rows={8} cols={6} /> : preview && (preview.rows?.length ?? 0) === 0 ? (
             <EmptyState title="No data" message="No records matched the selected filters." />
           ) : preview && (
             <>

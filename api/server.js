@@ -25,6 +25,13 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.17.1': [
+    'Reports fix: scheduled deliveries are now crash- and concurrency-safe — a schedule is atomically "claimed" before it runs, so a collector restart mid-send or an overlapping tick can no longer email the same report twice, and a failed delivery no longer re-fires every cycle.',
+    'Reports fix: "Run now" no longer double-sends — it is guarded against running at the same time as the scheduled run and no longer shifts the schedule\'s cadence (so it will not cause a same-day duplicate).',
+    'Reports fix: the report view no longer shows mismatched data when you switch reports quickly — a slower earlier request can no longer overwrite a newer one (header, table and drill/download now always match).',
+    'Reports fix: invalid time-period or filter values now return a clean error instead of a 500 that exposed internal database text; the date-range presets are also clamped to your data-retention window.',
+    'Reports fix: point-in-time ("as of") DHCP health now computes Peak and Forecast from that historical date instead of mixing in present-day figures.',
+  ],
   '1.17.0': [
     'Reports: scheduled delivery — schedule any report to be generated and emailed (PDF or CSV attachment) on a daily, weekly or monthly cadence to a chosen recipient list. Runs on the collector; managed under Reports (super-admin).',
     'Reports: saved views — name and save a report with its filters and time range, then reload it in one click.',

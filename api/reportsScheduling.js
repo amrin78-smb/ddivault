@@ -360,7 +360,12 @@ function createReportsSchedulingRouter(db) {
     }
   });
 
-  // Run a schedule immediately (generate + email + log run/email + update state).
+  // Run a schedule immediately (generate + email + log run/email history as a
+  // 'manual' trigger). This deliberately does NOT advance/rewrite next_run_at or
+  // the cadence — the normal scheduled run still fires as planned (avoids a
+  // same-day duplicate). An in-flight guard inside deliverSchedule prevents this
+  // from delivering concurrently with the auto tick (or a second click) for the
+  // same schedule; if it's already running we return 409 instead of double-sending.
   router.post('/schedules/:id/run', requireSuperAdmin, async (req, res) => {
     try {
       const id = parseIntOrNull(req.params.id);
@@ -369,7 +374,14 @@ function createReportsSchedulingRouter(db) {
       if (!existing.rows.length) return res.status(404).json({ error: 'Schedule not found' });
       const row = existing.rows[0];
 
-      const r = await scheduler.deliverSchedule(db, row);
+      const r = await scheduler.deliverSchedule(db, row, {
+        triggerType: 'manual',
+        updateState: false,
+        generatedBy: actor(req),
+      });
+      if (r && r.busy) {
+        return res.status(409).json({ error: 'Schedule is already running', result: r });
+      }
       res.json({ ok: r && r.status === 'success', result: r });
     } catch (err) {
       fail(res, err);

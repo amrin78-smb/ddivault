@@ -1,6 +1,6 @@
 'use client';
 
-import { RangePreset, RangeValue } from './reportTypes';
+import { RangePreset, RangeValue, isCustomRangeInverted } from './reportTypes';
 
 const PRESETS: { key: RangePreset; label: string; days?: number }[] = [
   { key: '24h', label: '24h', days: 1 },
@@ -38,6 +38,7 @@ export function DateRangePicker({
 }): JSX.Element {
   const minAttr = maxDays != null ? minStr(maxDays) : undefined;
   const maxAttr = todayStr();
+  const inverted = isCustomRangeInverted(value);
 
   const setPreset = (preset: RangePreset) => onChange({ ...value, preset });
 
@@ -79,6 +80,11 @@ export function DateRangePicker({
             title="To"
             onChange={e => onChange({ ...value, to: e.target.value })}
           />
+          {inverted && (
+            <span style={{ color: 'var(--tint-danger-fg, var(--primary))', fontSize: 'var(--text-sm)' }}>
+              Start date must be on or before end date.
+            </span>
+          )}
         </>
       )}
 

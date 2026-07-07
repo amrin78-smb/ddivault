@@ -72,16 +72,58 @@ async function companyName(db) {
   } catch { return 'NocVault'; }
 }
 
+// ── Input validation (hardening) ──────────────────────────────
+// Time-period params (from/to/as_of) and numeric filters (server_id/site_id/…)
+// are parameterized ($n) so there's no injection risk, but malformed input
+// (e.g. ?from=lastweek, ?server_id=abc) previously reached Postgres and threw
+// "invalid input syntax…", caught by the generic handler and surfaced as an
+// HTTP 500 that LEAKS the raw DB message. These helpers validate/normalize such
+// input UP FRONT and throw a typed 400 with a generic message before any query
+// runs, so genuinely bad input never reaches the DB (or the 500 handler).
+class BadRequestError extends Error {
+  constructor(message) { super(message); this.name = 'BadRequestError'; this.status = 400; }
+}
+
+// Validate a single date-ish param. Absent → null. Present-but-unparseable →
+// throws BadRequestError. Accepts ISO-8601 / YYYY-MM-DD (anything Date.parse
+// understands); normalizes to ISO so downstream params are consistent.
+function dateParam(v, name) {
+  if (v == null || v === '') return null;
+  const t = Date.parse(String(v));
+  if (Number.isNaN(t)) throw new BadRequestError(`invalid ${name}`);
+  return new Date(t).toISOString();
+}
+
+// Validate an integer filter param. Absent → null. Present-but-non-integer
+// (e.g. 'abc', '1.5', '5x') → throws BadRequestError. Returns a Number.
+function intParam(v, name) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  if (!/^-?\d+$/.test(s)) throw new BadRequestError(`invalid ${name}`);
+  return parseInt(s, 10);
+}
+
+// Validate + normalize the time-period chooser params into { from, to, asOf }
+// (ISO strings or null). Throws BadRequestError on malformed input.
+function parseRangeParams(q) {
+  q = q || {};
+  return {
+    from: dateParam(q.from, 'from'),
+    to: dateParam(q.to, 'to'),
+    asOf: dateParam(q.as_of, 'as_of'),
+  };
+}
+
 // ── Universal date range (Phase 1) ────────────────────────────
 // Returns { from, to, asOf }. `days` is honored for backward-compat by the
 // individual reports that already understand it (rogue-devices) and is exposed
-// here so trend reports can fall back to a default window.
+// here so trend reports can fall back to a default window. Time-period params
+// are validated (throws a typed 400 on malformed input) BEFORE any query runs.
 function resolveRange(q) {
+  const { from, to, asOf } = parseRangeParams(q);
   return {
-    from: q.from || null,
-    to: q.to || null,
-    asOf: q.as_of || null,
-    days: (q.days != null && q.days !== '') ? parseInt(q.days) : null,
+    from, to, asOf,
+    days: intParam(q && q.days, 'days'),
   };
 }
 
@@ -235,7 +277,8 @@ function drawChart(doc, x0, y0, w, h, chart) {
 async function reportSubnetUtilization(db, q, allowedSiteIds) {
   const params = [];
   const conds = [];
-  if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`s.site_id = $${params.length}`); }
+  const siteId = intParam(q.site_id, 'site_id');
+  if (siteId != null) { params.push(siteId); conds.push(`s.site_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`s.site_id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
@@ -283,11 +326,13 @@ async function reportSubnetUtilization(db, q, allowedSiteIds) {
 async function reportIpInventory(db, q, allowedSiteIds) {
   const params = [];
   const conds = [];
-  if (q.subnet_id) { params.push(parseInt(q.subnet_id)); conds.push(`a.subnet_id = $${params.length}`); }
+  const subnetId = intParam(q.subnet_id, 'subnet_id');
+  const siteId = intParam(q.site_id, 'site_id');
+  if (subnetId != null) { params.push(subnetId); conds.push(`a.subnet_id = $${params.length}`); }
   if (q.status) { params.push(q.status); conds.push(`a.status = $${params.length}`); }
-  if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`sn.site_id = $${params.length}`); }
+  if (siteId != null) { params.push(siteId); conds.push(`sn.site_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`sn.site_id = ANY($${params.length}::int[])`); }
-  const staleDays = parseInt(q.stale_days || '30');
+  const staleDays = intParam(q.stale_days, 'stale_days') ?? 30;
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
     `SELECT host(a.ip_address) AS ip, a.hostname, a.mac_address, a.status,
@@ -336,7 +381,8 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
   const range = resolveRange(q);
   const params = [];
   const conds = [];
-  if (q.server_id) { params.push(parseInt(q.server_id)); conds.push(`sc.server_id = $${params.length}`); }
+  const serverId = intParam(q.server_id, 'server_id');
+  if (serverId != null) { params.push(serverId); conds.push(`sc.server_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   let r;
@@ -369,14 +415,23 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
         ORDER BY sc.percent_used DESC`, params);
   }
 
-  // peak + forecast from history
+  // peak + forecast from history — must honor as_of so a historical snapshot is
+  // annotated with the peak/forecast for the 14 days ENDING AT as_of, not today's.
+  // When as_of is unset, keep the present-relative (NOW - 14d) window.
   const ids = r.rows.map(x => x.id);
   const histMap = {};
   if (ids.length) {
-    const h = await db.query(
-      `SELECT scope_id, percent_used, recorded_at FROM dhcp_scope_history
-        WHERE scope_id = ANY($1) AND recorded_at > NOW() - INTERVAL '14 days'
-        ORDER BY scope_id, recorded_at ASC`, [ids]);
+    const h = range.asOf
+      ? await db.query(
+          `SELECT scope_id, percent_used, recorded_at FROM dhcp_scope_history
+            WHERE scope_id = ANY($1)
+              AND recorded_at <= $2
+              AND recorded_at > $2::timestamptz - INTERVAL '14 days'
+            ORDER BY scope_id, recorded_at ASC`, [ids, range.asOf])
+      : await db.query(
+          `SELECT scope_id, percent_used, recorded_at FROM dhcp_scope_history
+            WHERE scope_id = ANY($1) AND recorded_at > NOW() - INTERVAL '14 days'
+            ORDER BY scope_id, recorded_at ASC`, [ids]);
     for (const row of h.rows) {
       (histMap[row.scope_id] = histMap[row.scope_id] || []).push(row);
     }
@@ -421,7 +476,8 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
 async function reportDnsZones(db, q, allowedSiteIds) {
   const params = [];
   const conds = [];
-  if (q.server_id) { params.push(parseInt(q.server_id)); conds.push(`z.server_id = $${params.length}`); }
+  const serverId = intParam(q.server_id, 'server_id');
+  if (serverId != null) { params.push(serverId); conds.push(`z.server_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const r = await db.query(
@@ -474,10 +530,11 @@ async function reportDnsZones(db, q, allowedSiteIds) {
 }
 
 async function reportNetworkChanges(db, q, allowedSiteIds) {
+  const range = resolveRange(q);
   const params = [];
   const conds = [];
-  if (q.from) { params.push(q.from); conds.push(`timestamp >= $${params.length}`); }
-  if (q.to) { params.push(q.to); conds.push(`timestamp <= $${params.length}`); }
+  if (range.from) { params.push(range.from); conds.push(`timestamp >= $${params.length}`); }
+  if (range.to) { params.push(range.to); conds.push(`timestamp <= $${params.length}`); }
   if (q.username) { params.push(q.username); conds.push(`username = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`site_id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
@@ -521,10 +578,11 @@ async function reportNetworkChanges(db, q, allowedSiteIds) {
 
 async function reportRogueDevices(db, q, allowedSiteIds) {
   const range = resolveRange(q);
-  const days = parseInt(q.days || '30');
+  const days = range.days != null ? range.days : 30;
   const params = [days];
   const conds = [`a.status = 'unknown'`];
-  if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`sn.site_id = $${params.length}`); }
+  const siteId = intParam(q.site_id, 'site_id');
+  if (siteId != null) { params.push(siteId); conds.push(`sn.site_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`sn.site_id = ANY($${params.length}::int[])`); }
   // Optional explicit window (Phase 1): device active within [from, to] by last_seen,
   // and first appeared on/before `to`.
@@ -578,10 +636,12 @@ async function reportRogueDevices(db, q, allowedSiteIds) {
 async function reportDhcpUtilizationTrend(db, q, allowedSiteIds) {
   const range = resolveRange(q);
 
+  const serverId = intParam(q.server_id, 'server_id');
+
   // Daily avg + peak across scopes (chart)
   const dp = [];
   const dc = [];
-  if (q.server_id) { dp.push(parseInt(q.server_id)); dc.push(`sc.server_id = $${dp.length}`); }
+  if (serverId != null) { dp.push(serverId); dc.push(`sc.server_id = $${dp.length}`); }
   if (allowedSiteIds != null) { dp.push(allowedSiteIds); dc.push(`srv.site_id = ANY($${dp.length}::int[])`); }
   if (range.from) { dp.push(range.from); dc.push(`h.recorded_at >= $${dp.length}`); }
   else { dc.push(`h.recorded_at >= NOW() - INTERVAL '30 days'`); }
@@ -604,7 +664,7 @@ async function reportDhcpUtilizationTrend(db, q, allowedSiteIds) {
   // Per-scope table: current util + peak within range
   const sp = [];
   const sc = [];
-  if (q.server_id) { sp.push(parseInt(q.server_id)); sc.push(`sc.server_id = $${sp.length}`); }
+  if (serverId != null) { sp.push(serverId); sc.push(`sc.server_id = $${sp.length}`); }
   if (allowedSiteIds != null) { sp.push(allowedSiteIds); sc.push(`srv.site_id = ANY($${sp.length}::int[])`); }
   let peakFrom = `h.recorded_at >= NOW() - INTERVAL '30 days'`;
   if (range.from) { sp.push(range.from); peakFrom = `h.recorded_at >= $${sp.length}`; }
@@ -750,7 +810,8 @@ async function reportDnsQueryTrend(db, q, allowedSiteIds) {
   const range = resolveRange(q);
   const params = [];
   const conds = [];
-  if (q.server_id) { params.push(parseInt(q.server_id)); conds.push(`d.server_id = $${params.length}`); }
+  const serverId = intParam(q.server_id, 'server_id');
+  if (serverId != null) { params.push(serverId); conds.push(`d.server_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
   if (range.from) { params.push(range.from); conds.push(`d.recorded_at >= $${params.length}`); }
   else { conds.push(`d.recorded_at >= NOW() - INTERVAL '30 days'`); }
@@ -816,7 +877,7 @@ async function reportDnsQueryTrend(db, q, allowedSiteIds) {
 
 async function reportAlertAnomalyTrend(db, q, allowedSiteIds) {
   const range = resolveRange(q);
-  const siteId = q.site_id ? parseInt(q.site_id) : null;
+  const siteId = intParam(q.site_id, 'site_id');
   // A caller is "site scoped" when RBAC restricts them (allowedSiteIds set) OR they
   // picked an explicit site in the filter. In that mode the anomaly series is
   // suppressed (see below) and the alert series is filtered by site.
@@ -910,7 +971,8 @@ async function reportSiteHealthTrend(db, q, allowedSiteIds) {
   const range = resolveRange(q);
   const params = [];
   const conds = [];
-  if (q.site_id) { params.push(parseInt(q.site_id)); conds.push(`site_id = $${params.length}`); }
+  const siteId = intParam(q.site_id, 'site_id');
+  if (siteId != null) { params.push(siteId); conds.push(`site_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`site_id = ANY($${params.length}::int[])`); }
   if (range.from) { params.push(range.from); conds.push(`calculated_at >= $${params.length}`); }
   else { conds.push(`calculated_at >= NOW() - INTERVAL '30 days'`); }
@@ -1545,6 +1607,10 @@ function createReportsRouter(db) {
       // json (default — used by the preview panel)
       res.json({ title: def.title, columns: safeCols, rows, summary, charts, drill });
     } catch (err) {
+      // Malformed time-period / numeric params are validated up front (before any
+      // query runs) → answer with a clean 400 and a generic message, never leaking
+      // the raw DB error via the 500 path below.
+      if (err instanceof BadRequestError) return res.status(400).json({ error: err.message });
       console.error(`[Reports] ${req.params.type} error:`, err.message);
       // For the PDF path renderPdf() has already set headers and piped the doc, so a
       // mid-render throw can't be answered with a 500 JSON — that would emit a second
