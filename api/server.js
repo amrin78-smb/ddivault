@@ -25,6 +25,12 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.19.0': [
+    'Reports page redesigned into a two-pane layout: a grouped report catalog on the left (Inventory, DHCP, DNS, Security & change, Trends) and a workspace on the right with tabs (View, Saved views, Scheduled, Report pack) and a sticky filter bar — no more one long scroll.',
+    'PDF reports look much cleaner: fixed garbled arrows/≥ symbols, removed the stray blank pages, and wide tables (long server FQDNs) now fit on one line in landscape without overlapping rows.',
+    'DHCP Scope Health PDF now includes visuals: a per-scope utilization bar (green/amber/red by threshold) and a 14-day trend sparkline per scope.',
+    'Scope drill-down: long values (e.g. server names) in the summary cards now wrap cleanly instead of overflowing, with the full value on hover.',
+  ],
   '1.18.0': [
     'Reports: the scope drill-down chart now honors the report\'s selected date range. Previously "Scope Utilization" always showed 90 days even when you\'d picked 7d/30d/custom — now it matches your selection (and the chart title reflects the actual window).',
     'Reports: the DHCP Scope Health report gains a "scopes" multi-select filter — pick specific scopes to report on instead of all of them. Searchable, with All/Clear, and it applies to View, PDF, CSV, and saved/scheduled reports. Empty selection = all scopes (unchanged).',

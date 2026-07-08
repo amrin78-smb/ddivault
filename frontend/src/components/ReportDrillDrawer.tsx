@@ -151,23 +151,41 @@ export function ReportDrillDrawer({
             <>
               {/* Facts grid */}
               {data.facts && data.facts.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10 }}>
-                  {data.facts.map((f, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        background: 'var(--bg-primary)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 10,
-                        padding: '10px 14px',
-                      }}
-                    >
-                      <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: f.color || 'var(--text-primary)', lineHeight: 1 }}>
-                        {f.value}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'start' }}>
+                  {data.facts.map((f, i) => {
+                    // Long values (e.g. a fully-qualified server hostname) need room to
+                    // breathe — let the card span two columns so it isn't crushed next to
+                    // the compact utilization/percentage cards.
+                    const isLong = String(f.value).length > 16;
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          background: 'var(--bg-primary)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 10,
+                          padding: '10px 14px',
+                          minWidth: 0,
+                          gridColumn: isLong ? 'span 2' : undefined,
+                        }}
+                      >
+                        <div
+                          title={String(f.value)}
+                          style={{
+                            fontSize: 'var(--text-xl)',
+                            fontWeight: 800,
+                            color: f.color || 'var(--text-primary)',
+                            lineHeight: 1.15,
+                            overflowWrap: 'anywhere',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {f.value}
+                        </div>
+                        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 4 }}>{f.label}</div>
                       </div>
-                      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 4 }}>{f.label}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

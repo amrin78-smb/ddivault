@@ -36,6 +36,33 @@ function fmtDay(d) {
 function pct(n) { return `${(parseFloat(n) || 0).toFixed(1)}%`; }
 function num(n) { return (n == null || n === '') ? '—' : String(n); }
 
+// ── PDF glyph safety ──────────────────────────────────────────
+// pdfkit's built-in Helvetica renders with WinAnsi (CP1252) encoding, which lacks
+// many of the Unicode glyphs we use in labels/summaries (→ ≥ ≤ – — • curly quotes,
+// NBSP). Those render as mojibake ("!'"). `pdfSafe` maps them to ASCII equivalents.
+// It is applied ONLY at the pdfkit text layer (see installPdfSafeText) — the web/JSON
+// and CSV outputs keep the original Unicode untouched.
+function pdfSafe(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/[→➜➔➙➡⇒⮕]/g, 'to') // → ➜ ➔ ➙ ➡ ⇒ ⮕
+    .replace(/≥/g, '>=')                                        // ≥
+    .replace(/≤/g, '<=')                                        // ≤
+    .replace(/[–—―]/g, '-')                           // – — ―
+    .replace(/•/g, '-')                                         // •
+    .replace(/[‘’‚‛]/g, "'")                     // ‘ ’ ‚ ‛
+    .replace(/[“”„‟]/g, '"')                     // “ ” „ ‟
+    .replace(/ /g, ' ');                                        // NBSP
+}
+// Monkey-patch a PDFDocument instance so EVERY doc.text(...) call is sanitized before
+// it reaches the WinAnsi encoder. Centralizing here guarantees coverage across the
+// cover, tables, charts, headers/footers and pack sections without touching each call.
+function installPdfSafeText(doc) {
+  const origText = doc.text.bind(doc);
+  doc.text = (text, ...rest) => origText(pdfSafe(text), ...rest);
+  return doc;
+}
+
 /** Least-squares slope of utilization vs time → days to 100%. */
 function daysToExhaustion(history) {
   // history: [{ recorded_at, percent_used }] ascending
@@ -270,9 +297,73 @@ function drawChart(doc, x0, y0, w, h, chart) {
   doc.restore();
 }
 
+// ── In-cell mini visuals (Phase 3 — DHCP Scope Health) ────────
+// These are drawn by drawTable for columns that carry a `render` fn (marked
+// `pdfOnly` so they never appear in CSV/JSON). Threshold colors: green <80,
+// amber 80–90, red ≥90.
+function threshColor(v) { return v >= 90 ? RED : v >= 80 ? YELLOW : GREEN; }
+
+// Bucket a scope's history (ascending) to at most one point per day → a compact
+// series for the sparkline. Returns [] when there's no usable data.
+function dailySpark(hist) {
+  if (!Array.isArray(hist) || !hist.length) return [];
+  const byDay = new Map();
+  for (const h of hist) {
+    const v = parseFloat(h.percent_used);
+    if (isNaN(v)) continue;
+    const day = new Date(h.recorded_at).toISOString().slice(0, 10);
+    byDay.set(day, v); // hist is ascending → keeps the last reading of each day
+  }
+  return Array.from(byDay.values());
+}
+
+// Horizontal utilization bar: rounded track + threshold-colored fill (width = %).
+function renderUtilBar(doc, row, x, y, w, h) {
+  const p = Math.max(0, Math.min(100, Number(row._util) || 0));
+  const trackH = 7;
+  const bx = x + 4, bw = Math.max(4, w - 8);
+  const by = y + (h - trackH) / 2;
+  doc.save();
+  doc.roundedRect(bx, by, bw, trackH, 3).fill(BORDER);
+  const fw = Math.max(1.5, (bw * p) / 100);
+  doc.roundedRect(bx, by, fw, trackH, 3).fill(threshColor(p));
+  doc.restore();
+}
+
+// Small area+line sparkline from a scope's daily history. Blank when no history.
+function renderSparkline(doc, row, x, y, w, h) {
+  const pts = Array.isArray(row._spark) ? row._spark : [];
+  if (!pts.length) return;
+  const padX = 4, padY = 4;
+  const px = x + padX, pw = Math.max(4, w - padX * 2);
+  const py = y + padY, ph = Math.max(4, h - padY * 2);
+  let min = Math.min(...pts), max = Math.max(...pts);
+  if (min === max) { min -= 1; max += 1; }
+  const n = pts.length;
+  const xAt = (i) => n <= 1 ? px + pw / 2 : px + (pw * i) / (n - 1);
+  const yAt = (v) => py + ph - (ph * (v - min)) / (max - min);
+  const color = threshColor(pts[pts.length - 1]);
+  doc.save();
+  if (n > 1) {
+    doc.moveTo(xAt(0), py + ph);
+    pts.forEach((v, i) => doc.lineTo(xAt(i), yAt(v)));
+    doc.lineTo(xAt(n - 1), py + ph);
+    doc.closePath();
+    doc.fillColor(color).fillOpacity(0.12).fill();
+    doc.fillOpacity(1);
+    doc.moveTo(xAt(0), yAt(pts[0]));
+    for (let i = 1; i < n; i++) doc.lineTo(xAt(i), yAt(pts[i]));
+    doc.lineWidth(1).strokeColor(color).stroke();
+  } else {
+    doc.circle(xAt(0), yAt(pts[0]), 1.4).fill(color);
+  }
+  doc.restore();
+}
+
 // ════════════════════════════════════════════════════════════
 // REPORT DEFINITIONS — each returns { columns, rows, summary }
-// columns: [{ key, label, width, align, color? }]
+// columns: [{ key, label, width, align, color?, pdfOnly?, render? }]
+// pdfOnly columns render vector visuals in the PDF only (skipped by CSV/JSON).
 // ════════════════════════════════════════════════════════════
 
 async function reportSubnetUtilization(db, q, allowedSiteIds) {
@@ -461,18 +552,25 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
       peak: pct(peak),
       forecast: fmtForecast(daysToExhaustion(hist)),
       state: x.state || '—',
+      _spark: dailySpark(hist), // daily % series for the PDF sparkline (blank if none)
     };
   });
   return {
+    // Column widths tuned for LANDSCAPE so a full FQDN (e.g.
+    // BKK-INF-LV0-010.thaiunion.co.th) fits the Server column on one line.
+    // The Utilization bar and Trend sparkline are pdfOnly vector cells — they
+    // render in the PDF only and are skipped by the CSV/JSON output.
     columns: [
-      { key: 'scope', label: 'Scope', width: 90 },
-      { key: 'name', label: 'Name', width: 110 },
-      { key: 'server', label: 'Server', width: 100 },
-      { key: 'used', label: 'Used / Total', width: 90, align: 'right' },
-      { key: 'util', label: 'Current', width: 60, align: 'right', color: r => r._util >= 90 ? RED : r._util >= 80 ? YELLOW : GREEN },
-      { key: 'peak', label: 'Peak (14d)', width: 60, align: 'right' },
-      { key: 'forecast', label: 'Forecast', width: 70, align: 'right' },
-      { key: 'state', label: 'State', width: 56 },
+      { key: 'scope', label: 'Scope', width: 80 },
+      { key: 'name', label: 'Name', width: 120 },
+      { key: 'server', label: 'Server', width: 150 },
+      { key: 'used', label: 'Used / Total', width: 78, align: 'right' },
+      { key: 'util', label: 'Current', width: 50, align: 'right', color: r => r._util >= 90 ? RED : r._util >= 80 ? YELLOW : GREEN },
+      { key: '_bar', label: 'Utilization', width: 80, pdfOnly: true, render: renderUtilBar },
+      { key: 'peak', label: 'Peak (14d)', width: 55, align: 'right' },
+      { key: 'forecast', label: 'Forecast', width: 62, align: 'right' },
+      { key: '_spark', label: 'Trend (14d)', width: 72, pdfOnly: true, render: renderSparkline },
+      { key: 'state', label: 'State', width: 46 },
     ],
     rows,
     summary: [
@@ -1079,8 +1177,9 @@ const REPORTS = {
 // ════════════════════════════════════════════════════════════
 function toCsv(columns, rows) {
   const esc = escapeCsvCell; // shared CSV/formula-injection-safe escaper (api/csv.js)
-  const header = columns.map(c => esc(c.label)).join(',');
-  const body = rows.map(r => columns.map(c => esc(r[c.key])).join(',')).join('\n');
+  const cols = columns.filter(c => !c.pdfOnly); // pdfOnly = PDF-only vector cells
+  const header = cols.map(c => esc(c.label)).join(',');
+  const body = rows.map(r => cols.map(c => esc(r[c.key])).join(',')).join('\n');
   return `${header}\n${body}\n`;
 }
 
@@ -1101,8 +1200,11 @@ function drawCover(doc, opts, layout) {
   doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('NocVault', left + 80, 56);
   doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DDIVault — DNS · DHCP · IPAM', left + 80, 86);
 
-  doc.fillColor(NAVY).fontSize(28).font('Helvetica-Bold').text(title, left, 230, { width: contentW });
-  doc.moveTo(left, 274).lineTo(left + 120, 274).lineWidth(3).stroke(RED);
+  // Tightened vertical rhythm so the cover reads as a compact title block rather than
+  // a near-empty page: title sits just under the brand band and the meta/summary follow
+  // with smaller gaps.
+  doc.fillColor(NAVY).fontSize(28).font('Helvetica-Bold').text(title, left, 196, { width: contentW });
+  doc.moveTo(left, 238).lineTo(left + 120, 238).lineWidth(3).stroke(RED);
 
   const meta = [
     ['Company', company],
@@ -1111,17 +1213,17 @@ function drawCover(doc, opts, layout) {
     ['Date range', dateRange || 'All time'],
     ['Records', String(rows.length)],
   ];
-  let my = 310;
+  let my = 262;
   doc.fontSize(11);
   meta.forEach(([k, v]) => {
     doc.fillColor(MUTED).font('Helvetica-Bold').text(k, left, my, { width: 120, continued: false });
     doc.fillColor('#0f172a').font('Helvetica').text(v, left + 130, my, { width: contentW - 130 });
-    my += 24;
+    my += 22;
   });
 
   // summary chips on cover
   if (summary && summary.length) {
-    my += 12;
+    my += 10;
     doc.fillColor(NAVY).fontSize(13).font('Helvetica-Bold').text('Summary', left, my);
     my += 22;
     let cx = left;
@@ -1174,42 +1276,57 @@ function drawTable(doc, opts, layout, o2 = {}) {
   // with no charts). Default: fresh page (single-report path — byte-identical).
   if (o2.continueOnPage) { doc.y = doc.y + 10; }
   else { doc.addPage(); }
-  const rowH = 18;
+  const rowH = 18;      // minimum row height
   const headerH = 22;
+  const pad = 5;
   // scale column widths to content width
   const totalW = columns.reduce((a, c) => a + (c.width || 80), 0);
   const scale = contentW / totalW;
   const colX = [];
   let acc = left;
   columns.forEach(c => { colX.push(acc); acc += (c.width || 80) * scale; });
+  const colW = (c) => (c.width || 80) * scale;
 
   function drawHeader() {
     const y = doc.y;
     doc.rect(left, y, contentW, headerH).fill(NAVY);
     doc.fillColor('#fff').fontSize(8).font('Helvetica-Bold');
     columns.forEach((c, i) => {
-      const w = (c.width || 80) * scale;
-      doc.text(c.label, colX[i] + 4, y + 7, { width: w - 8, align: c.align || 'left', ellipsis: true });
+      doc.text(c.label, colX[i] + 4, y + 7, { width: colW(c) - 8, align: c.align || 'left', ellipsis: true, lineBreak: false });
     });
     doc.y = y + headerH;
   }
 
   drawHeader();
-  doc.font('Helvetica').fontSize(8);
   rows.forEach((r, idx) => {
-    if (doc.y + rowH > pageH - doc.page.margins.bottom) {
+    // Measure each text cell's wrapped height so the row is tall enough for the
+    // tallest cell — wrapped content (e.g. a long name) never overlaps the next row.
+    // Custom render() cells (bars/sparklines) fit within the base height.
+    doc.font('Helvetica').fontSize(8);
+    let rh = rowH;
+    columns.forEach((c) => {
+      if (typeof c.render === 'function') return;
+      const txt = String(r[c.key] == null ? '' : r[c.key]);
+      const th = doc.heightOfString(pdfSafe(txt), { width: colW(c) - 8 }) + pad * 2;
+      if (th > rh) rh = th;
+    });
+    if (doc.y + rh > pageH - doc.page.margins.bottom) {
       doc.addPage();
       drawHeader();
       doc.font('Helvetica').fontSize(8);
     }
     const y = doc.y;
-    if (idx % 2 === 1) doc.rect(left, y, contentW, rowH).fill(LIGHT);
+    if (idx % 2 === 1) doc.rect(left, y, contentW, rh).fill(LIGHT);
     columns.forEach((c, i) => {
-      const w = (c.width || 80) * scale;
+      if (typeof c.render === 'function') {
+        c.render(doc, r, colX[i], y, colW(c), rh);
+        return;
+      }
       const color = typeof c.color === 'function' ? (c.color(r) || '#1e293b') : '#1e293b';
-      doc.fillColor(color).text(String(r[c.key] == null ? '' : r[c.key]), colX[i] + 4, y + 5, { width: w - 8, align: c.align || 'left', ellipsis: true, lineBreak: false });
+      doc.fillColor(color).font('Helvetica').fontSize(8)
+        .text(String(r[c.key] == null ? '' : r[c.key]), colX[i] + 4, y + pad, { width: colW(c) - 8, align: c.align || 'left' });
     });
-    doc.y = y + rowH;
+    doc.y = y + rh;
   });
 
   if (rows.length === 0) {
@@ -1226,19 +1343,28 @@ function stampHeadersFooters(doc, { title, company, generatedAt }) {
   const right = pageW - doc.page.margins.right;
   const contentW = right - left;
   const range = doc.bufferedPageRange();
+  // ROOT CAUSE of the blank pages: the footer is drawn at pageH-26, which is BELOW the
+  // bottom margin (pageH-36). When doc.text() is given a y past the page's maxY, pdfkit
+  // treats it as an overflow and FLOWS the text onto a freshly-added page. Because this
+  // happens for every footer during the buffered-page stamping loop, each content page
+  // spawned a near-empty page carrying only the overflowed footer (~4 trailing blanks).
+  // lineBreak:false is NOT sufficient on its own in this pdfkit version — an explicit
+  // bounded `height` is what actually stops the auto-pagination, so every stamp text
+  // call below passes both. (Verified: with `height` set, no phantom pages are added.)
+  const stampH = 12; // ~ one 8pt line; keeps stamp text in a fixed box, never paginates
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     if (i > range.start) {
       // running header (skip cover)
       doc.fillColor(MUTED).fontSize(8).font('Helvetica')
-        .text(`${title}`, left, 18, { width: contentW / 2, align: 'left' });
-      doc.text(company, left + contentW / 2, 18, { width: contentW / 2, align: 'right' });
+        .text(`${title}`, left, 18, { width: contentW / 2, align: 'left', lineBreak: false, height: stampH });
+      doc.text(company, left + contentW / 2, 18, { width: contentW / 2, align: 'right', lineBreak: false, height: stampH });
       doc.moveTo(left, 30).lineTo(right, 30).lineWidth(0.5).strokeColor(BORDER).stroke();
     }
     // footer
     doc.fillColor(MUTED).fontSize(8).font('Helvetica')
-      .text(`Generated ${generatedAt}`, left, pageH - 26, { width: contentW / 2, align: 'left' });
-    doc.text(`Page ${i - range.start + 1} of ${range.count}`, left + contentW / 2, pageH - 26, { width: contentW / 2, align: 'right' });
+      .text(`Generated ${generatedAt}`, left, pageH - 26, { width: contentW / 2, align: 'left', lineBreak: false, height: stampH });
+    doc.text(`Page ${i - range.start + 1} of ${range.count}`, left + contentW / 2, pageH - 26, { width: contentW / 2, align: 'right', lineBreak: false, height: stampH });
   }
 }
 
@@ -1246,7 +1372,7 @@ function stampHeadersFooters(doc, { title, company, generatedAt }) {
 // callers choose the sink (renderPdf → res, renderPdfToBuffer → Buffer).
 function buildPdfDoc(opts) {
   const { title, company, landscape } = opts;
-  const doc = new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 36, bufferPages: true });
+  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 36, bufferPages: true }));
 
   const pageW = doc.page.width;
   const pageH = doc.page.height;
@@ -1315,7 +1441,7 @@ async function generatePack(db, { types = [], query = {}, allowedSiteIds = null,
   const generatedAt = new Date().toLocaleString('en-GB', { hour12: false });
   const included = (Array.isArray(types) ? types : []).filter(t => REPORTS[t]);
 
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true }));
   const pageW = doc.page.width;
   const pageH = doc.page.height;
   const left = doc.page.margins.left;
@@ -1609,7 +1735,7 @@ function createReportsRouter(db) {
     try {
       const query = expandRangePreset(req.query);   // rolling saved-view window → concrete from/to
       const { columns, rows, summary, charts, drill } = await def.gather(db, query, req.allowedSiteIds);
-      const safeCols = columns.map(c => ({ key: c.key, label: c.label, align: c.align || 'left' }));
+      const safeCols = columns.filter(c => !c.pdfOnly).map(c => ({ key: c.key, label: c.label, align: c.align || 'left' }));
 
       // Best-effort audit of manual downloads to report_run_history. A logging
       // failure must NEVER break the actual export, so this is wrapped + swallowed.

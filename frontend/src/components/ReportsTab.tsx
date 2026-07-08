@@ -8,6 +8,7 @@ import { DateRangePicker } from './DateRangePicker';
 import { ReportDrillDrawer } from './ReportDrillDrawer';
 import { ReportScheduleModal } from './ReportScheduleModal';
 import { ReportsManagePanel } from './ReportsManagePanel';
+import { ReportsCatalog } from './ReportsCatalog';
 import { rangeToParams, rangeToDurableParams, isCustomRangeInverted } from './reportTypes';
 import type { ChartSpec, DrillMeta, RangeValue, SavedRow, ScheduleRow } from './reportTypes';
 
@@ -41,20 +42,25 @@ const I = (p: React.ReactNode) => <svg width="22" height="22" viewBox="0 0 24 24
 interface ReportDef {
   key: string; title: string; desc: string; icon: React.ReactNode; color: string;
   filters: ('site' | 'server')[];
+  // Catalog grouping (left rail): `category` places the report in a group; `short` is the
+  // concise rail label. Neither affects report generation — display metadata only.
+  category: string; short: string;
 }
 const REPORTS: ReportDef[] = [
-  { key: 'subnet-utilization', title: 'Subnet Utilization', desc: 'Per-subnet usage, exhaustion forecast and site breakdown.', color: 'var(--blue)', filters: ['site'], icon: I(<><line x1="4" y1="20" x2="4" y2="10"/><line x1="10" y1="20" x2="10" y2="4"/><line x1="16" y1="20" x2="16" y2="14"/><line x1="22" y1="20" x2="2" y2="20"/></>) },
-  { key: 'ip-inventory', title: 'IP Address Inventory', desc: 'Every assigned IP with hostname, MAC, lease status and stale flags.', color: 'var(--teal)', filters: ['site'], icon: I(<><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></>) },
-  { key: 'dhcp-health', title: 'DHCP Scope Health', desc: 'Current vs peak utilization, trend and days-to-exhaustion per scope.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
-  { key: 'dns-zones', title: 'DNS Zone Report', desc: 'Record counts by type, SOA serials and stale-record analysis.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></>) },
-  { key: 'network-changes', title: 'Network Change Report', desc: 'Who changed what and when — built for change-management reviews.', color: 'var(--purple)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
-  { key: 'rogue-devices', title: 'Security / Rogue Devices', desc: 'Unknown live devices with no DHCP lease — first/last seen.', color: 'var(--red)', filters: ['site'], icon: I(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>) },
-  { key: 'dhcp-utilization-trend', title: 'DHCP Utilization Trend', desc: 'Utilization over time across scopes with peak tracking.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
-  { key: 'ipam-growth-trend', title: 'IPAM Growth Trend', desc: 'IP consumption growth across the estate over time.', color: 'var(--teal)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
-  { key: 'dns-query-trend', title: 'DNS Query Trend', desc: 'Query volume, NXDOMAIN rate and response time over time.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><polyline points="7 14 11 10 14 13 19 7"/></>) },
-  { key: 'alert-anomaly-trend', title: 'Alerts & Anomalies Trend', desc: 'Alert and anomaly volume per day with MTTR.', color: 'var(--purple)', filters: ['site'], icon: I(<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>) },
-  { key: 'site-health-trend', title: 'Site Health Trend', desc: 'Per-site health score trend over time.', color: 'var(--blue)', filters: ['site'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
+  { key: 'subnet-utilization', title: 'Subnet Utilization', short: 'Subnet Utilization', category: 'Inventory', desc: 'Per-subnet usage, exhaustion forecast and site breakdown.', color: 'var(--blue)', filters: ['site'], icon: I(<><line x1="4" y1="20" x2="4" y2="10"/><line x1="10" y1="20" x2="10" y2="4"/><line x1="16" y1="20" x2="16" y2="14"/><line x1="22" y1="20" x2="2" y2="20"/></>) },
+  { key: 'ip-inventory', title: 'IP Address Inventory', short: 'IP Address Inventory', category: 'Inventory', desc: 'Every assigned IP with hostname, MAC, lease status and stale flags.', color: 'var(--teal)', filters: ['site'], icon: I(<><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></>) },
+  { key: 'dhcp-health', title: 'DHCP Scope Health', short: 'DHCP Scope Health', category: 'DHCP', desc: 'Current vs peak utilization, trend and days-to-exhaustion per scope.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
+  { key: 'dns-zones', title: 'DNS Zone Report', short: 'DNS Zone Report', category: 'DNS', desc: 'Record counts by type, SOA serials and stale-record analysis.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></>) },
+  { key: 'network-changes', title: 'Network Change Report', short: 'Network Change', category: 'Security & change', desc: 'Who changed what and when — built for change-management reviews.', color: 'var(--purple)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'rogue-devices', title: 'Security / Rogue Devices', short: 'Rogue Devices', category: 'Security & change', desc: 'Unknown live devices with no DHCP lease — first/last seen.', color: 'var(--red)', filters: ['site'], icon: I(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>) },
+  { key: 'dhcp-utilization-trend', title: 'DHCP Utilization Trend', short: 'DHCP Utilization Trend', category: 'DHCP', desc: 'Utilization over time across scopes with peak tracking.', color: 'var(--primary)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'ipam-growth-trend', title: 'IPAM Growth Trend', short: 'IPAM Growth', category: 'Trends', desc: 'IP consumption growth across the estate over time.', color: 'var(--teal)', filters: [], icon: I(<><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>) },
+  { key: 'dns-query-trend', title: 'DNS Query Trend', short: 'DNS Query Trend', category: 'DNS', desc: 'Query volume, NXDOMAIN rate and response time over time.', color: 'var(--navy)', filters: ['server'], icon: I(<><path d="M3 3v18h18"/><polyline points="7 14 11 10 14 13 19 7"/></>) },
+  { key: 'alert-anomaly-trend', title: 'Alerts & Anomalies Trend', short: 'Alerts & Anomalies', category: 'Trends', desc: 'Alert and anomaly volume per day with MTTR.', color: 'var(--purple)', filters: ['site'], icon: I(<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>) },
+  { key: 'site-health-trend', title: 'Site Health Trend', short: 'Site Health', category: 'Trends', desc: 'Per-site health score trend over time.', color: 'var(--blue)', filters: ['site'], icon: I(<><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></>) },
 ];
+
+type WorkspaceTab = 'view' | 'saved' | 'scheduled' | 'pack';
 
 export default function ReportsTab() {
   const { toast } = useToast();
@@ -84,6 +90,14 @@ export default function ReportsTab() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleInitial, setScheduleInitial] = useState<ScheduleRow | null>(null);
+
+  // Right-workspace active tab (View | Saved views | Scheduled | Report pack).
+  const [tab, setTab] = useState<WorkspaceTab>('view');
+  // Badge counts for the Saved views / Scheduled tabs. Fetched here (lightweight) for the
+  // tab labels; ReportsManagePanel fetches its own copy for the panels. Re-read on mount,
+  // when a schedule save bumps refreshKey, and on tab switches so the badges stay current.
+  const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [schedCount, setSchedCount] = useState<number | null>(null);
 
   // preview table controls (Phase 5): pagination, column chooser, sort
   const [page, setPage] = useState(1);
@@ -170,6 +184,13 @@ export default function ReportsTab() {
     setScopeMenuOpen(false);
     setScopeSearch('');
   }, [active, serverId]);
+
+  // Tab badge counts (best-effort). Refreshed on mount, on refreshKey bumps, and on tab
+  // switches so the Saved views / Scheduled counters track create/delete done in the panel.
+  useEffect(() => {
+    api('/reports/saved').then(d => setSavedCount(((d?.data as unknown[]) || []).length)).catch(() => {});
+    api('/reports/schedules').then(d => setSchedCount(((d?.data as unknown[]) || []).length)).catch(() => {});
+  }, [refreshKey, tab]);
 
   const buildParams = useCallback((def: ReportDef) => {
     const p = new URLSearchParams();
@@ -264,11 +285,21 @@ export default function ReportsTab() {
     downloadReport(active.key, params.toString(), fmt, active.title);
   };
 
+  // Select a report from the catalog rail: surface the View tab and generate its preview
+  // (mirrors the old card "View" action so a click immediately shows data).
+  const handleSelectReport = useCallback((key: string) => {
+    const def = REPORTS.find(r => r.key === key);
+    if (!def) return;
+    setTab('view');
+    generate(def, 'view');
+  }, [generate]);
+
   // Load a saved view: switch to its report and fetch the preview from its stored params.
   const handleLoadSaved = useCallback(async (row: SavedRow) => {
     const def = REPORTS.find(r => r.key === row.report_type);
     if (!def) return;
     setActive(def);
+    setTab('view'); // surface the loaded view in the workspace
     const strParams: Record<string, string> = {};
     for (const [k, v] of Object.entries(row.params)) strParams[k] = String(v);
     const qs = new URLSearchParams(strParams).toString();
@@ -394,225 +425,286 @@ export default function ReportsTab() {
   const firstRow = total === 0 ? 0 : (clampedPage - 1) * pageSize + 1;
   const lastRow = Math.min(total, clampedPage * pageSize);
 
+  const WORKSPACE_TABS: { key: WorkspaceTab; label: string; count?: number | null }[] = [
+    { key: 'view', label: 'View' },
+    { key: 'saved', label: 'Saved views', count: savedCount },
+    { key: 'scheduled', label: 'Scheduled', count: schedCount },
+    { key: 'pack', label: 'Report pack' },
+  ];
+
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <PageHeader title="Reports" subtitle="Generate professional, exportable reports for capacity planning, compliance and security reviews." />
 
-      {/* Report cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
-        {REPORTS.map(r => (
-          <div key={r.key} style={{ ...CARD, padding: 18, display: 'flex', flexDirection: 'column', gap: 12, border: active?.key === r.key ? '1px solid var(--primary)' : '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', border: '1px solid var(--border)', color: r.color, flexShrink: 0 }}>{r.icon}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={TITLE}>{r.title}</div>
-                <div style={{ ...MUTED, marginTop: 2 }}>{r.filters.length ? `Filters: ${r.filters.join(', ')}` : 'No filters'}</div>
-              </div>
-            </div>
-            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5, minHeight: 38 }}>{r.desc}</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => generate(r, 'view')}>View</button>
-              <button className="btn" onClick={() => { setActive(r); const p = buildParams(r); p.set('format', 'pdf'); downloadReport(r.key, p.toString(), 'pdf', r.title); }}>PDF</button>
-              <button className="btn" onClick={() => { setActive(r); const p = buildParams(r); p.set('format', 'csv'); downloadReport(r.key, p.toString(), 'csv', r.title); }}>CSV</button>
-            </div>
+      {/* LOCKED two-pane layout: catalog rail (own scroll) + workspace (tab strip + content). */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', height: 'calc(100vh - 210px)', minHeight: 460 }}>
+
+        {/* ── LEFT RAIL — grouped report catalog ── */}
+        <div style={{ ...CARD, width: 264, flexShrink: 0, padding: 12, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <ReportsCatalog
+            reports={REPORTS.map(r => ({ key: r.key, short: r.short, title: r.title, desc: r.desc, color: r.color, category: r.category }))}
+            activeKey={active?.key ?? null}
+            onSelect={handleSelectReport}
+          />
+        </div>
+
+        {/* ── RIGHT WORKSPACE ── */}
+        <div style={{ ...CARD, flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+
+          {/* Tab strip */}
+          <div style={{ display: 'flex', gap: 4, padding: '0 16px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
+            {WORKSPACE_TABS.map(t => {
+              const on = tab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setTab(t.key)}
+                  style={{
+                    padding: '12px 14px', background: 'transparent', border: 'none',
+                    borderBottom: on ? '2px solid var(--primary)' : '2px solid transparent',
+                    color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    fontSize: 'var(--text-base)', fontWeight: on ? 600 : 500, cursor: 'pointer', marginBottom: -1,
+                  }}
+                >
+                  {t.label}{t.count != null ? ` (${t.count})` : ''}
+                </button>
+              );
+            })}
           </div>
-        ))}
-      </div>
 
-      {/* Compliance Pack */}
-      <div style={{ ...CARD, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <div style={TITLE}>Compliance Pack</div>
-          <div style={MUTED}>Bundle multiple reports into a single PDF using the current date range and filters.</div>
-        </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {REPORTS.map(r => (
-            <label key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: packSel.has(r.key) ? 'var(--surface-subtle)' : 'var(--bg-card)' }}>
-              <input type="checkbox" checked={packSel.has(r.key)} onChange={() => togglePack(r.key)} />
-              {r.title}
-            </label>
-          ))}
-        </div>
-        <div>
-          <button className="btn btn-primary" disabled={packSel.size === 0} onClick={generatePack}>Generate Pack (PDF)</button>
-        </div>
-      </div>
+          {/* Tab content (independently scrolls) */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
 
-      {/* Filters for the active report */}
-      {active && (
-        <div style={{ ...CARD, padding: 14, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ ...TITLE, fontSize: 'var(--text-base)' }}>{active.title} filters:</span>
-          <DateRangePicker value={range} onChange={setRange} maxDays={retentionDays} />
-          {showSite && (
-            <select className="input" value={siteId} onChange={e => setSiteId(e.target.value)}>
-              <option value="">All sites</option>
-              {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          )}
-          {showServer && (
-            <select className="input" value={serverId} onChange={e => setServerId(e.target.value)}>
-              <option value="">All servers</option>
-              {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}</option>)}
-            </select>
-          )}
-          {showScopeFilter && (
-            <div style={{ position: 'relative' }}>
-              <button className="btn" onClick={() => setScopeMenuOpen(o => !o)}>
-                {scopeSel.size === 0 ? 'All scopes' : `${scopeSel.size} scope${scopeSel.size > 1 ? 's' : ''} selected`} ▾
-              </button>
-              {scopeMenuOpen && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <input
-                    className="input"
-                    placeholder="Search scopes…"
-                    value={scopeSearch}
-                    onChange={e => setScopeSearch(e.target.value)}
-                    style={{ width: '100%' }}
-                  />
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-                    <button
-                      className="btn"
-                      style={{ flex: 1 }}
-                      disabled={menuScopes.length === 0}
-                      onClick={() => setScopeSel(prev => { const n = new Set(prev); menuScopes.forEach(s => n.add(s.id)); return n; })}
-                    >All</button>
-                    <button
-                      className="btn"
-                      style={{ flex: 1 }}
-                      disabled={scopeSel.size === 0}
-                      onClick={() => setScopeSel(new Set())}
-                    >Clear</button>
+            {/* ── VIEW ── */}
+            {tab === 'view' && (!active ? (
+              <div style={{ padding: 48 }}>
+                <EmptyState title="Select a report" message="Choose a report from the catalog on the left to configure and preview it." />
+              </div>
+            ) : (
+              <>
+                {/* Report header */}
+                <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ ...TITLE, fontSize: 'var(--text-lg)' }}>{active.title}</div>
+                    <div style={{ ...MUTED, marginTop: 4, maxWidth: 620 }}>{active.desc}</div>
                   </div>
-                  <div style={{ overflow: 'auto', maxHeight: 240 }}>
-                    {menuScopes.length === 0 ? (
-                      <div style={{ ...MUTED, padding: '8px' }}>No scopes{scopeOptions.length === 0 ? ' loaded' : ' match'}.</div>
-                    ) : menuScopes.map(s => (
-                      <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                        <input type="checkbox" checked={scopeSel.has(s.id)} onChange={() => toggleScope(s.id)} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {s.scope_id}{s.name ? ` — ${s.name}` : ''}
-                        </span>
-                      </label>
-                    ))}
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <button className="btn btn-primary" onClick={() => generate(active, 'view')}>View</button>
+                    <button className="btn" onClick={() => downloadActive('pdf')}>PDF</button>
+                    <button className="btn" onClick={() => downloadActive('csv')}>CSV</button>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-          <button className="btn btn-primary" onClick={() => generate(active, 'view')}>Apply &amp; View</button>
-        </div>
-      )}
 
-      {/* Preview panel */}
-      {(loading || preview) && (
-        <div style={CARD}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={TITLE}>{preview?.title || active?.title || 'Report preview'}</div>
-            {preview && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ ...MUTED, padding: '6px 0' }}>{preview.rows?.length ?? 0} rows</span>
-                {(preview.rows?.length ?? 0) > 0 && (
-                  <div style={{ position: 'relative' }}>
-                    <button className="btn" onClick={() => setColMenuOpen(o => !o)}>Columns ▾</button>
-                    {colMenuOpen && (
-                      <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
-                        {(preview.columns ?? []).map(c => (
-                          <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                            <input type="checkbox" checked={!hiddenCols.has(c.key)} onChange={() => toggleCol(c.key)} />
-                            {c.label}
-                          </label>
+                {/* Sticky filter bar — opaque bg + z-index so scrolled rows never bleed through. */}
+                <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)', padding: '12px 18px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <DateRangePicker value={range} onChange={setRange} maxDays={retentionDays} />
+                  {showSite && (
+                    <select className="input" value={siteId} onChange={e => setSiteId(e.target.value)}>
+                      <option value="">All sites</option>
+                      {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )}
+                  {showServer && (
+                    <select className="input" value={serverId} onChange={e => setServerId(e.target.value)}>
+                      <option value="">All servers</option>
+                      {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}</option>)}
+                    </select>
+                  )}
+                  {showScopeFilter && (
+                    <div style={{ position: 'relative' }}>
+                      <button className="btn" onClick={() => setScopeMenuOpen(o => !o)}>
+                        {scopeSel.size === 0 ? 'All scopes' : `${scopeSel.size} scope${scopeSel.size > 1 ? 's' : ''} selected`} ▾
+                      </button>
+                      {scopeMenuOpen && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <input
+                            className="input"
+                            placeholder="Search scopes…"
+                            value={scopeSearch}
+                            onChange={e => setScopeSearch(e.target.value)}
+                            style={{ width: '100%' }}
+                          />
+                          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                            <button
+                              className="btn"
+                              style={{ flex: 1 }}
+                              disabled={menuScopes.length === 0}
+                              onClick={() => setScopeSel(prev => { const n = new Set(prev); menuScopes.forEach(s => n.add(s.id)); return n; })}
+                            >All</button>
+                            <button
+                              className="btn"
+                              style={{ flex: 1 }}
+                              disabled={scopeSel.size === 0}
+                              onClick={() => setScopeSel(new Set())}
+                            >Clear</button>
+                          </div>
+                          <div style={{ overflow: 'auto', maxHeight: 240 }}>
+                            {menuScopes.length === 0 ? (
+                              <div style={{ ...MUTED, padding: '8px' }}>No scopes{scopeOptions.length === 0 ? ' loaded' : ' match'}.</div>
+                            ) : menuScopes.map(s => (
+                              <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                                <input type="checkbox" checked={scopeSel.has(s.id)} onChange={() => toggleScope(s.id)} />
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {s.scope_id}{s.name ? ` — ${s.name}` : ''}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <button className="btn btn-primary" onClick={() => generate(active, 'view')}>Apply</button>
+                </div>
+
+                {/* Preview */}
+                {(loading || preview) ? (
+                  <div>
+                    {preview && (
+                      <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <div style={{ ...TITLE, fontSize: 'var(--text-base)' }}>{preview.title || active.title || 'Report preview'}</div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span style={MUTED}>{preview.rows?.length ?? 0} rows</span>
+                          {(preview.rows?.length ?? 0) > 0 && (
+                            <div style={{ position: 'relative' }}>
+                              <button className="btn" onClick={() => setColMenuOpen(o => !o)}>Columns ▾</button>
+                              {colMenuOpen && (
+                                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
+                                  {(preview.columns ?? []).map(c => (
+                                    <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                                      <input type="checkbox" checked={!hiddenCols.has(c.key)} onChange={() => toggleCol(c.key)} />
+                                      {c.label}
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* summary chips */}
+                    {preview?.summary && preview.summary.length > 0 && (
+                      <div style={{ display: 'flex', gap: 12, padding: '14px 18px', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)' }}>
+                        {preview.summary.map((s, i) => (
+                          <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 120 }}>
+                            <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--text-primary)', lineHeight: 1 }}>{s.value}</div>
+                            <div style={{ ...MUTED, marginTop: 4 }}>{s.label}</div>
+                          </div>
                         ))}
                       </div>
                     )}
+
+                    {/* trend charts */}
+                    {preview?.charts && preview.charts.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 18px', borderBottom: '1px solid var(--border-light)' }}>
+                        {preview.charts.map((c, i) => <TrendChart key={i} chart={c} />)}
+                      </div>
+                    )}
+
+                    {loading ? <TableSkeleton rows={8} cols={6} /> : preview && (preview.rows?.length ?? 0) === 0 ? (
+                      <EmptyState title="No data" message="No records matched the selected filters." />
+                    ) : preview && (
+                      <>
+                        <div style={{ maxHeight: 520, overflow: 'auto' }}>
+                          <table className="data-table">
+                            <thead><tr>{visibleCols.map(c => (
+                              <th key={c.key} onClick={() => handleSort(c.key)} title="Sort" style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', cursor: 'pointer' }}>
+                                {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                              </th>
+                            ))}</tr></thead>
+                            <tbody>
+                              {pagedRows.map((row, ri) => (
+                                <tr
+                                  key={ri}
+                                  style={preview.drill ? { cursor: 'pointer' } : undefined}
+                                  title={preview.drill ? 'Click for detail' : undefined}
+                                  onClick={preview.drill ? () => {
+                                    const idv = row[preview.drill!.idKey];
+                                    if (idv != null) {
+                                      setDrillEntity(preview.drill!.entity);
+                                      setDrillId(idv as string | number);
+                                      setDrillOpen(true);
+                                    }
+                                  } : undefined}
+                                >
+                                  {visibleCols.map(c => (
+                                    <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
+                                      {String(row[c.key] ?? '—')}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* pagination footer */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 18px', borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+                          <span style={MUTED}>Showing {firstRow}–{lastRow} of {total}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <button className="btn" disabled={clampedPage <= 1} onClick={() => setPage(Math.max(1, clampedPage - 1))}>Prev</button>
+                            <span style={{ ...MUTED, minWidth: 90, textAlign: 'center' }}>Page {clampedPage} of {pageCount}</span>
+                            <button className="btn" disabled={clampedPage >= pageCount} onClick={() => setPage(Math.min(pageCount, clampedPage + 1))}>Next</button>
+                            <select className="input" value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}>
+                              <option value={25}>25 / page</option>
+                              <option value={50}>50 / page</option>
+                              <option value={100}>100 / page</option>
+                            </select>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ padding: 48 }}>
+                    <EmptyState title="Ready to run" message="Adjust the filters above and choose Apply to generate this report." />
                   </div>
                 )}
-                <button className="btn" onClick={() => downloadActive('csv')}>Download CSV</button>
-                <button className="btn btn-primary" onClick={() => downloadActive('pdf')}>Download PDF</button>
+              </>
+            ))}
+
+            {/* ── SAVED VIEWS / SCHEDULED ── single ReportsManagePanel instance (it renders
+                both Saved Views and Scheduled Reports, plus run history); kept mounted while
+                on either tab so switching between them does not refetch. ── */}
+            {(tab === 'saved' || tab === 'scheduled') && (
+              <div style={{ padding: 18 }}>
+                <ReportsManagePanel reports={reportsList} currentContext={currentContext} refreshKey={refreshKey} onLoadSaved={handleLoadSaved} onOpenSchedule={handleOpenSchedule} />
+              </div>
+            )}
+
+            {/* ── REPORT PACK ── */}
+            {tab === 'pack' && (
+              <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <div style={{ ...TITLE, fontSize: 'var(--text-lg)' }}>Report Pack</div>
+                  <div style={{ ...MUTED, marginTop: 4 }}>Bundle multiple reports into a single PDF using the selected date range and filters.</div>
+                </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <DateRangePicker value={range} onChange={setRange} maxDays={retentionDays} />
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {REPORTS.map(r => (
+                    <label key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: packSel.has(r.key) ? 'var(--surface-subtle)' : 'var(--bg-card)' }}>
+                      <input type="checkbox" checked={packSel.has(r.key)} onChange={() => togglePack(r.key)} />
+                      {r.title}
+                    </label>
+                  ))}
+                </div>
+                <div>
+                  <button className="btn btn-primary" disabled={packSel.size === 0} onClick={generatePack}>Generate Pack (PDF)</button>
+                </div>
               </div>
             )}
           </div>
-
-          {/* summary chips */}
-          {preview?.summary && preview.summary.length > 0 && (
-            <div style={{ display: 'flex', gap: 12, padding: '14px 18px', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)' }}>
-              {preview.summary.map((s, i) => (
-                <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 120 }}>
-                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--text-primary)', lineHeight: 1 }}>{s.value}</div>
-                  <div style={{ ...MUTED, marginTop: 4 }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* trend charts */}
-          {preview?.charts && preview.charts.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 18px', borderBottom: '1px solid var(--border-light)' }}>
-              {preview.charts.map((c, i) => <TrendChart key={i} chart={c} />)}
-            </div>
-          )}
-
-          {loading ? <TableSkeleton rows={8} cols={6} /> : preview && (preview.rows?.length ?? 0) === 0 ? (
-            <EmptyState title="No data" message="No records matched the selected filters." />
-          ) : preview && (
-            <>
-              <div style={{ maxHeight: 520, overflow: 'auto' }}>
-                <table className="data-table">
-                  <thead><tr>{visibleCols.map(c => (
-                    <th key={c.key} onClick={() => handleSort(c.key)} title="Sort" style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', cursor: 'pointer' }}>
-                      {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                    </th>
-                  ))}</tr></thead>
-                  <tbody>
-                    {pagedRows.map((row, ri) => (
-                      <tr
-                        key={ri}
-                        style={preview.drill ? { cursor: 'pointer' } : undefined}
-                        title={preview.drill ? 'Click for detail' : undefined}
-                        onClick={preview.drill ? () => {
-                          const idv = row[preview.drill!.idKey];
-                          if (idv != null) {
-                            setDrillEntity(preview.drill!.entity);
-                            setDrillId(idv as string | number);
-                            setDrillOpen(true);
-                          }
-                        } : undefined}
-                      >
-                        {visibleCols.map(c => (
-                          <td key={c.key} style={{ textAlign: (c.align as 'left' | 'right' | 'center') || 'left', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}>
-                            {String(row[c.key] ?? '—')}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* pagination footer */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 18px', borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
-                <span style={MUTED}>Showing {firstRow}–{lastRow} of {total}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button className="btn" disabled={clampedPage <= 1} onClick={() => setPage(Math.max(1, clampedPage - 1))}>Prev</button>
-                  <span style={{ ...MUTED, minWidth: 90, textAlign: 'center' }}>Page {clampedPage} of {pageCount}</span>
-                  <button className="btn" disabled={clampedPage >= pageCount} onClick={() => setPage(Math.min(pageCount, clampedPage + 1))}>Next</button>
-                  <select className="input" value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}>
-                    <option value={25}>25 / page</option>
-                    <option value={50}>50 / page</option>
-                    <option value={100}>100 / page</option>
-                  </select>
-                </div>
-              </div>
-            </>
-          )}
         </div>
-      )}
-
-      {/* Saved views · run history · schedules */}
-      <ReportsManagePanel reports={reportsList} currentContext={currentContext} refreshKey={refreshKey} onLoadSaved={handleLoadSaved} onOpenSchedule={handleOpenSchedule} />
+      </div>
 
       <ReportDrillDrawer open={drillOpen} entity={drillEntity} id={drillId} range={range} onClose={() => setDrillOpen(false)} />
 
