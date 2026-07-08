@@ -103,8 +103,8 @@ function fmtForecast(days) {
 async function companyName(db) {
   try {
     const r = await db.query("SELECT value FROM app_settings WHERE key = 'company_name'");
-    return (r.rows[0] && r.rows[0].value) || 'NocVault';
-  } catch { return 'NocVault'; }
+    return (r.rows[0] && r.rows[0].value) || 'DDIVault';
+  } catch { return 'DDIVault'; }
 }
 
 // ── Input validation (hardening) ──────────────────────────────
@@ -1228,9 +1228,9 @@ function drawCover(doc, opts, layout) {
   doc.rect(0, 150, pageW, 6).fill(RED);
   // logo placeholder
   doc.roundedRect(left, 44, 64, 64, 10).fill(RED);
-  doc.fillColor('#fff').fontSize(30).font('Helvetica-Bold').text('N', left, 60, { width: 64, align: 'center' });
-  doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('NocVault', left + 80, 56);
-  doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DDIVault — DNS · DHCP · IPAM', left + 80, 86);
+  doc.fillColor('#fff').fontSize(30).font('Helvetica-Bold').text('D', left, 60, { width: 64, align: 'center' });
+  doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('DDIVault', left + 80, 56);
+  doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DNS · DHCP · IPAM', left + 80, 86);
 
   // Tightened vertical rhythm so the cover reads as a compact title block rather than
   // a near-empty page: title sits just under the brand band and the meta/summary follow
@@ -1584,9 +1584,9 @@ async function generatePack(db, { types = [], query = {}, allowedSiteIds = null,
   doc.rect(0, 0, pageW, 150).fill(NAVY);
   doc.rect(0, 150, pageW, 6).fill(RED);
   doc.roundedRect(left, 44, 64, 64, 10).fill(RED);
-  doc.fillColor('#fff').fontSize(30).font('Helvetica-Bold').text('N', left, 60, { width: 64, align: 'center' });
-  doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('NocVault', left + 80, 56);
-  doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DDIVault — DNS · DHCP · IPAM', left + 80, 86);
+  doc.fillColor('#fff').fontSize(30).font('Helvetica-Bold').text('D', left, 60, { width: 64, align: 'center' });
+  doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text('DDIVault', left + 80, 56);
+  doc.fillColor('#cbd5e1').fontSize(11).font('Helvetica').text('DNS · DHCP · IPAM', left + 80, 86);
 
   doc.fillColor(NAVY).fontSize(28).font('Helvetica-Bold').text(title, left, 230, { width: contentW });
   doc.moveTo(left, 274).lineTo(left + 120, 274).lineWidth(3).stroke(RED);
