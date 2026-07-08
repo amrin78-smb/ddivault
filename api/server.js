@@ -13,8 +13,14 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.loc
 const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileP = promisify(execFile);
 const path = require('path');
+
+// Git invoked with prompts disabled so a bad/expired credential can never block
+// on an interactive password prompt (which would hang the timeout).
+const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
 
 // App version — single source of truth is the root package.json.
 const { version } = require('../package.json');
@@ -23,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.4': [
+    'Bug-sweep fixes: the git-based update check now runs asynchronously (a slow/unreachable GitHub can no longer briefly stall the server while checking); loading a saved DHCP Scope Health view now restores its scope filter (previously re-applying it silently reverted to all scopes); the per-scope PDF chart no longer clips at a page boundary when a scope name wraps; and two internal error messages are no longer surfaced to the client / into a PDF.',
+  ],
   '1.20.3': [
     'The update-available banner check now also uses git instead of GitHub\'s rate-limited web APIs, completing the update-check fix — the background check no longer contributes to the rate limiting that caused "Could not check for updates".',
   ],
@@ -547,23 +556,22 @@ app.get('/api/system/update-status', async (_req, res) => {
   const localVersion = version;
   const localHash = localCommitHash();
   try {
-    // Remote HEAD of origin/main via git ls-remote (no fetch, no rate limit).
-    // First whitespace-delimited token is the full SHA; short-hash it to 7.
-    let remoteHash = null;
-    try {
-      const out = execSync('git ls-remote origin main', {
-        cwd: APP_ROOT, encoding: 'utf8', timeout: 10000,
-      }).trim();
-      remoteHash = out ? out.split(/\s+/)[0].slice(0, 7) : null;
-    } catch {
-      remoteHash = null;
-    }
+    // Remote HEAD of origin/main via the async helper (git ls-remote — no fetch,
+    // no rate limit, and off the event loop so it can't stall HTTP).
+    const remoteHash = await remoteCommitHash();
 
     // If the remote hash can't be read, degrade to "up to date" with an error
     // string so the Settings page never shows a false update-available state.
+    // Still return current_* so the UI can show "you're on vX".
     if (!remoteHash) {
       console.error('[update-status] could not read remote hash via git ls-remote');
-      return res.json({ up_to_date: true, error: 'Could not check for updates' });
+      return res.json({
+        up_to_date: true,
+        error: 'Could not check for updates',
+        current_version: localVersion,
+        current_commit: localHash,
+        current_hash: localHash,
+      });
     }
 
     // Any new commit = update available (needs both hashes present + differing).
@@ -571,21 +579,10 @@ app.get('/api/system/update-status', async (_req, res) => {
 
     // Only pull the remote version when there's actually a new commit — avoids a
     // network round-trip on the common "already up to date" path. On any git
-    // failure, fall back to the local version.
-    let remoteVersion = localVersion;
-    if (updateAvail) {
-      try {
-        execSync('git fetch --quiet origin main', {
-          cwd: APP_ROOT, timeout: 20000, stdio: 'ignore',
-        });
-        const remotePkg = JSON.parse(execSync('git show origin/main:package.json', {
-          cwd: APP_ROOT, encoding: 'utf8', timeout: 10000,
-        }));
-        remoteVersion = remotePkg.version || localVersion;
-      } catch {
-        remoteVersion = localVersion;
-      }
-    }
+    // failure the async helper falls back to the local version.
+    const remoteVersion = updateAvail
+      ? await remotePackageVersion(localVersion)
+      : localVersion;
 
     // Release notes keyed by the latest (offered) version so "What's new in
     // v{latest}" matches its bullets. Falls back to a generic message.
@@ -606,7 +603,13 @@ app.get('/api/system/update-status', async (_req, res) => {
     });
   } catch (e) {
     console.error('[update-status] version check failed:', e.message);
-    res.json({ up_to_date: true, error: 'Could not check for updates' });
+    res.json({
+      up_to_date: true,
+      error: 'Could not check for updates',
+      current_version: localVersion,
+      current_commit: localHash,
+      current_hash: localHash,
+    });
   }
 });
 
@@ -615,32 +618,42 @@ app.get('/api/system/update-status', async (_req, res) => {
 let updateAvailable = null; // { current, latest } when an update exists, else null
 
 // Remote origin/main HEAD via git transport (git ls-remote) — not rate-limited,
-// unlike GitHub's web APIs. Returns the first 7 chars, or null on any failure.
-function remoteCommitHash() {
+// unlike GitHub's web APIs. ASYNC (execFile) so the network round-trip never
+// blocks the event loop / stalls all HTTP. Returns the first 7 chars, or null.
+async function remoteCommitHash() {
   try {
-    const out = execSync('git ls-remote origin main', { cwd: APP_ROOT, encoding: 'utf8', timeout: 10000 });
-    const t = out.trim().split(/\s+/)[0];
+    const { stdout } = await execFileP('git', ['ls-remote', 'origin', 'main'], {
+      cwd: APP_ROOT, timeout: 10000, encoding: 'utf8', env: GIT_ENV,
+    });
+    const t = stdout.trim().split(/\s+/)[0];
     return t ? t.slice(0, 7) : null;
   } catch { return null; }
 }
 
-// Remote package.json version via git (fetch + show), only worth calling when a
-// new commit exists. Falls back to the given local version on any failure.
-function remotePackageVersion(fallback) {
+// Remote package.json version via git (fetch + show FETCH_HEAD), only worth
+// calling when a new commit exists. ASYNC so it never blocks the event loop.
+// Reads from FETCH_HEAD (what we just fetched) rather than origin/main so the
+// value is consistent even if the local remote-tracking ref lags. Falls back to
+// the given local version on any failure.
+async function remotePackageVersion(fallback) {
   try {
-    execSync('git fetch --quiet origin main', { cwd: APP_ROOT, timeout: 20000, stdio: 'ignore' });
-    const pkg = execSync('git show origin/main:package.json', { cwd: APP_ROOT, encoding: 'utf8', timeout: 10000 });
-    return JSON.parse(pkg).version || fallback;
+    await execFileP('git', ['fetch', '--quiet', 'origin', 'main'], {
+      cwd: APP_ROOT, timeout: 20000, env: GIT_ENV,
+    });
+    const { stdout } = await execFileP('git', ['show', 'FETCH_HEAD:package.json'], {
+      cwd: APP_ROOT, timeout: 10000, encoding: 'utf8', env: GIT_ENV,
+    });
+    return JSON.parse(stdout).version || fallback;
   } catch { return fallback; }
 }
 
 async function checkForUpdates() {
   try {
     const localHash = localCommitHash();
-    const remoteHash = remoteCommitHash();
+    const remoteHash = await remoteCommitHash();
     const changed = !!(localHash && remoteHash && remoteHash !== localHash);
     updateAvailable = changed
-      ? { current: version, latest: remotePackageVersion(version) }
+      ? { current: version, latest: await remotePackageVersion(version) }
       : null;
   } catch {
     // never block on failure — keep the last known state

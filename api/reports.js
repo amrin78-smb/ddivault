@@ -1410,10 +1410,16 @@ function drawScopeBlock(doc, s, layout, rangeLabel) {
 // Estimated block height (accounts for a wrapping server FQDN) so we can page-break
 // BEFORE a block rather than splitting it.
 function scopeBlockHeight(doc, s, contentW) {
+  // Header "<scope>   <name>" is 12pt bold within (contentW-96) and can wrap to a
+  // second line, so measure its real wrapped height (same as serverH does for the
+  // FQDN) instead of budgeting a flat single-line 16 — otherwise a tall header can
+  // push the trend chart past the page bottom and clip it.
+  doc.font('Helvetica-Bold').fontSize(12);
+  const headerH = doc.heightOfString(pdfSafe(`${s.scope}   ${s.name}`), { width: contentW - 96 });
   doc.font('Helvetica').fontSize(9);
   const serverH = doc.heightOfString(pdfSafe(`Server: ${s.server}`), { width: contentW });
   const statsH = doc.heightOfString('Xy', { width: contentW });
-  return 16 + 2 + serverH + 2 + statsH + 6 + SCOPE_CHART_H + 20;
+  return headerH + 2 + serverH + 2 + statsH + 6 + SCOPE_CHART_H + 20;
 }
 
 function renderDhcpHealthBody(doc, opts, layout) {
@@ -1633,8 +1639,10 @@ async function generatePack(db, { types = [], query = {}, allowedSiteIds = null,
       drawCharts(doc, o, layout, { continueOnPage: true });
       drawTable(doc, o, layout, { continueOnPage: !hasCharts });
     } catch (err) {
+      // Don't leak raw error text into the PDF (suite rule); log server-side.
+      console.error('[reports pack] section failed to generate:', err);
       doc.fillColor(RED).fontSize(11).font('Helvetica-Oblique')
-        .text(`This section failed to generate: ${err.message}`, left, doc.y + 16, { width: contentW });
+        .text('This section failed to generate.', left, doc.y + 16, { width: contentW });
     }
   }
 

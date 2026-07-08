@@ -125,7 +125,9 @@ function validateScheduleFields(body, partial) {
 // Standard 500 responder — guards res.headersSent for the streaming pack route.
 function fail(res, err) {
   if (res.headersSent) { try { res.end(); } catch { /* stream already gone */ } return; }
-  res.status(500).json({ error: 'Reports admin failed', detail: err.message });
+  // Never leak raw DB/error text to the client (suite rule); log server-side only.
+  console.error(err);
+  res.status(500).json({ error: 'Reports admin failed' });
 }
 
 // ════════════════════════════════════════════════════════════

@@ -300,6 +300,15 @@ export default function ReportsTab() {
     if (!def) return;
     setActive(def);
     setTab('view'); // surface the loaded view in the workspace
+    // Rehydrate the scopes multi-select from the saved scope_ids so a follow-up
+    // Apply re-scopes to the same scopes instead of silently broadening to ALL.
+    // scope_ids persists as a comma-joined string (see generate()); empty/absent → none.
+    const rawScopeIds = (row.params as Record<string, unknown>)?.scope_ids;
+    const scopeIds = (Array.isArray(rawScopeIds) ? rawScopeIds.join(',') : String(rawScopeIds ?? ''))
+      .split(',')
+      .map(v => parseInt(String(v).trim(), 10))
+      .filter(n => Number.isFinite(n));
+    setScopeSel(new Set(scopeIds));
     const strParams: Record<string, string> = {};
     for (const [k, v] of Object.entries(row.params)) strParams[k] = String(v);
     const qs = new URLSearchParams(strParams).toString();
