@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.19.1': [
+    'Fixed the scopes filter dropdown on the DHCP Scope Health report rendering behind the table header — the sticky filter bar now stacks above the sticky table header, so the scope list is fully visible and clickable.',
+  ],
   '1.19.0': [
     'Reports page redesigned into a two-pane layout: a grouped report catalog on the left (Inventory, DHCP, DNS, Security & change, Trends) and a workspace on the right with tabs (View, Saved views, Scheduled, Report pack) and a sticky filter bar — no more one long scroll.',
     'PDF reports look much cleaner: fixed garbled arrows/≥ symbols, removed the stray blank pages, and wide tables (long server FQDNs) now fit on one line in landscape without overlapping rows.',

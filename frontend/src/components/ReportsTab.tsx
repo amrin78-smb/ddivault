@@ -497,7 +497,7 @@ export default function ReportsTab() {
                 </div>
 
                 {/* Sticky filter bar — opaque bg + z-index so scrolled rows never bleed through. */}
-                <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)', padding: '12px 18px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)', padding: '12px 18px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                   <DateRangePicker value={range} onChange={setRange} maxDays={retentionDays} />
                   {showSite && (
                     <select className="input" value={siteId} onChange={e => setSiteId(e.target.value)}>
