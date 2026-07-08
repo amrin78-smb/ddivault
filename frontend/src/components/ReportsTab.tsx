@@ -31,6 +31,9 @@ interface Summary { label: string; value: string | number; color?: string }
 interface ReportData { title: string; columns: Column[]; rows: Record<string, unknown>[]; summary?: Summary[]; charts?: ChartSpec[]; drill?: DrillMeta }
 interface Site { id: number; name: string }
 interface Server { id: number; hostname: string }
+// Minimal scope shape for the DHCP Scope Health scope filter. `id` is dhcp_scopes.id
+// (the numeric value the dhcp-health `scope_ids` contract + drill row `_id` expect).
+interface ScopeOption { id: number; scope_id: string; name: string; server_id: number }
 
 // icon factory
 const I = (p: React.ReactNode) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{p}</svg>;
@@ -93,6 +96,15 @@ export default function ReportsTab() {
   // compliance pack selection
   const [packSel, setPackSel] = useState<Set<string>>(new Set());
 
+  // DHCP Scope Health — per-scope filter (dhcp-health only). Scope options load lazily
+  // from /api/scopes the first time that report is opened. Selection is a Set of numeric
+  // dhcp_scopes.id (the `scope_ids` contract value). Empty = all scopes.
+  const [scopeOptions, setScopeOptions] = useState<ScopeOption[]>([]);
+  const scopesLoadedRef = useRef(false);
+  const [scopeSel, setScopeSel] = useState<Set<number>>(new Set());
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [scopeSearch, setScopeSearch] = useState('');
+
   useEffect(() => {
     api('/sites').then(d => setSites(d.data || [])).catch(() => {});
     api('/servers').then(d => setServers(d.data || [])).catch(() => {});
@@ -140,14 +152,35 @@ export default function ReportsTab() {
     setColMenuOpen(false);
   }, [preview]);
 
+  // Lazily load scope options the first time the DHCP Scope Health report is opened.
+  useEffect(() => {
+    if (active?.key !== 'dhcp-health' || scopesLoadedRef.current) return;
+    scopesLoadedRef.current = true;
+    api('/scopes')
+      .then(d => setScopeOptions(((d.data || []) as ScopeOption[]).map(s => ({
+        id: Number(s.id), scope_id: s.scope_id, name: s.name, server_id: Number(s.server_id),
+      }))))
+      .catch(() => { scopesLoadedRef.current = false; });
+  }, [active]);
+
+  // Drop stale scope selection when the report changes or the server filter narrows the
+  // candidate scopes (previously-picked scopes may no longer belong to the chosen server).
+  useEffect(() => {
+    setScopeSel(new Set());
+    setScopeMenuOpen(false);
+    setScopeSearch('');
+  }, [active, serverId]);
+
   const buildParams = useCallback((def: ReportDef) => {
     const p = new URLSearchParams();
     // Every report now accepts a universal date range.
     for (const [k, v] of Object.entries(rangeToParams(range))) p.set(k, v);
     if (def.filters.includes('site') && siteId) p.set('site_id', siteId);
     if (def.filters.includes('server') && serverId) p.set('server_id', serverId);
+    // DHCP Scope Health: narrow to selected scopes (empty = all scopes → omit).
+    if (def.key === 'dhcp-health' && scopeSel.size > 0) p.set('scope_ids', Array.from(scopeSel).join(','));
     return p;
-  }, [siteId, serverId, range]);
+  }, [siteId, serverId, range, scopeSel]);
 
   // Download a report file (PDF/CSV) via an AUTHENTICATED fetch. window.open() can't
   // be used: it is a plain browser navigation that carries none of the x-ddi-actor-*
@@ -220,8 +253,9 @@ export default function ReportsTab() {
     for (const [k, v] of Object.entries(rangeToDurableParams(range))) p.set(k, v);
     if (def.filters.includes('site') && siteId) p.set('site_id', siteId);
     if (def.filters.includes('server') && serverId) p.set('server_id', serverId);
+    if (def.key === 'dhcp-health' && scopeSel.size > 0) p.set('scope_ids', Array.from(scopeSel).join(','));
     return p;
-  }, [siteId, serverId, range]);
+  }, [siteId, serverId, range, scopeSel]);
 
   const downloadActive = (fmt: 'csv' | 'pdf') => {
     if (!active) return;
@@ -277,6 +311,14 @@ export default function ReportsTab() {
     downloadReport('pack', qs, 'pdf', 'Compliance Pack');
   };
 
+  const toggleScope = (id: number) => {
+    setScopeSel(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('asc'); }
@@ -298,6 +340,16 @@ export default function ReportsTab() {
 
   const showSite = active?.filters.includes('site');
   const showServer = active?.filters.includes('server');
+  // Scope filter is exclusive to the DHCP Scope Health report. When a server is chosen,
+  // only offer that server's scopes; otherwise all. Search narrows the visible menu list.
+  const showScopeFilter = active?.key === 'dhcp-health';
+  const scopeOptsForServer = serverId ? scopeOptions.filter(s => s.server_id === Number(serverId)) : scopeOptions;
+  const menuScopes = scopeSearch.trim()
+    ? scopeOptsForServer.filter(s => {
+        const q = scopeSearch.trim().toLowerCase();
+        return (s.scope_id || '').toLowerCase().includes(q) || (s.name || '').toLowerCase().includes(q);
+      })
+    : scopeOptsForServer;
 
   const reportsList = REPORTS.map(r => ({ key: r.key, title: r.title }));
   // Persisted contexts use durable params (rolling range_preset, not frozen from/to).
@@ -402,6 +454,52 @@ export default function ReportsTab() {
               <option value="">All servers</option>
               {servers.map(s => <option key={s.id} value={s.id}>{s.hostname}</option>)}
             </select>
+          )}
+          {showScopeFilter && (
+            <div style={{ position: 'relative' }}>
+              <button className="btn" onClick={() => setScopeMenuOpen(o => !o)}>
+                {scopeSel.size === 0 ? 'All scopes' : `${scopeSel.size} scope${scopeSel.size > 1 ? 's' : ''} selected`} ▾
+              </button>
+              {scopeMenuOpen && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <input
+                    className="input"
+                    placeholder="Search scopes…"
+                    value={scopeSearch}
+                    onChange={e => setScopeSearch(e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                    <button
+                      className="btn"
+                      style={{ flex: 1 }}
+                      disabled={menuScopes.length === 0}
+                      onClick={() => setScopeSel(prev => { const n = new Set(prev); menuScopes.forEach(s => n.add(s.id)); return n; })}
+                    >All</button>
+                    <button
+                      className="btn"
+                      style={{ flex: 1 }}
+                      disabled={scopeSel.size === 0}
+                      onClick={() => setScopeSel(new Set())}
+                    >Clear</button>
+                  </div>
+                  <div style={{ overflow: 'auto', maxHeight: 240 }}>
+                    {menuScopes.length === 0 ? (
+                      <div style={{ ...MUTED, padding: '8px' }}>No scopes{scopeOptions.length === 0 ? ' loaded' : ' match'}.</div>
+                    ) : menuScopes.map(s => (
+                      <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                        <input type="checkbox" checked={scopeSel.has(s.id)} onChange={() => toggleScope(s.id)} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {s.scope_id}{s.name ? ` — ${s.name}` : ''}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           <button className="btn btn-primary" onClick={() => generate(active, 'view')}>Apply &amp; View</button>
         </div>
@@ -516,7 +614,7 @@ export default function ReportsTab() {
       {/* Saved views · run history · schedules */}
       <ReportsManagePanel reports={reportsList} currentContext={currentContext} refreshKey={refreshKey} onLoadSaved={handleLoadSaved} onOpenSchedule={handleOpenSchedule} />
 
-      <ReportDrillDrawer open={drillOpen} entity={drillEntity} id={drillId} onClose={() => setDrillOpen(false)} />
+      <ReportDrillDrawer open={drillOpen} entity={drillEntity} id={drillId} range={range} onClose={() => setDrillOpen(false)} />
 
       <ReportScheduleModal
         open={scheduleOpen}

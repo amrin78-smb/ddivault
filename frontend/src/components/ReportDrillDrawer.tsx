@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChartSpec } from './reportTypes';
+import { ChartSpec, RangeValue, rangeToParams } from './reportTypes';
 import { TrendChart } from './TrendChart';
 
 interface DrillFact { label: string; value: string | number; color?: string }
@@ -19,11 +19,13 @@ export function ReportDrillDrawer({
   open,
   entity,
   id,
+  range,
   onClose,
 }: {
   open: boolean;
   entity: string | null;
   id: string | number | null;
+  range?: RangeValue;
   onClose: () => void;
 }): JSX.Element | null {
   const [data, setData] = useState<DrillPayload | null>(null);
@@ -36,7 +38,11 @@ export function ReportDrillDrawer({
     setLoading(true);
     setError(null);
     setData(null);
-    fetch(`/api/reports/drill/${entity}/${id}`)
+    // Carry the report's current date range so the drill scope-utilization history
+    // window (and its dynamic title) matches the report the row came from. Missing
+    // range → no params, and the backend falls back to its 90d default.
+    const qs = range ? new URLSearchParams(rangeToParams(range)).toString() : '';
+    fetch(`/api/reports/drill/${entity}/${id}${qs ? `?${qs}` : ''}`)
       .then(async res => {
         if (!res.ok) {
           let msg = `HTTP ${res.status}`;
@@ -61,7 +67,7 @@ export function ReportDrillDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, entity, id]);
+  }, [open, entity, id, range]);
 
   if (!open || !entity || id === null || id === undefined) return null;
 

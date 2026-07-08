@@ -385,6 +385,16 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
   const serverId = intParam(q.server_id, 'server_id');
   if (serverId != null) { params.push(serverId); conds.push(`sc.server_id = $${params.length}`); }
   if (allowedSiteIds != null) { params.push(allowedSiteIds); conds.push(`srv.site_id = ANY($${params.length}::int[])`); }
+  // Optional scope filter: comma-separated list of dhcp_scopes.id. Positive integers
+  // only; invalid entries are dropped. Empty/absent → no filter (all scopes). Composes
+  // with the server_id filter + date range above, parameterized as an int[].
+  const scopeIds = String(q.scope_ids || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => /^\d+$/.test(s))
+    .map(s => parseInt(s, 10))
+    .filter(n => n > 0);
+  if (scopeIds.length) { params.push(scopeIds); conds.push(`sc.id = ANY($${params.length}::int[])`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   let r;
   if (range.asOf) {
@@ -1419,12 +1429,39 @@ function createReportsRouter(db) {
         if (!siteAllowed(s.site_id)) return res.status(403).json({ error: 'Forbidden' });
 
         const util = parseFloat(s.percent_used) || 0;
+
+        // Honor the report's selected date range (from/to/as_of) for the utilization
+        // chart instead of a hardcoded 90-day window. Params are validated with the
+        // same helpers the other report routes use (parseRangeParams → typed 400 on
+        // malformed input) and passed as bind params — never string-interpolated.
+        const { from, to, asOf } = parseRangeParams(req.query);
+        const hp = [id];
+        let histWhere;
+        let chartTitle;
+        const daySpan = (iso) => Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 86400000));
+        if (from && to) {
+          hp.push(from); const fi = hp.length;
+          hp.push(to); const ti = hp.length;
+          histWhere = `recorded_at >= $${fi} AND recorded_at <= $${ti}`;
+          chartTitle = `Scope Utilization (${from.slice(0, 10)} to ${to.slice(0, 10)})`;
+        } else if (from) {
+          hp.push(from); const fi = hp.length;
+          histWhere = `recorded_at >= $${fi}`;
+          chartTitle = `Scope Utilization (last ${daySpan(from)} days)`;
+        } else if (asOf) {
+          hp.push(asOf); const ai = hp.length;
+          histWhere = `recorded_at <= $${ai} AND recorded_at > $${ai}::timestamptz - INTERVAL '90 days'`;
+          chartTitle = `Scope Utilization (last 90 days)`;
+        } else {
+          histWhere = `recorded_at > NOW() - INTERVAL '90 days'`;
+          chartTitle = `Scope Utilization (last 90 days)`;
+        }
         const h = await db.query(
           `SELECT to_char(date_trunc('day', recorded_at), 'YYYY-MM-DD') AS day,
                   ROUND(AVG(percent_used)::numeric, 1) AS util
              FROM dhcp_scope_history
-            WHERE scope_id = $1 AND recorded_at > NOW() - INTERVAL '90 days'
-            GROUP BY 1 ORDER BY 1`, [id]);
+            WHERE scope_id = $1 AND ${histWhere}
+            GROUP BY 1 ORDER BY 1`, hp);
         const leases = await db.query(
           `SELECT host(ip_address) AS ip, mac_address, hostname, address_state, lease_expiry
              FROM dhcp_leases
@@ -1443,7 +1480,7 @@ function createReportsRouter(db) {
           ],
           charts: [{
             type: 'line',
-            title: 'Scope Utilization (90 days)',
+            title: chartTitle,
             x: h.rows.map(r => r.day),
             series: [{ label: 'Utilization %', points: h.rows.map(r => r.util == null ? null : parseFloat(r.util)) }],
             yFormat: 'percent',
@@ -1555,6 +1592,9 @@ function createReportsRouter(db) {
 
       return res.status(404).json({ error: 'Unknown entity' });
     } catch (err) {
+      // Malformed date-window params are validated up front (parseRangeParams) →
+      // answer with a clean 400, consistent with the /:type route, never a 500.
+      if (err instanceof BadRequestError) return res.status(400).json({ error: err.message });
       console.error(`[Reports] drill ${entity} error:`, err.message);
       // Log the detail server-side only; do NOT return err.message to the client
       // (it can carry raw Postgres text — table/constraint names, etc.).

@@ -25,6 +25,10 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.18.0': [
+    'Reports: the scope drill-down chart now honors the report\'s selected date range. Previously "Scope Utilization" always showed 90 days even when you\'d picked 7d/30d/custom — now it matches your selection (and the chart title reflects the actual window).',
+    'Reports: the DHCP Scope Health report gains a "scopes" multi-select filter — pick specific scopes to report on instead of all of them. Searchable, with All/Clear, and it applies to View, PDF, CSV, and saved/scheduled reports. Empty selection = all scopes (unchanged).',
+  ],
   '1.17.4': [
     'Fixed a crash when clicking a scope in the Capacity Forecast: it passed the forecast\'s numeric scope id (not the subnet), so the DHCP tab errored with "t.trim is not a function" — and because the shared error boundary never reset, every page after that showed the same error until reload. Now it passes the scope subnet (so the DHCP tab focuses the right scope), the DHCP tab tolerates any value defensively, and the error boundary resets on tab change so one tab error can no longer brick navigation.',
   ],
