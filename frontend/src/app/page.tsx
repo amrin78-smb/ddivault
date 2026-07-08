@@ -1799,7 +1799,9 @@ export default function DDIVaultApp() {
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
           <LicenseBanner />
           <UpdateNotifier onGoToSettings={goToSettingsUpdates} />
-          <ErrorBoundary name={tab}>
+          {/* key={tab} remounts the boundary on tab change so one tab's caught error
+              can't stick and brick every other tab (the boundary has no self-reset). */}
+          <ErrorBoundary key={tab} name={tab}>
             {tab === 'dashboard' && <DashboardTab onNavigate={navigate} onFocusScope={focusScopeNav} />}
             {tab === 'scopes'    && <DHCPTab focusScope={focusScope} />}
             {tab === 'ipam'      && <IPAMTab />}

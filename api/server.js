@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.17.4': [
+    'Fixed a crash when clicking a scope in the Capacity Forecast: it passed the forecast\'s numeric scope id (not the subnet), so the DHCP tab errored with "t.trim is not a function" — and because the shared error boundary never reset, every page after that showed the same error until reload. Now it passes the scope subnet (so the DHCP tab focuses the right scope), the DHCP tab tolerates any value defensively, and the error boundary resets on tab change so one tab error can no longer brick navigation.',
+  ],
   '1.17.3': [
     'Security: extended the CSV formula-injection guard to the DHCP leases export and the Audit Log export — 1.17.2 only covered the reports engine, but those two exports (which include device hostnames and audit values) had the same gap. All three now share one escaper (api/csv.js), so the guard can\'t drift or be missed.',
   ],

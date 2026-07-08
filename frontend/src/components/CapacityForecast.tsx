@@ -153,7 +153,7 @@ export default function CapacityForecast({ onViewAll, onRowClick }: { onViewAll?
                     key={r.scope_id}
                     className={onRowClick ? 'clickable' : undefined}
                     style={onRowClick ? { cursor: 'pointer' } : undefined}
-                    onClick={onRowClick ? () => onRowClick(r.scope_id) : undefined}
+                    onClick={onRowClick ? () => onRowClick(r.scope_cidr) : undefined}
                   >
                     <td style={TD}>
                       <div style={{ ...MONO, fontWeight: 600 }}>{r.scope_cidr || '—'}</div>

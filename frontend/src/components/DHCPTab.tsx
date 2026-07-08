@@ -954,12 +954,15 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
 
   // ── focusScope handling ─────────────────────────────────────
   useEffect(() => {
-    if (focusScope && focusScope.trim()) {
+    // Coerce defensively: focusScope is typed string but comes from data, and a caller
+    // passing a non-string (e.g. a numeric scope id) must never crash the tab on .trim().
+    const fs = focusScope == null ? '' : String(focusScope).trim();
+    if (fs) {
       setView('scopes');
-      setSearch(focusScope);
-      setExpandedScope(focusScope);
+      setSearch(fs);
+      setExpandedScope(fs);
       setScopeLeaseSearch('');
-      loadScopeLeases(focusScope);
+      loadScopeLeases(fs);
     }
   }, [focusScope, loadScopeLeases]);
 
