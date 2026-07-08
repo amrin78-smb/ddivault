@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.5': [
+    'Updater hardening: the update script now pins the build directory to its true on-disk casing. This fixes the build failure (duplicate React / "Cannot read properties of null (reading useContext)") that occurs when the updater is invoked with a different path casing than a previous run (e.g. C:\\Apps\\DDIVault vs ...\\ddivault) — Next.js caches absolute paths, so the casing change made webpack load React twice.',
+  ],
   '1.20.4': [
     'Bug-sweep fixes: the git-based update check now runs asynchronously (a slow/unreachable GitHub can no longer briefly stall the server while checking); loading a saved DHCP Scope Health view now restores its scope filter (previously re-applying it silently reverted to all scopes); the per-scope PDF chart no longer clips at a page boundary when a scope name wraps; and two internal error messages are no longer surfaced to the client / into a PDF.',
   ],
