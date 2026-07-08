@@ -25,6 +25,11 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.0': [
+    'DHCP Scope Health PDF redesigned: reports are now always portrait, and each scope gets its own section with a large utilization trend chart (proper axes, gridlines and date labels) instead of a tiny in-table sparkline.',
+    'The per-scope trend chart now reflects the date range you selected (e.g. last 30 days, or a custom window) — no longer a fixed 14 days.',
+    'A compact overview table still gives the at-a-glance summary before the per-scope detail. Tip: use the scopes filter to keep a per-scope report focused (each scope adds a chart section).',
+  ],
   '1.19.1': [
     'Fixed the scopes filter dropdown on the DHCP Scope Health report rendering behind the table header — the sticky filter bar now stacks above the sticky table header, so the scope list is fully visible and clickable.',
   ],

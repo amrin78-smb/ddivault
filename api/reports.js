@@ -7,13 +7,14 @@
  * Exports an Express router mounted at /api/reports.
  *
  * Every report shares: cover page, page header/footer with page numbers,
- * zebra-striped tables, landscape orientation for wide tables.
+ * zebra-striped tables. ALL reports render PORTRAIT (long values wrap).
  */
 
 const express = require('express');
 const PDFDocument = require('pdfkit');
 const { attachSiteFilter } = require('./middleware/rbac');
 const { escapeCsvCell } = require('./csv');
+const { renderTrendChart } = require('./pdfCharts');
 
 // ── Brand palette (matches the frontend design system) ────────
 const RED = '#C8102E';
@@ -35,6 +36,12 @@ function fmtDay(d) {
 }
 function pct(n) { return `${(parseFloat(n) || 0).toFixed(1)}%`; }
 function num(n) { return (n == null || n === '') ? '—' : String(n); }
+// Compact MM/DD for chart range labels (never a fixed "14d").
+function fmtMonthDay(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // ── PDF glyph safety ──────────────────────────────────────────
 // pdfkit's built-in Helvetica renders with WinAnsi (CP1252) encoding, which lacks
@@ -303,20 +310,6 @@ function drawChart(doc, x0, y0, w, h, chart) {
 // amber 80–90, red ≥90.
 function threshColor(v) { return v >= 90 ? RED : v >= 80 ? YELLOW : GREEN; }
 
-// Bucket a scope's history (ascending) to at most one point per day → a compact
-// series for the sparkline. Returns [] when there's no usable data.
-function dailySpark(hist) {
-  if (!Array.isArray(hist) || !hist.length) return [];
-  const byDay = new Map();
-  for (const h of hist) {
-    const v = parseFloat(h.percent_used);
-    if (isNaN(v)) continue;
-    const day = new Date(h.recorded_at).toISOString().slice(0, 10);
-    byDay.set(day, v); // hist is ascending → keeps the last reading of each day
-  }
-  return Array.from(byDay.values());
-}
-
 // Horizontal utilization bar: rounded track + threshold-colored fill (width = %).
 function renderUtilBar(doc, row, x, y, w, h) {
   const p = Math.max(0, Math.min(100, Number(row._util) || 0));
@@ -327,36 +320,6 @@ function renderUtilBar(doc, row, x, y, w, h) {
   doc.roundedRect(bx, by, bw, trackH, 3).fill(BORDER);
   const fw = Math.max(1.5, (bw * p) / 100);
   doc.roundedRect(bx, by, fw, trackH, 3).fill(threshColor(p));
-  doc.restore();
-}
-
-// Small area+line sparkline from a scope's daily history. Blank when no history.
-function renderSparkline(doc, row, x, y, w, h) {
-  const pts = Array.isArray(row._spark) ? row._spark : [];
-  if (!pts.length) return;
-  const padX = 4, padY = 4;
-  const px = x + padX, pw = Math.max(4, w - padX * 2);
-  const py = y + padY, ph = Math.max(4, h - padY * 2);
-  let min = Math.min(...pts), max = Math.max(...pts);
-  if (min === max) { min -= 1; max += 1; }
-  const n = pts.length;
-  const xAt = (i) => n <= 1 ? px + pw / 2 : px + (pw * i) / (n - 1);
-  const yAt = (v) => py + ph - (ph * (v - min)) / (max - min);
-  const color = threshColor(pts[pts.length - 1]);
-  doc.save();
-  if (n > 1) {
-    doc.moveTo(xAt(0), py + ph);
-    pts.forEach((v, i) => doc.lineTo(xAt(i), yAt(v)));
-    doc.lineTo(xAt(n - 1), py + ph);
-    doc.closePath();
-    doc.fillColor(color).fillOpacity(0.12).fill();
-    doc.fillOpacity(1);
-    doc.moveTo(xAt(0), yAt(pts[0]));
-    for (let i = 1; i < n; i++) doc.lineTo(xAt(i), yAt(pts[i]));
-    doc.lineWidth(1).strokeColor(color).stroke();
-  } else {
-    doc.circle(xAt(0), yAt(pts[0]), 1.4).fill(color);
-  }
   doc.restore();
 }
 
@@ -519,7 +482,9 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
 
   // peak + forecast from history — must honor as_of so a historical snapshot is
   // annotated with the peak/forecast for the 14 days ENDING AT as_of, not today's.
-  // When as_of is unset, keep the present-relative (NOW - 14d) window.
+  // When as_of is unset, keep the present-relative (NOW - 14d) window. This fixed
+  // 14-day window intentionally powers the Peak(14d) metric; the per-scope trend
+  // CHART below uses the SELECTED report window instead.
   const ids = r.rows.map(x => x.id);
   const histMap = {};
   if (ids.length) {
@@ -538,38 +503,102 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
       (histMap[row.scope_id] = histMap[row.scope_id] || []).push(row);
     }
   }
-  const rows = r.rows.map(x => {
+
+  // Per-scope trend CHART data over the SELECTED report window (default ~30 days).
+  // ONE query for ALL report scopes, bucketed to one point per day (avg percent_used),
+  // ascending, then grouped in JS by scope — never N queries. A scope with no history
+  // in the window simply gets no entry → points=[] (renderTrendChart shows "Not enough
+  // history"). dhcp_scope_history.scope_id == dhcp_scopes.id (== x.id).
+  const chartMap = {};
+  if (ids.length) {
+    const cp = [ids];
+    let cwhere = 'scope_id = ANY($1)';
+    if (range.asOf) {
+      cp.push(range.asOf);
+      cwhere += ` AND recorded_at <= $${cp.length} AND recorded_at > $${cp.length}::timestamptz - INTERVAL '30 days'`;
+    } else if (range.from || range.to) {
+      if (range.from) { cp.push(range.from); cwhere += ` AND recorded_at >= $${cp.length}`; }
+      if (range.to) { cp.push(range.to); cwhere += ` AND recorded_at <= $${cp.length}`; }
+    } else {
+      cwhere += ` AND recorded_at > NOW() - INTERVAL '30 days'`;
+    }
+    const ch = await db.query(
+      `SELECT scope_id, to_char(date_trunc('day', recorded_at), 'YYYY-MM-DD') AS day,
+              ROUND(AVG(percent_used)::numeric, 1) AS v
+         FROM dhcp_scope_history
+        WHERE ${cwhere}
+        GROUP BY 1, 2
+        ORDER BY 1, 2`, cp);
+    for (const row of ch.rows) {
+      (chartMap[row.scope_id] = chartMap[row.scope_id] || []).push({ t: row.day, v: parseFloat(row.v) });
+    }
+  }
+
+  // Human label for the chart's ACTUAL window (never a fixed "14d").
+  let rangeLabel;
+  if (range.from && range.to) {
+    rangeLabel = `Utilization — ${fmtMonthDay(range.from)} to ${fmtMonthDay(range.to)}`;
+  } else if (range.from) {
+    const days = Math.max(1, Math.round((Date.now() - Date.parse(range.from)) / 86400000));
+    rangeLabel = `Utilization — last ${days} days`;
+  } else if (range.asOf) {
+    const start = new Date(Date.parse(range.asOf) - 30 * 86400000).toISOString();
+    rangeLabel = `Utilization — ${fmtMonthDay(start)} to ${fmtMonthDay(range.asOf)}`;
+  } else {
+    rangeLabel = 'Utilization — last 30 days';
+  }
+
+  // One enriched entry per scope — drives BOTH the CSV/JSON rows and the PDF blocks.
+  const entries = r.rows.map(x => {
     const hist = histMap[x.id] || [];
-    const peak = hist.reduce((m, p) => Math.max(m, parseFloat(p.percent_used) || 0), parseFloat(x.percent_used) || 0);
+    const peakNum = hist.reduce((m, p) => Math.max(m, parseFloat(p.percent_used) || 0), parseFloat(x.percent_used) || 0);
+    const utilNum = parseFloat(x.percent_used) || 0;
     return {
       _id: x.id,
       scope: x.scope_id,
       name: x.name || '—',
       server: x.server,
-      used: `${x.in_use || 0} / ${x.total_ips || 0}`,
+      inUse: x.in_use || 0,
+      total: x.total_ips || 0,
+      _util: utilNum,
       util: pct(x.percent_used),
-      _util: parseFloat(x.percent_used) || 0,
-      peak: pct(peak),
+      peak: pct(peakNum),
       forecast: fmtForecast(daysToExhaustion(hist)),
       state: x.state || '—',
-      _spark: dailySpark(hist), // daily % series for the PDF sparkline (blank if none)
+      points: chartMap[x.id] || [], // [{ t: day, v: percent }] ascending over selected window
     };
   });
+
+  // CSV/JSON rows — kept byte-identical in shape to before, minus only the removed
+  // pdfOnly `_spark` sparkline field: scope, name, server, used, util, peak, forecast,
+  // state (+ hidden _id/_util the frontend uses for drill/coloring).
+  const rows = entries.map(e => ({
+    _id: e._id,
+    scope: e.scope,
+    name: e.name,
+    server: e.server,
+    used: `${e.inUse} / ${e.total}`,
+    util: e.util,
+    _util: e._util,
+    peak: e.peak,
+    forecast: e.forecast,
+    state: e.state,
+  }));
+
   return {
-    // Column widths tuned for LANDSCAPE so a full FQDN (e.g.
-    // BKK-INF-LV0-010.thaiunion.co.th) fits the Server column on one line.
-    // The Utilization bar and Trend sparkline are pdfOnly vector cells — they
-    // render in the PDF only and are skipped by the CSV/JSON output.
+    // Non-pdfOnly columns are UNCHANGED (same keys/labels/align) so CSV + JSON safeCols
+    // stay byte-identical. The old inline Utilization-bar and Trend(14d) sparkline
+    // pdfOnly columns are GONE — the PDF now renders a compact portrait overview table
+    // plus large per-scope trend charts via renderDhcpHealthBody (see buildPdfDoc).
+    // Server stays in CSV/JSON but moves to each per-scope header in the PDF.
     columns: [
       { key: 'scope', label: 'Scope', width: 80 },
       { key: 'name', label: 'Name', width: 120 },
-      { key: 'server', label: 'Server', width: 150 },
+      { key: 'server', label: 'Server', width: 140 },
       { key: 'used', label: 'Used / Total', width: 78, align: 'right' },
-      { key: 'util', label: 'Current', width: 50, align: 'right', color: r => r._util >= 90 ? RED : r._util >= 80 ? YELLOW : GREEN },
-      { key: '_bar', label: 'Utilization', width: 80, pdfOnly: true, render: renderUtilBar },
-      { key: 'peak', label: 'Peak (14d)', width: 55, align: 'right' },
-      { key: 'forecast', label: 'Forecast', width: 62, align: 'right' },
-      { key: '_spark', label: 'Trend (14d)', width: 72, pdfOnly: true, render: renderSparkline },
+      { key: 'util', label: 'Current', width: 55, align: 'right', color: r => r._util >= 90 ? RED : r._util >= 80 ? YELLOW : GREEN },
+      { key: 'peak', label: 'Peak (14d)', width: 60, align: 'right' },
+      { key: 'forecast', label: 'Forecast', width: 65, align: 'right' },
       { key: 'state', label: 'State', width: 46 },
     ],
     rows,
@@ -579,6 +608,8 @@ async function reportDhcpHealth(db, q, allowedSiteIds) {
       { label: 'Warning (80–90%)', value: rows.filter(r => r._util >= 80 && r._util < 90).length, color: YELLOW },
     ],
     drill: { entity: 'scope', idKey: '_id' },
+    // PDF-only payload consumed by renderDhcpHealthBody (ignored by CSV/JSON).
+    pdf: { kind: 'dhcp-health', scopes: entries, rangeLabel },
   };
 }
 
@@ -1158,18 +1189,19 @@ async function reportSiteHealthTrend(db, q, allowedSiteIds) {
   };
 }
 
+// All reports render PORTRAIT — no per-report `landscape` flag (see buildPdfDoc).
 const REPORTS = {
-  'subnet-utilization': { title: 'Subnet Utilization Report', gather: reportSubnetUtilization, landscape: true },
-  'ip-inventory':       { title: 'IP Address Inventory Report', gather: reportIpInventory, landscape: true },
-  'dhcp-health':        { title: 'DHCP Scope Health Report', gather: reportDhcpHealth, landscape: true },
-  'dns-zones':          { title: 'DNS Zone Report', gather: reportDnsZones, landscape: true },
-  'network-changes':    { title: 'Network Change Report', gather: reportNetworkChanges, landscape: true },
-  'rogue-devices':      { title: 'Security / Rogue Device Report', gather: reportRogueDevices, landscape: true },
-  'dhcp-utilization-trend': { title: 'DHCP Utilization Trend', gather: reportDhcpUtilizationTrend, landscape: true },
-  'ipam-growth-trend':      { title: 'IPAM Growth Trend', gather: reportIpamGrowthTrend, landscape: true },
-  'dns-query-trend':        { title: 'DNS Query Trend', gather: reportDnsQueryTrend, landscape: true },
-  'alert-anomaly-trend':    { title: 'Alerts & Anomalies Trend', gather: reportAlertAnomalyTrend, landscape: true },
-  'site-health-trend':      { title: 'Site Health Trend', gather: reportSiteHealthTrend, landscape: true },
+  'subnet-utilization': { title: 'Subnet Utilization Report', gather: reportSubnetUtilization },
+  'ip-inventory':       { title: 'IP Address Inventory Report', gather: reportIpInventory },
+  'dhcp-health':        { title: 'DHCP Scope Health Report', gather: reportDhcpHealth },
+  'dns-zones':          { title: 'DNS Zone Report', gather: reportDnsZones },
+  'network-changes':    { title: 'Network Change Report', gather: reportNetworkChanges },
+  'rogue-devices':      { title: 'Security / Rogue Device Report', gather: reportRogueDevices },
+  'dhcp-utilization-trend': { title: 'DHCP Utilization Trend', gather: reportDhcpUtilizationTrend },
+  'ipam-growth-trend':      { title: 'IPAM Growth Trend', gather: reportIpamGrowthTrend },
+  'dns-query-trend':        { title: 'DNS Query Trend', gather: reportDnsQueryTrend },
+  'alert-anomaly-trend':    { title: 'Alerts & Anomalies Trend', gather: reportAlertAnomalyTrend },
+  'site-health-trend':      { title: 'Site Health Trend', gather: reportSiteHealthTrend },
 };
 
 // ════════════════════════════════════════════════════════════
@@ -1334,6 +1366,99 @@ function drawTable(doc, opts, layout, o2 = {}) {
   }
 }
 
+// ── DHCP Scope Health — custom PORTRAIT body ─────────────────
+// Replaces the old wide landscape table (with its tiny inline sparkline). Renders:
+//  (a) a compact overview table (Scope, Name, Current+bar, Peak, Forecast, State —
+//      Server intentionally dropped; it appears in each per-scope header), then
+//  (b) one self-contained block per scope: header + state pill, server FQDN (wraps),
+//      a stats line, and a LARGE utilization trend chart over the selected window.
+// Blocks are never split across a page boundary (2–3 fit per portrait page).
+const SCOPE_CHART_H = 160;
+
+function drawScopeBlock(doc, s, layout, rangeLabel) {
+  const { left, contentW } = layout;
+  const color = threshColor(s._util);
+  const startY = doc.y;
+
+  // Header: "<CIDR>  <name>" + a small state pill on the right.
+  doc.fillColor(NAVY).fontSize(12).font('Helvetica-Bold')
+    .text(`${s.scope}   ${s.name}`, left, startY, { width: contentW - 96 });
+  const afterHeaderY = doc.y;
+  const pillTxt = String(s.state || '—');
+  doc.font('Helvetica-Bold').fontSize(8);
+  const pillW = doc.widthOfString(pillTxt) + 16;
+  doc.roundedRect(left + contentW - pillW, startY, pillW, 15, 7).fill(color);
+  doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8)
+    .text(pillTxt, left + contentW - pillW, startY + 4, { width: pillW, align: 'center' });
+
+  // Server (full FQDN, wraps if needed)
+  doc.y = afterHeaderY + 2;
+  doc.fillColor(MUTED).font('Helvetica').fontSize(9).text(`Server: ${s.server}`, left, doc.y, { width: contentW });
+
+  // Stats line (· is CP1252-safe → renders as-is)
+  doc.fillColor('#334155').font('Helvetica').fontSize(9)
+    .text(`Used ${s.inUse}/${s.total}  ·  Current ${pct(s._util)}  ·  Peak(14d) ${s.peak}  ·  Forecast ${s.forecast}`,
+      left, doc.y + 2, { width: contentW });
+
+  // Large utilization trend chart over the SELECTED window (points may be [] → the
+  // chart draws "Not enough history").
+  const chartY = doc.y + 6;
+  renderTrendChart(doc, { x: left, y: chartY, width: contentW, height: SCOPE_CHART_H, points: s.points || [], rangeLabel, color });
+  doc.y = chartY + SCOPE_CHART_H + 20;
+}
+
+// Estimated block height (accounts for a wrapping server FQDN) so we can page-break
+// BEFORE a block rather than splitting it.
+function scopeBlockHeight(doc, s, contentW) {
+  doc.font('Helvetica').fontSize(9);
+  const serverH = doc.heightOfString(pdfSafe(`Server: ${s.server}`), { width: contentW });
+  const statsH = doc.heightOfString('Xy', { width: contentW });
+  return 16 + 2 + serverH + 2 + statsH + 6 + SCOPE_CHART_H + 20;
+}
+
+function renderDhcpHealthBody(doc, opts, layout) {
+  const { left, contentW, pageH } = layout;
+  const scopes = (opts.pdf && opts.pdf.scopes) || [];
+  const rangeLabel = (opts.pdf && opts.pdf.rangeLabel) || 'Utilization';
+
+  // (a) Compact overview table (portrait-friendly widths; keeps the util bar).
+  doc.addPage();
+  doc.fillColor(NAVY).fontSize(14).font('Helvetica-Bold').text('Scope overview', left, doc.page.margins.top, { width: contentW });
+  doc.moveTo(left, doc.y + 4).lineTo(left + 90, doc.y + 4).lineWidth(2).stroke(RED);
+  const overviewCols = [
+    { key: 'scope', label: 'Scope', width: 90 },
+    { key: 'name', label: 'Name', width: 140 },
+    { key: 'util', label: 'Current', width: 60, align: 'right', color: r => threshColor(r._util) },
+    { key: '_bar', label: 'Utilization', width: 96, pdfOnly: true, render: renderUtilBar },
+    { key: 'peak', label: 'Peak', width: 55, align: 'right' },
+    { key: 'forecast', label: 'Forecast', width: 68, align: 'right' },
+    { key: 'state', label: 'State', width: 55 },
+  ];
+  const overviewRows = scopes.map(s => ({
+    scope: s.scope, name: s.name, util: s.util, _util: s._util,
+    peak: s.peak, forecast: s.forecast, state: s.state,
+  }));
+  drawTable(doc, { columns: overviewCols, rows: overviewRows }, layout, { continueOnPage: true });
+
+  // (b) Per-scope detail blocks.
+  doc.addPage();
+  doc.fillColor(NAVY).fontSize(14).font('Helvetica-Bold').text('Per-scope detail', left, doc.page.margins.top, { width: contentW });
+  doc.moveTo(left, doc.y + 4).lineTo(left + 110, doc.y + 4).lineWidth(2).stroke(RED);
+  doc.y += 12;
+
+  if (!scopes.length) {
+    doc.fillColor(MUTED).fontSize(11).font('Helvetica-Oblique')
+      .text('No DHCP scopes matched the selected filters.', left, doc.y + 8, { width: contentW, align: 'center' });
+    return;
+  }
+
+  scopes.forEach(s => {
+    const bh = scopeBlockHeight(doc, s, contentW);
+    if (doc.y + bh > pageH - doc.page.margins.bottom) doc.addPage();
+    drawScopeBlock(doc, s, layout, rangeLabel);
+  });
+}
+
 // ── Header / footer / page numbers on every buffered page ────
 // Runs the bufferedPageRange loop; must be called before doc.end().
 function stampHeadersFooters(doc, { title, company, generatedAt }) {
@@ -1371,8 +1496,9 @@ function stampHeadersFooters(doc, { title, company, generatedAt }) {
 // Build a fully-drawn single-report PDFDocument. Does NOT pipe or end() it —
 // callers choose the sink (renderPdf → res, renderPdfToBuffer → Buffer).
 function buildPdfDoc(opts) {
-  const { title, company, landscape } = opts;
-  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: landscape ? 'landscape' : 'portrait', margin: 36, bufferPages: true }));
+  const { title, company } = opts;
+  // Reports are ALWAYS portrait now (wide landscape tables retired; long values wrap).
+  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: 'portrait', margin: 36, bufferPages: true }));
 
   const pageW = doc.page.width;
   const pageH = doc.page.height;
@@ -1384,8 +1510,13 @@ function buildPdfDoc(opts) {
   const o = { ...opts, generatedAt };
 
   drawCover(doc, o, layout);
-  drawCharts(doc, o, layout);
-  drawTable(doc, o, layout);
+  if (o.pdf && o.pdf.kind === 'dhcp-health') {
+    // Custom portrait body: compact overview table + large per-scope trend charts.
+    renderDhcpHealthBody(doc, o, layout);
+  } else {
+    drawCharts(doc, o, layout);
+    drawTable(doc, o, layout);
+  }
   stampHeadersFooters(doc, { title, company, generatedAt });
 
   return doc;
@@ -1420,7 +1551,7 @@ async function generateReport(db, { type, query = {}, allowedSiteIds = null, for
   const def = REPORTS[type];
   if (!def) throw new Error('Unknown report type: ' + type);
   query = expandRangePreset(query);   // rolling saved/scheduled window → concrete from/to
-  const { columns, rows, summary, charts } = await def.gather(db, query, allowedSiteIds);
+  const { columns, rows, summary, charts, pdf } = await def.gather(db, query, allowedSiteIds);
   const comp = company || await companyName(db);
   const dateRange = (query.from || query.to)
     ? `${query.from ? fmtDay(query.from) : '…'} → ${query.to ? fmtDay(query.to) : 'now'}`
@@ -1429,7 +1560,7 @@ async function generateReport(db, { type, query = {}, allowedSiteIds = null, for
   if (format === 'csv') {
     return { buffer: Buffer.from(toCsv(columns, rows), 'utf8'), contentType: 'text/csv', filename: `${type}-${stamp}.csv`, rowCount: rows.length, title: def.title };
   }
-  const buffer = await renderPdfToBuffer({ title: def.title, company: comp, generatedBy: actor, dateRange, columns, rows, summary, charts, landscape: def.landscape, filename: `${type}-${stamp}.pdf` });
+  const buffer = await renderPdfToBuffer({ title: def.title, company: comp, generatedBy: actor, dateRange, columns, rows, summary, charts, pdf, filename: `${type}-${stamp}.pdf` });
   return { buffer, contentType: 'application/pdf', filename: `${type}-${stamp}.pdf`, rowCount: rows.length, title: def.title };
 }
 
@@ -1441,7 +1572,7 @@ async function generatePack(db, { types = [], query = {}, allowedSiteIds = null,
   const generatedAt = new Date().toLocaleString('en-GB', { hour12: false });
   const included = (Array.isArray(types) ? types : []).filter(t => REPORTS[t]);
 
-  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true }));
+  const doc = installPdfSafeText(new PDFDocument({ size: 'A4', layout: 'portrait', margin: 36, bufferPages: true }));
   const pageW = doc.page.width;
   const pageH = doc.page.height;
   const left = doc.page.margins.left;
@@ -1734,7 +1865,7 @@ function createReportsRouter(db) {
     const format = (req.query.format || 'json').toLowerCase();
     try {
       const query = expandRangePreset(req.query);   // rolling saved-view window → concrete from/to
-      const { columns, rows, summary, charts, drill } = await def.gather(db, query, req.allowedSiteIds);
+      const { columns, rows, summary, charts, drill, pdf } = await def.gather(db, query, req.allowedSiteIds);
       const safeCols = columns.filter(c => !c.pdfOnly).map(c => ({ key: c.key, label: c.label, align: c.align || 'left' }));
 
       // Best-effort audit of manual downloads to report_run_history. A logging
@@ -1766,7 +1897,7 @@ function createReportsRouter(db) {
         if (req.audit) req.audit({ action: 'export', entity_type: 'report', entity_name: def.title, change_summary: `Exported "${def.title}" as PDF (${rows.length} rows)` });
         return renderPdf(res, {
           title: def.title, company, generatedBy: actor, dateRange,
-          columns, rows, summary, charts, landscape: def.landscape,
+          columns, rows, summary, charts, pdf,
           filename: `${req.params.type}-${Date.now()}.pdf`,
         });
       }
