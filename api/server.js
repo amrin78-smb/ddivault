@@ -18,13 +18,14 @@ const path = require('path');
 
 // App version — single source of truth is the root package.json.
 const { version } = require('../package.json');
-// Raw GitHub base for remote version checks (no auth, public repo).
-const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 
 // Structured release notes keyed by version. When bumping the version, add a new
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.3': [
+    'The update-available banner check now also uses git instead of GitHub\'s rate-limited web APIs, completing the update-check fix — the background check no longer contributes to the rate limiting that caused "Could not check for updates".',
+  ],
   '1.20.2': [
     'PDF reports are now branded "DDIVault" (logo, title and footer) instead of "NocVault". The report "Company" still defaults sensibly and can be set to your own organisation name under Settings.',
   ],
@@ -613,26 +614,36 @@ app.get('/api/system/update-status', async (_req, res) => {
 // without each page hitting GitHub. Refreshed on startup + every 24h.
 let updateAvailable = null; // { current, latest } when an update exists, else null
 
+// Remote origin/main HEAD via git transport (git ls-remote) — not rate-limited,
+// unlike GitHub's web APIs. Returns the first 7 chars, or null on any failure.
+function remoteCommitHash() {
+  try {
+    const out = execSync('git ls-remote origin main', { cwd: APP_ROOT, encoding: 'utf8', timeout: 10000 });
+    const t = out.trim().split(/\s+/)[0];
+    return t ? t.slice(0, 7) : null;
+  } catch { return null; }
+}
+
+// Remote package.json version via git (fetch + show), only worth calling when a
+// new commit exists. Falls back to the given local version on any failure.
+function remotePackageVersion(fallback) {
+  try {
+    execSync('git fetch --quiet origin main', { cwd: APP_ROOT, timeout: 20000, stdio: 'ignore' });
+    const pkg = execSync('git show origin/main:package.json', { cwd: APP_ROOT, encoding: 'utf8', timeout: 10000 });
+    return JSON.parse(pkg).version || fallback;
+  } catch { return fallback; }
+}
+
 async function checkForUpdates() {
   try {
     const localHash = localCommitHash();
-    const [commitRes, pkgRes] = await Promise.all([
-      fetch('https://api.github.com/repos/amrin78-smb/ddivault/commits/main', {
-        headers: { 'Accept': 'application/vnd.github.v3+json' },
-        cache: 'no-store',
-      }),
-      fetch(`${GH_RAW}/package.json?cb=${Date.now()}`, { cache: 'no-store' }),
-    ]);
-    const commit = await commitRes.json();
-    const remoteHash = commit && commit.sha ? String(commit.sha).slice(0, 7) : null;
-    const remotePkg = await pkgRes.json();
-    const remoteVersion = remotePkg.version;
-
-    updateAvailable = (localHash && remoteHash && remoteHash !== localHash)
-      ? { current: version, latest: remoteVersion }
+    const remoteHash = remoteCommitHash();
+    const changed = !!(localHash && remoteHash && remoteHash !== localHash);
+    updateAvailable = changed
+      ? { current: version, latest: remotePackageVersion(version) }
       : null;
   } catch {
-    // never block on network failure — keep the last known state
+    // never block on failure — keep the last known state
   }
 }
 
