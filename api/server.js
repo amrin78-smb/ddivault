@@ -25,6 +25,9 @@ const GH_RAW = 'https://raw.githubusercontent.com/amrin78-smb/ddivault/main';
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.17.3': [
+    'Security: extended the CSV formula-injection guard to the DHCP leases export and the Audit Log export — 1.17.2 only covered the reports engine, but those two exports (which include device hostnames and audit values) had the same gap. All three now share one escaper (api/csv.js), so the guard can\'t drift or be missed.',
+  ],
   '1.17.2': [
     'Security: CSV report exports now neutralize spreadsheet formula injection — a cell beginning with =, +, -, @ (or a tab/return) is prefixed with a quote so Excel/Sheets treats it as text, not a formula.',
     'Security: report and drill-down errors no longer return the raw database error text to the client — the detail is logged server-side and the response is a generic message.',
@@ -349,6 +352,7 @@ const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
 const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
 const { createReportsRouter } = require('./reports');
+const { escapeCsvCell } = require('./csv');
 const { createReportsSchedulingRouter } = require('./reportsScheduling');
 const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
@@ -1159,7 +1163,7 @@ app.get('/api/leases/export', requireAuth, async (req, res) => {
     const csv = rows.rows.map(r =>
       [r.ip_address, r.hostname || '', r.mac_address || '', r.scope_id || '',
        r.address_state || '', r.lease_start || '', r.lease_expiry || '', r.last_seen || '']
-        .map(v => `"${String(v).replace(/"/g, '""')}"`)
+        .map(escapeCsvCell)
         .join(',')
     ).join('\n');
 
@@ -3997,7 +4001,7 @@ app.get('/api/audit/export', requireSuperAdmin, async (req, res) => {
     const { where, vals } = buildAuditFilters(req.query);
     const rows = await db.query(`SELECT timestamp, username, user_role, action, entity_type, entity_name, change_summary, result, ip_address, duration_ms FROM audit_log ${where} ORDER BY timestamp DESC LIMIT 50000`, vals);
     const cols = ['timestamp', 'username', 'user_role', 'action', 'entity_type', 'entity_name', 'change_summary', 'result', 'ip_address', 'duration_ms'];
-    const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const esc = escapeCsvCell; // shared CSV/formula-injection-safe escaper (api/csv.js)
     const csv = [cols.join(','), ...rows.rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n') + '\n';
     if (req.audit) req.audit({ action: 'export', entity_type: 'audit_log', change_summary: `Exported ${rows.rows.length} audit rows as CSV` });
     res.setHeader('Content-Type', 'text/csv');

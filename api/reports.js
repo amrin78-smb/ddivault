@@ -13,6 +13,7 @@
 const express = require('express');
 const PDFDocument = require('pdfkit');
 const { attachSiteFilter } = require('./middleware/rbac');
+const { escapeCsvCell } = require('./csv');
 
 // ── Brand palette (matches the frontend design system) ────────
 const RED = '#C8102E';
@@ -1067,15 +1068,7 @@ const REPORTS = {
 // CSV RENDERER
 // ════════════════════════════════════════════════════════════
 function toCsv(columns, rows) {
-  const esc = (v) => {
-    let s = v == null ? '' : String(v);
-    // CSV/formula-injection guard: a cell that starts with = + - @ (or a leading
-    // tab/CR) is treated as a formula by Excel/Sheets. Report cells include
-    // network-sourced strings (hostnames, DNS records, device names), so neutralize
-    // by prefixing a single quote before the normal quote-escaping below.
-    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const esc = escapeCsvCell; // shared CSV/formula-injection-safe escaper (api/csv.js)
   const header = columns.map(c => esc(c.label)).join(',');
   const body = rows.map(r => columns.map(c => esc(r[c.key])).join(',')).join('\n');
   return `${header}\n${body}\n`;
