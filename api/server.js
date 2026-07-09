@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.6': [
+    'Installer: the post-update health check now uses 127.0.0.1 instead of localhost, so it can no longer stall waiting on IPv6 (::1) when the app listens on IPv4 — the update reports the service healthy as soon as it is actually up.',
+  ],
   '1.20.5': [
     'Updater hardening: the update script now pins the build directory to its true on-disk casing. This fixes the build failure (duplicate React / "Cannot read properties of null (reading useContext)") that occurs when the updater is invoked with a different path casing than a previous run (e.g. C:\\Apps\\DDIVault vs ...\\ddivault) — Next.js caches absolute paths, so the casing change made webpack load React twice.',
   ],

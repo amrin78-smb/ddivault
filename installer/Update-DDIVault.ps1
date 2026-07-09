@@ -330,7 +330,9 @@ foreach ($svc in $Services) {
 
 Write-Host ""
 try {
-    $health = Invoke-WebRequest -Uri "http://localhost:3007/api/health" -UseBasicParsing -TimeoutSec 10
+    # 127.0.0.1 (not localhost): on Windows localhost resolves to IPv6 ::1 first, which the
+    # server may not answer, making the poll time out while the app is actually up.
+    $health = Invoke-WebRequest -Uri "http://127.0.0.1:3007/api/health" -UseBasicParsing -TimeoutSec 10
     $body   = $health.Content | ConvertFrom-Json
     if ($body.status -eq "ok" -and $body.db -eq "connected") {
         Write-OK "API health check passed - DB connected"
