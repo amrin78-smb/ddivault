@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.20.7': [
+    'Fixed: loading a saved DHCP Scope Health view no longer silently reverts the scope filter to "All scopes". The saved scope selection now sticks, so a follow-up Apply, PDF, or CSV export re-scopes to exactly the scopes the view was saved with. This completes the 1.20.4 saved-view scope fix, which did not hold when the view was loaded while a different report (or none) was open.',
+  ],
   '1.20.6': [
     'Installer: the post-update health check now uses 127.0.0.1 instead of localhost, so it can no longer stall waiting on IPv6 (::1) when the app listens on IPv4 — the update reports the service healthy as soon as it is actually up.',
   ],

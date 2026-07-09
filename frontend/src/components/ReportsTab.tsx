@@ -115,6 +115,11 @@ export default function ReportsTab() {
   // dhcp_scopes.id (the `scope_ids` contract value). Empty = all scopes.
   const [scopeOptions, setScopeOptions] = useState<ScopeOption[]>([]);
   const scopesLoadedRef = useRef(false);
+  // One-shot guard: when handleLoadSaved rehydrates a saved view's scope selection, its
+  // programmatic setActive would otherwise trigger the [active, serverId] reset effect and
+  // wipe the just-restored selection. Armed only when setActive will actually change the
+  // reference (so the effect is guaranteed to run and consume it — never left stale).
+  const skipNextScopeReset = useRef(false);
   const [scopeSel, setScopeSel] = useState<Set<number>>(new Set());
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [scopeSearch, setScopeSearch] = useState('');
@@ -180,6 +185,13 @@ export default function ReportsTab() {
   // Drop stale scope selection when the report changes or the server filter narrows the
   // candidate scopes (previously-picked scopes may no longer belong to the chosen server).
   useEffect(() => {
+    // Skip exactly one reset right after a programmatic saved-view load (handleLoadSaved
+    // rehydrates scopeSel and arms this flag); otherwise the just-restored subset would be
+    // wiped and a follow-up Apply/PDF/CSV would silently export ALL scopes.
+    if (skipNextScopeReset.current) {
+      skipNextScopeReset.current = false;
+      return;
+    }
     setScopeSel(new Set());
     setScopeMenuOpen(false);
     setScopeSearch('');
@@ -298,6 +310,11 @@ export default function ReportsTab() {
   const handleLoadSaved = useCallback(async (row: SavedRow) => {
     const def = REPORTS.find(r => r.key === row.report_type);
     if (!def) return;
+    // Arm the one-shot skip only when this setActive will change the `active` reference —
+    // exactly the case where the reset effect would run and clobber the scope selection we
+    // rehydrate below. When the same report is already active the effect never re-runs, so
+    // no skip is needed (and the flag is not left stale to swallow a later genuine reset).
+    if (def !== active) skipNextScopeReset.current = true;
     setActive(def);
     setTab('view'); // surface the loaded view in the workspace
     // Rehydrate the scopes multi-select from the saved scope_ids so a follow-up
@@ -326,7 +343,7 @@ export default function ReportsTab() {
       toast((e as Error).message || 'Report failed', 'error');
     }
     if (seq === previewSeq.current) setLoading(false);
-  }, [toast]);
+  }, [toast, active]);
 
   const handleOpenSchedule = useCallback((row: ScheduleRow | null) => {
     setScheduleInitial(row);
