@@ -215,11 +215,12 @@ export default function ReportsTab() {
     return p;
   }, [siteId, serverId, range, scopeSel]);
 
-  // Download a report file (PDF/CSV) via an AUTHENTICATED fetch. window.open() can't
-  // be used: it is a plain browser navigation that carries none of the x-ddi-actor-*
-  // auth headers the global fetch patch (AuditActor) injects, so the reports API
-  // rejects it with 401 "Authentication required". fetch → blob → anchor keeps the
-  // request authenticated and still triggers a file download.
+  // Download a report file (PDF/CSV) via fetch rather than window.open(). Identity
+  // (x-ddi-actor-*) is now stamped server-side by middleware.ts from the verified
+  // NextAuth session cookie, which a plain browser navigation would carry too — so
+  // this is no longer about auth. fetch → blob → anchor is still needed to read the
+  // filename off Content-Disposition and to surface a JSON error body (instead of
+  // navigating the whole tab to an error page) before triggering the download.
   const downloadReport = useCallback(async (key: string, query: string, fmt: string, title: string) => {
     try {
       const res = await fetch(`/api/reports/${key}?${query}`);

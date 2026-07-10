@@ -131,11 +131,12 @@ export default function AuditTab() {
   }, [load, page]);
   useRefreshKey(() => load(true));
 
-  // Download via an AUTHENTICATED fetch, not window.open. /api/audit/export is
-  // requireSuperAdmin, and the identity is carried by the x-ddi-actor-* headers the
-  // global fetch patch injects — a plain window.open navigation sends none of them
-  // and gets a 401 "Authentication required" JSON page. fetch → blob → anchor keeps
-  // the request authenticated and still saves the file.
+  // Download via fetch → blob → anchor rather than window.open. /api/audit/export
+  // is requireSuperAdmin; identity now rides the NextAuth session cookie (verified
+  // and stamped as x-ddi-actor-* headers server-side by middleware.ts), which a
+  // plain navigation would also carry — this fetch-based approach is kept for its
+  // error handling (a failed/expired-session response renders as a toast instead
+  // of a raw JSON error page) and to control the downloaded filename.
   const exportCsv = async () => {
     const p = new URLSearchParams();
     if (action) p.set('action', action);

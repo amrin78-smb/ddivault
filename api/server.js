@@ -29,6 +29,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.0': [
+    'SECURITY: fixed a critical full-authentication-bypass — every API request\'s identity was carried by a plain, client-supplied x-ddi-actor-role header that the browser itself set and the backend trusted verbatim, with zero cryptographic verification. Anyone who could reach the app could send a request with x-ddi-actor-role: super_admin and get full admin access, no login required — including minting durable API keys and creating a SYSTEM-level scheduled task via the update endpoint. Identity is now verified server-side from the signed NextAuth session on every request; a client-supplied identity header is always discarded and never trusted.',
+    'Roughly 40 API routes had no auth check of any kind — not even the (forgeable) old header check. All now require a signed-in session, and most also enforce the same per-site scoping their sibling list views already had, closing several cross-site data-exposure gaps (a site_admin could previously read DNS/DHCP/IPAM data outside their assigned sites via a handful of by-ID routes and the smart search endpoint).',
+    'The two most dangerous unguarded routes — triggering a SYSTEM-level scheduled update, and a live DNS-forwarder probe with an attacker-controlled address — now require an authenticated write-capable session.',
+  ],
   '1.21.0': [
     'Per-user app-access enforcement: DDIVault now blocks users who are not granted the DDIVault app at the app level (not just on the hub launcher) — an unauthorised user landing on any DDIVault page is redirected to the NocVault hub launcher with a "denied" banner.',
     'The allowed-apps claim now flows through SSO into the DDIVault session: the list of apps a user may access is carried from the NetVault sign-in token into DDIVault\'s own session and read by the page guard.',
@@ -403,6 +408,17 @@ db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
 const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
+
+// IDOR guard for by-ID routes: true when `siteId` is within req.allowedSiteIds
+// (attachSiteFilter), or when the requester is unrestricted (allowedSiteIds === null).
+// A site_admin requesting a scope/server whose site isn't theirs gets false, and callers
+// should respond 404 (not 403) to match the "not found" phrasing already used by these
+// routes and avoid confirming the resource's existence to an unauthorized site_admin.
+function siteAllowed(req, siteId) {
+  if (req.allowedSiteIds === null) return true;
+  if (siteId == null) return false;
+  return req.allowedSiteIds.includes(siteId);
+}
 const { createReportsRouter } = require('./reports');
 const { escapeCsvCell } = require('./csv');
 const { createReportsSchedulingRouter } = require('./reportsScheduling');
@@ -487,7 +503,7 @@ app.get('/api/license-status', async (req, res) => {
 });
 
 // ── NocVault hub proxy (avoids browser CORS to the hub) ───────
-app.get('/api/hub/settings', async (_req, res) => {
+app.get('/api/hub/settings', requireAuth, async (_req, res) => {
   const hub = (process.env.NOCVAULT_HUB_URL || 'http://localhost:3000').replace(/\/+$/, '');
   try {
     const r = await fetch(`${hub}/api/settings`, { headers: { Accept: 'application/json' } });
@@ -567,7 +583,7 @@ function localCommitHash() {
 // non-JSON body (res.json() throws) and api.github.com intermittently times out.
 // Git transport is not rate-limited and reuses the same credentials that already
 // let the server push/pull.
-app.get('/api/system/update-status', async (_req, res) => {
+app.get('/api/system/update-status', requireAuth, async (_req, res) => {
   const localVersion = version;
   const localHash = localCommitHash();
   try {
@@ -687,7 +703,7 @@ app.get('/api/system/update-available', (_req, res) => {
 checkForUpdates();
 setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
 
-app.post('/api/system/update', async (_req, res) => {
+app.post('/api/system/update', requireSuperAdmin, async (_req, res) => {
   // Check license before allowing update
   const license = await getLicense();
   const licenseState = getLicenseState(license);
@@ -742,7 +758,14 @@ app.post('/api/system/update', async (_req, res) => {
 });
 
 // ── Dashboard Stats ───────────────────────────────────────────
-app.get('/api/dashboard/stats', async (req, res) => {
+// requireAuth only (no attachSiteFilter): this widget aggregates COUNT/SUM across
+// ~9 independent subqueries spanning dhcp_scopes, dhcp_leases, dns_zones, alert_events,
+// ddi_servers and dns_zone_sync. None of these tables carry site_id directly — all are
+// only reachable via server_id -> ddi_servers.site_id, and dhcp_leases in particular has
+// no scope/server join in its query here at all. Site-scoping every subquery correctly
+// would be a substantial rewrite of this endpoint (not a guard-only fix) — flagged as a
+// follow-up rather than attempted here.
+app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {
     const [scopes, leases, zones, alerts] = await Promise.all([
       db.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE percent_used >= 90 AND total_ips > 0) as critical, COUNT(*) FILTER (WHERE percent_used >= 80 AND percent_used < 90 AND total_ips > 0) as warning FROM dhcp_scopes'),
@@ -802,18 +825,21 @@ app.get('/api/dashboard/stats', async (req, res) => {
 });
 
 // Recent DHCP events for dashboard widget
-app.get('/api/dashboard/recent-events', async (req, res) => {
+app.get('/api/dashboard/recent-events', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const limit = safeLimit(req.query.limit);
+    const siteFilter = req.allowedSiteIds !== null ? 'WHERE s.site_id = ANY($2::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [limit, req.allowedSiteIds] : [limit];
     const rows = await db.query(
       `SELECT e.id, e.event_id, e.event_type, e.ip_address, e.hostname,
               e.mac_address, e.description, e.event_time,
               s.hostname as server_hostname
        FROM dhcp_events e
        LEFT JOIN ddi_servers s ON s.id = e.server_id
+       ${siteFilter}
        ORDER BY e.event_time DESC
        LIMIT $1`,
-      [limit]
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -842,13 +868,20 @@ app.get('/api/scopes', attachSiteFilter, async (req, res) => {
   }
 });
 
-app.get('/api/scopes/:scopeId/history', async (req, res) => {
+app.get('/api/scopes/:scopeId/history', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const { scopeId } = req.params;
     const hours = safeHours(req.query.hours);
 
-    const scope = await db.query('SELECT id FROM dhcp_scopes WHERE scope_id = $1 LIMIT 1', [scopeId]);
+    const scope = await db.query(
+      `SELECT sc.id, srv.site_id
+       FROM dhcp_scopes sc
+       JOIN ddi_servers srv ON srv.id = sc.server_id
+       WHERE sc.scope_id = $1 LIMIT 1`,
+      [scopeId]
+    );
     if (!scope.rows.length) return res.status(404).json({ error: 'Scope not found' });
+    if (!siteAllowed(req, scope.rows[0].site_id)) return res.status(404).json({ error: 'Scope not found' });
 
     const rows = await db.query(
       `SELECT in_use, free, percent_used, recorded_at
@@ -865,12 +898,22 @@ app.get('/api/scopes/:scopeId/history', async (req, res) => {
   }
 });
 
-app.get('/api/scopes/:scopeId/leases', async (req, res) => {
+app.get('/api/scopes/:scopeId/leases', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const { scopeId } = req.params;
     const page  = safePage(req.query.page);
     const limit = safeLimit(req.query.limit);
     const offset = (page - 1) * limit;
+
+    const scope = await db.query(
+      `SELECT srv.site_id
+       FROM dhcp_scopes sc
+       JOIN ddi_servers srv ON srv.id = sc.server_id
+       WHERE sc.scope_id = $1 LIMIT 1`,
+      [scopeId]
+    );
+    if (!scope.rows.length) return res.status(404).json({ error: 'Scope not found' });
+    if (!siteAllowed(req, scope.rows[0].site_id)) return res.status(404).json({ error: 'Scope not found' });
 
     const count = await db.query(
       'SELECT COUNT(*) as total FROM dhcp_leases WHERE scope_id = $1',
@@ -1059,7 +1102,7 @@ app.delete('/api/scopes/:scopeId', requireWrite, async (req, res) => {
 });
 
 // 5. Get scope options (read)
-app.get('/api/scopes/:scopeId/options', async (req, res) => {
+app.get('/api/scopes/:scopeId/options', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const { scopeId } = req.params;
     const scopeRow = await getScopeRow(scopeId, req.query.server_id);
@@ -1067,6 +1110,7 @@ app.get('/api/scopes/:scopeId/options', async (req, res) => {
 
     const serverData = await getServerWithAuth(scopeRow.server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    if (!siteAllowed(req, serverData.row.site_id)) return res.status(404).json({ error: 'Scope not found' });
     const { ip, auth } = serverData;
 
     const opts = psWrite.getDhcpScopeOptions(ip, auth, scopeId);
@@ -1111,7 +1155,7 @@ app.post('/api/scopes/:scopeId/options', requireWrite, async (req, res) => {
 });
 
 // 7. Get scope exclusions (read)
-app.get('/api/scopes/:scopeId/exclusions', async (req, res) => {
+app.get('/api/scopes/:scopeId/exclusions', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const { scopeId } = req.params;
     const scopeRow = await getScopeRow(scopeId, req.query.server_id);
@@ -1119,6 +1163,7 @@ app.get('/api/scopes/:scopeId/exclusions', async (req, res) => {
 
     const serverData = await getServerWithAuth(scopeRow.server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
+    if (!siteAllowed(req, serverData.row.site_id)) return res.status(404).json({ error: 'Scope not found' });
     const { ip, auth } = serverData;
 
     const ex = psWrite.getDhcpExclusions(ip, auth, scopeId);
@@ -1221,7 +1266,7 @@ app.get('/api/leases', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/leases/ip/:ip/history', async (req, res) => {
+app.get('/api/leases/ip/:ip/history', requireAuth, async (req, res) => {
   try {
     const ip = req.params.ip;
     const rows = await db.query(
@@ -1270,7 +1315,7 @@ app.get('/api/leases/export', requireAuth, async (req, res) => {
 });
 
 // ── DHCP Events ───────────────────────────────────────────────
-app.get('/api/events', async (req, res) => {
+app.get('/api/events', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const page      = safePage(req.query.page);
     const limit     = safeLimit(req.query.limit);
@@ -1282,6 +1327,10 @@ app.get('/api/events', async (req, res) => {
     const params  = [hours];
     const where   = [`e.event_time > NOW() - make_interval(hours => $1)`];
 
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where.push(`s.site_id = ANY($${params.length}::int[])`);
+    }
     if (eventType) {
       params.push(eventType);
       where.push(`e.event_type = $${params.length}`);
@@ -1326,14 +1375,18 @@ app.get('/api/events', async (req, res) => {
 });
 
 // ── IPAM Subnets ──────────────────────────────────────────────
-app.get('/api/subnets', async (req, res) => {
+app.get('/api/subnets', requireAuth, attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? 'WHERE s.site_id = ANY($1::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT s.*,
          (SELECT COUNT(*) FROM dhcp_leases l
           WHERE l.ip_address << (s.network || '/' || s.prefix_length)::inet) as used_ips
        FROM ipam_subnets s
-       ORDER BY s.network`
+       ${siteFilter}
+       ORDER BY s.network`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -1415,7 +1468,7 @@ app.get('/api/dns/zones', attachSiteFilter, async (req, res) => {
   }
 });
 
-app.get('/api/dns/records', async (req, res) => {
+app.get('/api/dns/records', attachSiteFilter, async (req, res) => {
   try {
     const page   = safePage(req.query.page);
     const limit  = safeLimit(req.query.limit);
@@ -1439,11 +1492,19 @@ app.get('/api/dns/records', async (req, res) => {
       params.push(parseInt(zoneId));
       where.push(`r.zone_id = $${params.length}`);
     }
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where.push(`s.site_id = ANY($${params.length}::int[])`);
+    }
 
     const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const count = await db.query(
-      `SELECT COUNT(*) as total FROM dns_records r ${whereClause}`,
+      `SELECT COUNT(*) as total
+       FROM dns_records r
+       JOIN dns_zones z ON z.id = r.zone_id
+       LEFT JOIN ddi_servers s ON s.id = z.server_id
+       ${whereClause}`,
       [...params]
     );
 
@@ -1452,6 +1513,7 @@ app.get('/api/dns/records', async (req, res) => {
       `SELECT r.*, r.last_seen as last_updated, z.zone_name
        FROM dns_records r
        JOIN dns_zones z ON z.id = r.zone_id
+       LEFT JOIN ddi_servers s ON s.id = z.server_id
        ${whereClause}
        ORDER BY r.hostname, r.record_type
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -1465,13 +1527,19 @@ app.get('/api/dns/records', async (req, res) => {
   }
 });
 
-app.get('/api/dns/record-type-breakdown', async (req, res) => {
+app.get('/api/dns/record-type-breakdown', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
-      `SELECT record_type, COUNT(*)::int as count
-       FROM dns_records
-       GROUP BY record_type
-       ORDER BY count DESC`
+      `SELECT r.record_type, COUNT(*)::int as count
+       FROM dns_records r
+       JOIN dns_zones z ON z.id = r.zone_id
+       LEFT JOIN ddi_servers s ON s.id = z.server_id
+       ${siteFilter}
+       GROUP BY r.record_type
+       ORDER BY count DESC`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -1525,7 +1593,7 @@ function buildAlertExplanation(a) {
   return null;
 }
 
-app.get('/api/alerts', async (req, res) => {
+app.get('/api/alerts', requireAuth, async (req, res) => {
   try {
     const page   = safePage(req.query.page);
     const limit  = safeLimit(req.query.limit);
@@ -1653,7 +1721,7 @@ app.post('/api/alerts/acknowledge-all', requireWrite, async (req, res) => {
   }
 });
 
-app.get('/api/alert-rules', async (req, res) => {
+app.get('/api/alert-rules', requireAuth, async (req, res) => {
   try {
     const rows = await db.query('SELECT * FROM alert_rules ORDER BY id');
     res.json({ data: rows.rows });
@@ -1744,7 +1812,7 @@ app.post('/api/smtp/test', requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/alert-recipients', async (req, res) => {
+app.get('/api/alert-recipients', requireAuth, async (req, res) => {
   try {
     const rows = await db.query('SELECT * FROM alert_recipients ORDER BY created_at DESC');
     res.json({ data: rows.rows });
@@ -1802,7 +1870,7 @@ app.delete('/api/alert-recipients/:id', requireWrite, async (req, res) => {
   }
 });
 
-app.get('/api/alert-rule-config', async (req, res) => {
+app.get('/api/alert-rule-config', requireAuth, async (req, res) => {
   try {
     const rows = await db.query('SELECT * FROM alert_rule_config ORDER BY rule_type');
     res.json({ data: rows.rows });
@@ -1856,15 +1924,19 @@ app.get('/api/alerts/:id/acknowledge', async (req, res) => {
 });
 
 // ── Feature 2: Forecasts ──────────────────────────────────────
-app.get('/api/forecasts/scopes', async (req, res) => {
+app.get('/api/forecasts/scopes', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE srv.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT f.*, sc.scope_id as scope_cidr, sc.name as scope_name, sc.percent_used,
               srv.hostname as server_hostname, srv.site_id
        FROM scope_forecasts f
        JOIN dhcp_scopes sc ON sc.id = f.scope_id
        LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
-       ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`
+       ${siteFilter}
+       ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`,
+      params
     );
     if (rows.rows.length === 0) {
       return res.json({ data: [], message: 'Forecasts will appear after 7 days of scope history data' });
@@ -1880,18 +1952,24 @@ app.get('/api/forecasts/scopes', async (req, res) => {
   }
 });
 
-app.get('/api/forecasts/scopes/:id', async (req, res) => {
+app.get('/api/forecasts/scopes/:id', attachSiteFilter, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    const params = [id];
+    let siteFilter = '';
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      siteFilter = ` AND srv.site_id = ANY($2::int[])`;
+    }
     const rows = await db.query(
       `SELECT f.*, sc.scope_id as scope_cidr, sc.name as scope_name, sc.percent_used,
               srv.hostname as server_hostname, srv.site_id
        FROM scope_forecasts f
        JOIN dhcp_scopes sc ON sc.id = f.scope_id
        LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
-       WHERE f.scope_id=$1
+       WHERE f.scope_id=$1${siteFilter}
        ORDER BY (f.days_to_full IS NULL), f.days_to_full ASC`,
-      [id]
+      params
     );
     res.json({ data: rows.rows[0] || null });
   } catch (err) {
@@ -1901,7 +1979,11 @@ app.get('/api/forecasts/scopes/:id', async (req, res) => {
   }
 });
 
-app.get('/api/forecasts/summary', async (req, res) => {
+// No site-level breakdown available: scope_forecasts has no site_id (and no
+// join target here) without adding a new server/scope join purely for this
+// aggregate count — requireAuth only, matching the global-aggregate precedent
+// (/api/anomalies/summary, /api/ipam/utilization-history).
+app.get('/api/forecasts/summary', requireAuth, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT
@@ -1919,7 +2001,10 @@ app.get('/api/forecasts/summary', async (req, res) => {
 });
 
 // ── Feature 4: Anomalies ──────────────────────────────────────
-app.get('/api/anomalies', async (req, res) => {
+// anomaly_events has no site_id (polymorphic entity_type/entity_id, no direct
+// site join) — requireAuth only, matching the already-correct sibling
+// POST /api/anomalies/group/ack, which likewise has no attachSiteFilter.
+app.get('/api/anomalies', requireAuth, async (req, res) => {
   try {
     const { type, severity, acknowledged, since } = req.query;
     const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
@@ -1943,7 +2028,7 @@ app.get('/api/anomalies', async (req, res) => {
   }
 });
 
-app.get('/api/anomalies/summary', async (req, res) => {
+app.get('/api/anomalies/summary', requireAuth, async (req, res) => {
   try {
     const byType = await db.query(
       `SELECT anomaly_type, severity, COUNT(*) as count
@@ -1978,7 +2063,7 @@ app.get('/api/anomalies/summary', async (req, res) => {
 // groups anomalies by (anomaly_type, entity) so the UI shows ~dozens of root
 // causes with a count + latest occurrence + an expandable list of the affected
 // entities, instead of ~13k flat rows.
-app.get('/api/anomalies/grouped', async (req, res) => {
+app.get('/api/anomalies/grouped', requireAuth, async (req, res) => {
   try {
     const conditions = [];
     const params = [];
@@ -2092,11 +2177,15 @@ app.post('/api/anomalies/group/ack', requireWrite, async (req, res) => {
 });
 
 // ── Feature 5: Site health ────────────────────────────────────
-app.get('/api/site-health', async (req, res) => {
+app.get('/api/site-health', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT DISTINCT ON (site_id) * FROM site_health_scores
-       ORDER BY site_id, calculated_at DESC`
+       ${siteFilter}
+       ORDER BY site_id, calculated_at DESC`,
+      params
     );
     // Resolve real site names from NetVault (best-effort; falls back to stored name / Site <id>)
     let names = {};
@@ -2117,9 +2206,12 @@ app.get('/api/site-health', async (req, res) => {
   }
 });
 
-app.get('/api/site-health/:siteId', async (req, res) => {
+app.get('/api/site-health/:siteId', attachSiteFilter, async (req, res) => {
   try {
     const siteId = parseInt(req.params.siteId);
+    if (req.allowedSiteIds !== null && !req.allowedSiteIds.includes(siteId)) {
+      return res.json({ data: [] });
+    }
     const rows = await db.query(
       `SELECT * FROM site_health_scores WHERE site_id=$1 ORDER BY calculated_at DESC LIMIT 100`,
       [siteId]
@@ -2303,7 +2395,7 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
 });
 
 // ── Settings ─────────────────────────────────────────────────
-app.get('/api/settings', async (req, res) => {
+app.get('/api/settings', requireAuth, async (req, res) => {
   try {
     const rows = await db.query('SELECT key, value FROM app_settings');
     const settings = {};
@@ -2719,14 +2811,17 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
   }
 });
 
-app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
+app.get('/api/ipam/subnets/:id/scan-status', attachSiteFilter, async (req, res) => {
   try {
     await expireStuckScans();
     const id = parseInt(req.params.id);
     const subnet = await db.query(
-      'SELECT scan_status, last_scanned, total_hosts, used_hosts, free_hosts, unknown_hosts FROM ipam_subnets WHERE id=$1',
+      'SELECT scan_status, last_scanned, total_hosts, used_hosts, free_hosts, unknown_hosts, site_id FROM ipam_subnets WHERE id=$1',
       [id]
     );
+    if (req.allowedSiteIds !== null && (!subnet.rows.length || !req.allowedSiteIds.includes(subnet.rows[0].site_id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     const lastJob = await db.query(
       `SELECT * FROM ipam_scan_jobs WHERE subnet_id=$1 ORDER BY started_at DESC LIMIT 1`, [id]
     );
@@ -2750,9 +2845,11 @@ app.get('/api/ipam/subnets/:id/scan-status', async (req, res) => {
 });
 
 // Global scan status — all subnets currently scanning
-app.get('/api/ipam/scan-status', async (req, res) => {
+app.get('/api/ipam/scan-status', attachSiteFilter, async (req, res) => {
   try {
     await expireStuckScans();
+    const jobsSiteFilter = req.allowedSiteIds !== null ? `AND s.site_id = ANY($1::int[])` : '';
+    const jobsParams = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const jobsQ = await db.query(`
       SELECT
         j.subnet_id, j.status, j.hosts_scanned, j.hosts_up, j.hosts_unknown,
@@ -2762,12 +2859,15 @@ app.get('/api/ipam/scan-status', async (req, res) => {
         EXTRACT(EPOCH FROM (NOW() - j.started_at))::int as elapsed_seconds
       FROM ipam_scan_jobs j
       JOIN ipam_subnets s ON s.id = j.subnet_id
-      WHERE j.status = 'running' AND j.started_at > NOW() - INTERVAL '30 minutes'
-      ORDER BY j.started_at DESC`);
+      WHERE j.status = 'running' AND j.started_at > NOW() - INTERVAL '30 minutes' ${jobsSiteFilter}
+      ORDER BY j.started_at DESC`, jobsParams);
+    const subnetsSiteFilter = req.allowedSiteIds !== null ? `AND site_id = ANY($1::int[])` : '';
+    const subnetsParams = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const allSubnets = await db.query(
       `SELECT id, host(network) as network, prefix_length, name, scan_status, last_scanned,
               total_hosts, used_hosts, free_hosts, unknown_hosts
-       FROM ipam_subnets WHERE is_managed=TRUE ORDER BY network`
+       FROM ipam_subnets WHERE is_managed=TRUE ${subnetsSiteFilter} ORDER BY network`,
+      subnetsParams
     );
     const ids = jobsQ.rows.map(r => r.subnet_id);
     res.json({
@@ -2784,7 +2884,9 @@ app.get('/api/ipam/scan-status', async (req, res) => {
 });
 
 // ── IPAM — VLANs ─────────────────────────────────────────────
-app.get('/api/ipam/vlans', async (req, res) => {
+// ipam_vlans has no site_id column (only a free-text `site` field) — no
+// existing site-scoping precedent to mirror, so requireAuth only.
+app.get('/api/ipam/vlans', requireAuth, async (req, res) => {
   try {
     const rows = await db.query('SELECT * FROM ipam_vlans ORDER BY vlan_id');
     res.json({ data: rows.rows });
@@ -2823,13 +2925,21 @@ app.delete('/api/ipam/vlans/:id', requireWrite, async (req, res) => {
 });
 
 // ── IPAM — Audit ─────────────────────────────────────────────
-app.get('/api/ipam/audit', async (req, res) => {
+app.get('/api/ipam/audit', attachSiteFilter, async (req, res) => {
   try {
     const limit = safeLimit(req.query.limit);
     const ip    = (req.query.ip || '').trim();
     const params = [limit];
-    let where = '';
-    if (ip) { params.push(ip); where = `WHERE ip_address = $${params.length}`; }
+    const conds = [];
+    if (ip) { params.push(ip); conds.push(`ip_address = $${params.length}`); }
+    // ipam_audit has no site_id column, but every row references a subnet via
+    // subnet_id — mirror the EXISTS-subquery pattern already used for
+    // GET /api/ipam/subnets/:id/addresses to scope by the subnet's site_id.
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      conds.push(`EXISTS (SELECT 1 FROM ipam_subnets sn WHERE sn.id = ipam_audit.subnet_id AND sn.site_id = ANY($${params.length}::int[]))`);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const rows = await db.query(
       `SELECT * FROM ipam_audit ${where} ORDER BY created_at DESC LIMIT $1`,
       params
@@ -2866,12 +2976,15 @@ async function getServerWithAuth(serverId) {
 }
 
 // Get DNS server list from ddi_servers
-app.get('/api/dns/servers', async (req, res) => {
+app.get('/api/dns/servers', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `AND site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled,
               health_score, winrm_test_ok
-       FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ORDER BY hostname`
+       FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ${siteFilter} ORDER BY hostname`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -3030,9 +3143,15 @@ app.delete('/api/dns/zones/:id', requireWrite, async (req, res) => {
 });
 
 // DNS server stats
-app.get('/api/dns/stats/:serverId', async (req, res) => {
+app.get('/api/dns/stats/:serverId', attachSiteFilter, async (req, res) => {
   try {
-    const serverRes = await db.query('SELECT ip_address::text as ip FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
+    const params = [parseInt(req.params.serverId)];
+    let where = 'WHERE id=$1';
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where += ` AND site_id = ANY($${params.length}::int[])`;
+    }
+    const serverRes = await db.query(`SELECT ip_address::text as ip FROM ddi_servers ${where}`, params);
     if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
     const stats = psWrite.getDnsServerStats(serverRes.rows[0].ip);
     res.json({ data: stats || {} });
@@ -3044,8 +3163,12 @@ app.get('/api/dns/stats/:serverId', async (req, res) => {
 
 // ── DNS Health / Topology / Sync / Forwarders / Scavenging ────
 
-// Aggregate DNS health summary
-app.get('/api/dns/health', async (req, res) => {
+// Aggregate DNS health summary. requireAuth only (no attachSiteFilter): this is a
+// suite-wide count aggregate across 10 independent queries spanning zones, servers,
+// sync, forwarders, stale records and scavenging with no existing joined/aliased
+// site-scoped sibling of this shape to mirror — adding it would mean inventing new
+// join logic across most of the subqueries rather than reusing an established pattern.
+app.get('/api/dns/health', requireAuth, async (req, res) => {
   try {
     const [
       zonesTotal, serversTotal, serversOnline, zonesInSync, zonesOutOfSync,
@@ -3081,8 +3204,10 @@ app.get('/api/dns/health', async (req, res) => {
 });
 
 // DNS topology — servers with roles, zone + record counts
-app.get('/api/dns/topology', async (req, res) => {
+app.get('/api/dns/topology', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `AND s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.health_score,
               s.query_ms, s.poll_status, s.winrm_test_ok, s.is_dns_primary, s.dns_forwarders,
@@ -3091,8 +3216,9 @@ app.get('/api/dns/topology', async (req, res) => {
               (SELECT COALESCE(SUM(record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count
        FROM ddi_servers s
        LEFT JOIN dns_server_roles r ON r.server_id = s.id
-       WHERE s.role IN ('dns','both') AND s.is_active=TRUE
-       ORDER BY s.is_dns_primary DESC, s.hostname`
+       WHERE s.role IN ('dns','both') AND s.is_active=TRUE ${siteFilter}
+       ORDER BY s.is_dns_primary DESC, s.hostname`,
+      params
     );
     res.json({ servers: rows.rows });
   } catch (err) {
@@ -3102,14 +3228,18 @@ app.get('/api/dns/topology', async (req, res) => {
 });
 
 // DNS zones SOA serial comparison matrix (all zones)
-app.get('/api/dns/zones/sync', async (req, res) => {
+app.get('/api/dns/zones/sync', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT zs.zone_name, zs.server_id, zs.soa_serial, zs.lag_seconds,
               zs.is_in_sync, zs.checked_at, s.hostname
        FROM dns_zone_sync zs
        JOIN ddi_servers s ON s.id = zs.server_id
-       ORDER BY zs.zone_name`
+       ${siteFilter}
+       ORDER BY zs.zone_name`,
+      params
     );
 
     const serverMap = new Map();
@@ -3146,15 +3276,21 @@ app.get('/api/dns/zones/sync', async (req, res) => {
 });
 
 // DNS sync detail for a single zone (must come after /zones/sync)
-app.get('/api/dns/zones/:name/sync', async (req, res) => {
+app.get('/api/dns/zones/:name/sync', attachSiteFilter, async (req, res) => {
   try {
+    const params = [req.params.name];
+    let where = 'WHERE zs.zone_name=$1';
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where += ` AND s.site_id = ANY($${params.length}::int[])`;
+    }
     const rows = await db.query(
       `SELECT zs.server_id, zs.soa_serial, zs.lag_seconds, zs.is_in_sync, zs.checked_at, s.hostname
        FROM dns_zone_sync zs
        JOIN ddi_servers s ON s.id = zs.server_id
-       WHERE zs.zone_name=$1
+       ${where}
        ORDER BY s.hostname`,
-      [req.params.name]
+      params
     );
     let maxSerial = 0;
     const serverRows = rows.rows.map((row) => {
@@ -3178,13 +3314,17 @@ app.get('/api/dns/zones/:name/sync', async (req, res) => {
 });
 
 // DNS forwarder health list
-app.get('/api/dns/forwarders', async (req, res) => {
+app.get('/api/dns/forwarders', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `WHERE s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT fh.*, s.hostname, host(s.ip_address) AS server_ip
        FROM dns_forwarder_health fh
        JOIN ddi_servers s ON s.id = fh.server_id
-       ORDER BY s.hostname, fh.forwarder_ip`
+       ${siteFilter}
+       ORDER BY s.hostname, fh.forwarder_ip`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -3194,7 +3334,7 @@ app.get('/api/dns/forwarders', async (req, res) => {
 });
 
 // DNS stale records (optional zone_id + min_days filters)
-app.get('/api/dns/stale-records', async (req, res) => {
+app.get('/api/dns/stale-records', attachSiteFilter, async (req, res) => {
   try {
     const params = [];
     const where  = [];
@@ -3205,12 +3345,17 @@ app.get('/api/dns/stale-records', async (req, res) => {
     const minDays = parseInt(req.query.min_days) || 0;
     params.push(minDays);
     where.push(`sr.days_stale >= $${params.length}`);
+    if (req.allowedSiteIds !== null) {
+      params.push(req.allowedSiteIds);
+      where.push(`s.site_id = ANY($${params.length}::int[])`);
+    }
 
     const whereClause = 'WHERE ' + where.join(' AND ');
     const rows = await db.query(
       `SELECT sr.*, z.zone_name
        FROM dns_stale_records sr
        JOIN dns_zones z ON z.id = sr.zone_id
+       LEFT JOIN ddi_servers s ON s.id = z.server_id
        ${whereClause}
        ORDER BY sr.days_stale DESC
        LIMIT 1000`,
@@ -3224,15 +3369,18 @@ app.get('/api/dns/stale-records', async (req, res) => {
 });
 
 // DNS query statistics — latest + 24h history per server
-app.get('/api/dns/query-stats', async (req, res) => {
+app.get('/api/dns/query-stats', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `AND s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT qs.server_id, qs.recorded_at, qs.total_queries, qs.successful, qs.failed,
               qs.nxdomain_count, qs.response_time_ms, qs.queries_per_sec, s.hostname
        FROM dns_query_stats qs
        JOIN ddi_servers s ON s.id = qs.server_id
-       WHERE qs.recorded_at >= NOW() - INTERVAL '24 hours'
-       ORDER BY qs.server_id, qs.recorded_at ASC`
+       WHERE qs.recorded_at >= NOW() - INTERVAL '24 hours' ${siteFilter}
+       ORDER BY qs.server_id, qs.recorded_at ASC`,
+      params
     );
     if (!rows.rows.length) return res.json({ data: [] });
 
@@ -3263,15 +3411,18 @@ app.get('/api/dns/query-stats', async (req, res) => {
 });
 
 // DNS scavenging / aging configuration per zone
-app.get('/api/dns/scavenging', async (req, res) => {
+app.get('/api/dns/scavenging', attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? `AND s.site_id = ANY($1::int[])` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT z.id, z.zone_name, z.server_id, s.hostname, z.scavenging_enabled,
               z.aging_enabled, z.last_scavenged, z.is_reverse
        FROM dns_zones z
        LEFT JOIN ddi_servers s ON s.id = z.server_id
-       WHERE z.is_auto_created=FALSE
-       ORDER BY z.scavenging_enabled NULLS FIRST, z.zone_name`
+       WHERE z.is_auto_created=FALSE ${siteFilter}
+       ORDER BY z.scavenging_enabled NULLS FIRST, z.zone_name`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -3280,8 +3431,12 @@ app.get('/api/dns/scavenging', async (req, res) => {
   }
 });
 
-// Test a DNS forwarder (diagnostic) — records result in dns_forwarder_health
-app.post('/api/dns/forwarders/test', async (req, res) => {
+// Test a DNS forwarder (diagnostic) — triggers a live PowerShell/WinRM probe against
+// a real DNS server using stored credentials, with forwarder_ip taken from the request
+// body. Guarded with requireWrite, matching the same floor used by every other
+// PowerShell/WinRM-triggering POST route in this file (dns/scavenging/enable,
+// dns/stale-records/cleanup, dns/records add) — records result in dns_forwarder_health
+app.post('/api/dns/forwarders/test', requireWrite, async (req, res) => {
   try {
     const { server_id, forwarder_ip } = req.body;
     if (!server_id || !forwarder_ip) {
@@ -3441,10 +3596,11 @@ app.delete('/api/dhcp/reservations', requireWrite, async (req, res) => {
 });
 
 // Get all reservations for a scope
-app.get('/api/dhcp/reservations/:serverId/:scopeId', async (req, res) => {
+app.get('/api/dhcp/reservations/:serverId/:scopeId', requireAuth, attachSiteFilter, async (req, res) => {
   try {
-    const serverRes = await db.query('SELECT ip_address::text as ip FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
+    const serverRes = await db.query('SELECT ip_address::text as ip, site_id FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
     if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
+    if (!siteAllowed(req, serverRes.rows[0].site_id)) return res.status(404).json({ error: 'Server not found' });
     const reservations = psWrite.getDhcpReservations(serverRes.rows[0].ip, req.params.scopeId);
     res.json({ data: reservations || [] });
   } catch (err) {
@@ -3464,15 +3620,18 @@ const netvaultDb = new Pool({
   ssl: false,
 });
 
-app.get('/api/sites', async (req, res) => {
+app.get('/api/sites', requireAuth, attachSiteFilter, async (req, res) => {
   try {
+    const siteFilter = req.allowedSiteIds !== null ? 'AND s.id = ANY($1::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await netvaultDb.query(
       `SELECT s.id, s.name, s.code, s.city, s.site_type, s.site_status,
               c.name as country_name
        FROM sites s
        LEFT JOIN countries c ON c.id = s.country_id
-       WHERE s.site_status = 'Active'
-       ORDER BY s.name`
+       WHERE s.site_status = 'Active' ${siteFilter}
+       ORDER BY s.name`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -3553,10 +3712,22 @@ app.post('/api/ipam/import', requireWrite, async (req, res) => {
 
 
 // ── Global Search ─────────────────────────────────────────────
-app.get('/api/search', async (req, res) => {
+app.get('/api/search', attachSiteFilter, async (req, res) => {
   try {
+    const allowedSiteIds = req.allowedSiteIds;
     const q = (req.query.q || '').trim();
     if (!q || q.length < 2) return res.json({ data: [] });
+
+    // Site scoping for site_admin (allowedSiteIds !== null): applied per
+    // sub-query below wherever the underlying table already has an
+    // established site_id filtering precedent elsewhere in this file
+    // (dhcp_scopes via ddi_servers, ipam_subnets/ipam_supernets/ipam_addresses,
+    // dns_zones via ddi_servers). dhcp_leases-derived results (type/vendor/
+    // subnet/new/risk sub-queries, and the unstructured `leases` search) are
+    // intentionally left unfiltered — matching the existing GET /api/leases
+    // and /api/leases/export routes, which are also unfiltered by site in
+    // this codebase. anomaly_events is likewise left unfiltered — it has no
+    // site_id, matching the already-correct POST /api/anomalies/group/ack.
 
     // ── Structured query parsing (key:value) ──────────────────
     const m = q.match(/^(\w+):(.+)$/);
@@ -3606,12 +3777,18 @@ app.get('/api/search', async (req, res) => {
             if (val[0] === '>') { op = '>'; numStr = val.slice(1); }
             else if (val[0] === '<') { op = '<'; numStr = val.slice(1); }
             const num = parseFloat(numStr);
+            const scopeParams = [isNaN(num) ? 0 : num];
+            let scopeSiteFilter = '';
+            if (allowedSiteIds !== null) {
+              scopeParams.push(allowedSiteIds);
+              scopeSiteFilter = ` AND srv.site_id = ANY($2::int[])`;
+            }
             const r = await db.query(
               `SELECT sc.scope_id, sc.name, sc.start_range::text, sc.end_range::text, sc.percent_used,
                       srv.hostname AS server_hostname
                FROM dhcp_scopes sc LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
-               WHERE sc.percent_used ${op} $1 ORDER BY sc.percent_used DESC LIMIT 100`,
-              [isNaN(num) ? 0 : num]
+               WHERE sc.percent_used ${op} $1${scopeSiteFilter} ORDER BY sc.percent_used DESC LIMIT 100`,
+              scopeParams
             );
             rows = r.rows.map(x => ({
               type: 'scope', title: x.scope_id,
@@ -3619,10 +3796,16 @@ app.get('/api/search', async (req, res) => {
               status: null, meta: { percent_used: x.percent_used },
             }));
           } else if (key === 'site') {
+            const srvParams = [`%${val}%`, val];
+            let srvSiteFilter = '';
+            if (allowedSiteIds !== null) {
+              srvParams.push(allowedSiteIds);
+              srvSiteFilter = ` AND site_id = ANY($3::int[])`;
+            }
             const srv = await db.query(
               `SELECT hostname, ip_address::text, role FROM ddi_servers
-               WHERE hostname ILIKE $1 OR site_id::text = $2 LIMIT 50`,
-              [`%${val}%`, val]
+               WHERE (hostname ILIKE $1 OR site_id::text = $2)${srvSiteFilter} LIMIT 50`,
+              srvParams
             );
             for (const x of srv.rows) {
               rows.push({
@@ -3631,10 +3814,16 @@ app.get('/api/search', async (req, res) => {
                 status: null, meta: {},
               });
             }
+            const subParams = [`%${val}%`];
+            let subSiteFilter = '';
+            if (allowedSiteIds !== null) {
+              subParams.push(allowedSiteIds);
+              subSiteFilter = ` AND site_id = ANY($2::int[])`;
+            }
             const sub = await db.query(
               `SELECT host(network) as network, prefix_length, name, site FROM ipam_subnets
-               WHERE site ILIKE $1 LIMIT 50`,
-              [`%${val}%`]
+               WHERE site ILIKE $1${subSiteFilter} LIMIT 50`,
+              subParams
             );
             for (const x of sub.rows) {
               rows.push({
@@ -3680,13 +3869,19 @@ app.get('/api/search', async (req, res) => {
               status: x.severity, meta: { id: x.id, detected_at: x.detected_at },
             }));
           } else if (key === 'status') {
+            const statusParams = [val.toLowerCase()];
+            let statusSiteFilter = '';
+            if (allowedSiteIds !== null) {
+              statusParams.push(allowedSiteIds);
+              statusSiteFilter = ` AND s.site_id = ANY($2::int[])`;
+            }
             const r = await db.query(
               `SELECT a.ip_address::text, a.hostname, a.mac_address, a.status,
                       s.name as subnet_name
                FROM ipam_addresses a
                LEFT JOIN ipam_subnets s ON s.id = a.subnet_id
-               WHERE a.status = $1 LIMIT 100`,
-              [val.toLowerCase()]
+               WHERE a.status = $1${statusSiteFilter} LIMIT 100`,
+              statusParams
             );
             rows = r.rows.map(x => ({
               type: 'ip', title: x.ip_address,
@@ -3705,6 +3900,12 @@ app.get('/api/search', async (req, res) => {
     const results = [];
 
     // Search IPAM addresses (IP, hostname, MAC)
+    const ipamParams = [`%${q}%`];
+    let ipamSiteFilter = '';
+    if (allowedSiteIds !== null) {
+      ipamParams.push(allowedSiteIds);
+      ipamSiteFilter = ` AND s.site_id = ANY($2::int[])`;
+    }
     const ipam = await db.query(
       `SELECT
          a.ip_address::text, a.hostname, a.mac_address, a.status,
@@ -3714,11 +3915,11 @@ app.get('/api/search', async (req, res) => {
        JOIN ipam_subnets s ON s.id = a.subnet_id
        LEFT JOIN ipam_supernets sn ON sn.id = s.supernet_id
        WHERE
-         a.ip_address::text ILIKE $1 OR
+         (a.ip_address::text ILIKE $1 OR
          a.hostname ILIKE $1 OR
-         a.mac_address ILIKE $1
+         a.mac_address ILIKE $1)${ipamSiteFilter}
        LIMIT 20`,
-      [`%${q}%`]
+      ipamParams
     );
     for (const r of ipam.rows) {
       results.push({
@@ -3731,16 +3932,22 @@ app.get('/api/search', async (req, res) => {
     }
 
     // Search subnets (network, name, description, site)
+    const subnetsParams = [`%${q}%`];
+    let subnetsSiteFilter = '';
+    if (allowedSiteIds !== null) {
+      subnetsParams.push(allowedSiteIds);
+      subnetsSiteFilter = ` AND site_id = ANY($2::int[])`;
+    }
     const subnets = await db.query(
       `SELECT host(network) as network, prefix_length, name, description, site, gateway::text
        FROM ipam_subnets
        WHERE
-         network::text ILIKE $1 OR
+         (network::text ILIKE $1 OR
          name ILIKE $1 OR
          site ILIKE $1 OR
-         description ILIKE $1
+         description ILIKE $1)${subnetsSiteFilter}
        LIMIT 10`,
-      [`%${q}%`]
+      subnetsParams
     );
     for (const r of subnets.rows) {
       results.push({
@@ -3753,12 +3960,18 @@ app.get('/api/search', async (req, res) => {
     }
 
     // Search supernets
+    const supernetsParams = [`%${q}%`];
+    let supernetsSiteFilter = '';
+    if (allowedSiteIds !== null) {
+      supernetsParams.push(allowedSiteIds);
+      supernetsSiteFilter = ` AND site_id = ANY($2::int[])`;
+    }
     const supernets = await db.query(
       `SELECT host(network) as network, prefix_length, name, site
        FROM ipam_supernets
-       WHERE network::text ILIKE $1 OR name ILIKE $1 OR site ILIKE $1
+       WHERE (network::text ILIKE $1 OR name ILIKE $1 OR site ILIKE $1)${supernetsSiteFilter}
        LIMIT 5`,
-      [`%${q}%`]
+      supernetsParams
     );
     for (const r of supernets.rows) {
       results.push({
@@ -3771,13 +3984,19 @@ app.get('/api/search', async (req, res) => {
     }
 
     // Search DHCP scopes (scope_id like 172.24.215.0, or name like "TU-WiFi4")
+    const scopesParams = [`%${q}%`];
+    let scopesSiteFilter = '';
+    if (allowedSiteIds !== null) {
+      scopesParams.push(allowedSiteIds);
+      scopesSiteFilter = ` AND srv.site_id = ANY($2::int[])`;
+    }
     const scopes = await db.query(
       `SELECT sc.scope_id, sc.name, sc.start_range::text, sc.end_range::text,
               sc.percent_used, srv.hostname AS server_hostname
        FROM dhcp_scopes sc LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
-       WHERE sc.scope_id ILIKE $1 OR sc.name ILIKE $1
+       WHERE (sc.scope_id ILIKE $1 OR sc.name ILIKE $1)${scopesSiteFilter}
        LIMIT 10`,
-      [`%${q}%`]
+      scopesParams
     );
     for (const r of scopes.rows) {
       results.push({
@@ -3810,14 +4029,22 @@ app.get('/api/search', async (req, res) => {
       });
     }
 
-    // Search DNS records
+    // Search DNS records (site-scoped via the zone's server, matching the
+    // established GET /api/dns/zones pattern)
+    const dnsParams = [`%${q}%`];
+    let dnsSiteFilter = '';
+    if (allowedSiteIds !== null) {
+      dnsParams.push(allowedSiteIds);
+      dnsSiteFilter = ` AND srv.site_id = ANY($2::int[])`;
+    }
     const dns = await db.query(
       `SELECT r.hostname, r.record_type, r.record_data, z.zone_name
        FROM dns_records r
        JOIN dns_zones z ON z.id = r.zone_id
-       WHERE r.hostname ILIKE $1 OR r.record_data ILIKE $1
+       LEFT JOIN ddi_servers srv ON srv.id = z.server_id
+       WHERE (r.hostname ILIKE $1 OR r.record_data ILIKE $1)${dnsSiteFilter}
        LIMIT 10`,
-      [`%${q}%`]
+      dnsParams
     );
     for (const r of dns.rows) {
       results.push({
@@ -3837,13 +4064,16 @@ app.get('/api/search', async (req, res) => {
 });
 
 // ── Next available IP in a subnet ─────────────────────────────
-app.get('/api/ipam/subnets/:id/next-ip', async (req, res) => {
+app.get('/api/ipam/subnets/:id/next-ip', attachSiteFilter, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const subnetRes = await db.query(
-      'SELECT id, host(network) as network, prefix_length FROM ipam_subnets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length, site_id FROM ipam_subnets WHERE id=$1', [id]
     );
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
+    if (req.allowedSiteIds !== null && !req.allowedSiteIds.includes(subnetRes.rows[0].site_id)) {
+      return res.status(404).json({ error: 'Subnet not found' });
+    }
     const { network, prefix_length } = subnetRes.rows[0];
 
     // Get all used/reserved IPs in this subnet
@@ -3877,15 +4107,18 @@ app.get('/api/ipam/subnets/:id/next-ip', async (req, res) => {
 });
 
 // ── Next available subnet in a supernet ───────────────────────
-app.get('/api/ipam/supernets/:id/next-subnet', async (req, res) => {
+app.get('/api/ipam/supernets/:id/next-subnet', attachSiteFilter, async (req, res) => {
   try {
     const id     = parseInt(req.params.id);
     const prefix = parseInt(req.query.prefix || '24');
 
     const snRes = await db.query(
-      'SELECT id, host(network) as network, prefix_length, site FROM ipam_supernets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length, site, site_id FROM ipam_supernets WHERE id=$1', [id]
     );
     if (!snRes.rows.length) return res.status(404).json({ error: 'Supernet not found' });
+    if (req.allowedSiteIds !== null && !req.allowedSiteIds.includes(snRes.rows[0].site_id)) {
+      return res.status(404).json({ error: 'Supernet not found' });
+    }
     const supernet = snRes.rows[0];
 
     // Get all existing subnets within this supernet
@@ -3954,15 +4187,21 @@ app.get('/api/ipam/supernets/:id/next-subnet', async (req, res) => {
 });
 
 // ── Conflict detection ────────────────────────────────────────
-app.get('/api/ipam/conflicts', async (req, res) => {
+app.get('/api/ipam/conflicts', attachSiteFilter, async (req, res) => {
   try {
+    // A site_admin should still be warned about conflicts touching a subnet
+    // they own, even when the other side belongs to a different site — so
+    // this filters on EITHER side being in-scope (OR), not both (AND).
+    const siteFilter = req.allowedSiteIds !== null ? `AND (a.site_id = ANY($1::int[]) OR b.site_id = ANY($1::int[]))` : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const conflicts = await db.query(
       `SELECT
          a.id as id_a, host(a.network) as network_a, a.prefix_length as prefix_a, a.name as name_a, a.site as site_a,
          b.id as id_b, host(b.network) as network_b, b.prefix_length as prefix_b, b.name as name_b, b.site as site_b
        FROM ipam_subnets a
        JOIN ipam_subnets b ON a.id < b.id
-       WHERE a.network::inet && b.network::inet`
+       WHERE a.network::inet && b.network::inet ${siteFilter}`,
+      params
     );
     res.json({ data: conflicts.rows, count: conflicts.rows.length });
   } catch (err) {
@@ -3972,7 +4211,10 @@ app.get('/api/ipam/conflicts', async (req, res) => {
 });
 
 // ── IPAM — utilization history (hourly snapshots for the trend chart) ──
-app.get('/api/ipam/utilization-history', async (req, res) => {
+// ipam_utilization_history is a whole-system rollup with no site_id column
+// at all — requireAuth only, matching the global-aggregate precedent used
+// for /api/forecasts/summary and /api/anomalies/summary.
+app.get('/api/ipam/utilization-history', requireAuth, async (req, res) => {
   try {
     let days = parseInt(req.query.days, 10);
     if (!Number.isFinite(days) || days <= 0) days = 7;
@@ -3993,9 +4235,11 @@ app.get('/api/ipam/utilization-history', async (req, res) => {
 
 
 // Utilization history for all scopes (sparklines)
-app.get('/api/scopes/history/all', async (req, res) => {
+app.get('/api/scopes/history/all', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours || '168'); // default 7 days
+    const siteFilter = req.allowedSiteIds !== null ? 'AND srv.site_id = ANY($2::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [hours, req.allowedSiteIds] : [hours];
     const rows = await db.query(
       `SELECT
          h.scope_id,
@@ -4007,9 +4251,11 @@ app.get('/api/scopes/history/all', async (req, res) => {
          h.recorded_at
        FROM dhcp_scope_history h
        JOIN dhcp_scopes s ON s.id = h.scope_id
+       JOIN ddi_servers srv ON srv.id = s.server_id
        WHERE h.recorded_at > NOW() - make_interval(hours => $1)
+       ${siteFilter}
        ORDER BY h.scope_id, h.recorded_at ASC`,
-      [hours]
+      params
     );
 
     // Group by scope
@@ -4065,14 +4311,18 @@ app.get('/api/audit', attachSiteFilter, async (req, res) => {
   }
 });
 
-app.get('/api/audit/stats', async (req, res) => {
+app.get('/api/audit/stats', attachSiteFilter, async (req, res) => {
   try {
+    // Mirror buildAuditFilters' site-scope restriction (used by the sibling
+    // GET /api/audit list route) on every aggregate below.
+    const siteClause = req.allowedSiteIds !== null ? ' AND site_id = ANY($1::int[])' : '';
+    const siteParams = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const [today, week, topUsers, topActions, topEntities] = await Promise.all([
-      db.query("SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= date_trunc('day', NOW())"),
-      db.query("SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'"),
-      db.query("SELECT username, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY username ORDER BY c DESC LIMIT 5"),
-      db.query("SELECT action, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY action ORDER BY c DESC LIMIT 5"),
-      db.query("SELECT entity_type, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY entity_type ORDER BY c DESC LIMIT 5"),
+      db.query(`SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= date_trunc('day', NOW())${siteClause}`, siteParams),
+      db.query(`SELECT COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'${siteClause}`, siteParams),
+      db.query(`SELECT username, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'${siteClause} GROUP BY username ORDER BY c DESC LIMIT 5`, siteParams),
+      db.query(`SELECT action, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'${siteClause} GROUP BY action ORDER BY c DESC LIMIT 5`, siteParams),
+      db.query(`SELECT entity_type, COUNT(*) AS c FROM audit_log WHERE timestamp >= NOW() - INTERVAL '7 days'${siteClause} GROUP BY entity_type ORDER BY c DESC LIMIT 5`, siteParams),
     ]);
     res.json({
       today: parseInt(today.rows[0].c),
@@ -4106,10 +4356,16 @@ app.get('/api/audit/export', requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/audit/:id', async (req, res) => {
+// Same guard level as the sibling GET /api/audit list route (attachSiteFilter) —
+// this is the single-record equivalent, not a bulk export like
+// GET /api/audit/export (which is intentionally elevated to requireSuperAdmin).
+app.get('/api/audit/:id', attachSiteFilter, async (req, res) => {
   try {
     const r = await db.query('SELECT * FROM audit_log WHERE id = $1', [parseInt(req.params.id)]);
     if (!r.rows.length) return res.status(404).json({ error: 'Audit entry not found' });
+    if (req.allowedSiteIds !== null && !req.allowedSiteIds.includes(r.rows[0].site_id)) {
+      return res.status(404).json({ error: 'Audit entry not found' });
+    }
     res.json({ data: r.rows[0] });
   } catch (err) {
     console.error('[API] audit detail error:', err.message);
@@ -4201,18 +4457,30 @@ app.get('/api/infrastructure/health', attachSiteFilter, async (req, res) => {
   }
 });
 
-app.get('/api/infrastructure/failover', async (req, res) => {
+app.get('/api/infrastructure/failover', attachSiteFilter, async (req, res) => {
   try {
+    // Same join-to-ddi_servers.site_id pattern as the sibling
+    // GET /api/infrastructure/health. A pair is in-scope if either member
+    // server is (mirrors the OR philosophy used for /api/ipam/conflicts).
+    const pairsSiteFilter = req.allowedSiteIds !== null
+      ? `WHERE (p.site_id = ANY($1::int[]) OR sec.site_id = ANY($1::int[]))` : '';
+    const pairsParams = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const pairs = await db.query(
       `SELECT f.*, p.hostname AS primary_name, sec.hostname AS secondary_name
          FROM dhcp_failover_pairs f
          LEFT JOIN ddi_servers p   ON p.id   = f.primary_server_id
          LEFT JOIN ddi_servers sec ON sec.id = f.secondary_server_id
-        ORDER BY f.relationship_name`);
+        ${pairsSiteFilter}
+        ORDER BY f.relationship_name`,
+      pairsParams);
+    const syncSiteFilter = req.allowedSiteIds !== null ? `AND srv.site_id = ANY($1::int[])` : '';
+    const syncParams = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const sync = await db.query(
       `SELECT s.*, sc.scope_id AS scope_label FROM dhcp_scope_sync_status s
          LEFT JOIN dhcp_scopes sc ON sc.id = s.scope_id
-        WHERE s.checked_at > NOW() - INTERVAL '1 day' ORDER BY s.checked_at DESC LIMIT 200`);
+         LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+        WHERE s.checked_at > NOW() - INTERVAL '1 day' ${syncSiteFilter} ORDER BY s.checked_at DESC LIMIT 200`,
+      syncParams);
     res.json({ data: pairs.rows, sync: sync.rows });
   } catch (err) {
     console.error('[API] failover error:', err.message);
@@ -4220,14 +4488,21 @@ app.get('/api/infrastructure/failover', async (req, res) => {
   }
 });
 
-app.get('/api/infrastructure/servers/:id/history', async (req, res) => {
+app.get('/api/infrastructure/servers/:id/history', attachSiteFilter, async (req, res) => {
   try {
+    const serverId = parseInt(req.params.id);
+    if (req.allowedSiteIds !== null) {
+      const owner = await db.query('SELECT site_id FROM ddi_servers WHERE id = $1', [serverId]);
+      if (!owner.rows.length || !req.allowedSiteIds.includes(owner.rows[0].site_id)) {
+        return res.status(404).json({ error: 'Server not found' });
+      }
+    }
     const hours = safeHours(req.query.hours, 720);
     const r = await db.query(
       `SELECT health_score, winrm_ok, query_ms, soa_in_sync, recorded_at
          FROM server_health_history
         WHERE server_id = $1 AND recorded_at > NOW() - ($2 || ' hours')::interval
-        ORDER BY recorded_at ASC`, [parseInt(req.params.id), hours]);
+        ORDER BY recorded_at ASC`, [serverId, hours]);
     res.json({ data: r.rows });
   } catch (err) {
     console.error('[API] server health history error:', err.message);
@@ -4236,9 +4511,18 @@ app.get('/api/infrastructure/servers/:id/history', async (req, res) => {
 });
 
 // Distribution of IPAM address statuses (for dashboard donut)
-app.get('/api/dashboard/ip-distribution', async (req, res) => {
+app.get('/api/dashboard/ip-distribution', requireAuth, attachSiteFilter, async (req, res) => {
   try {
-    const r = await db.query('SELECT status, COUNT(*) AS c FROM ipam_addresses GROUP BY status');
+    const siteFilter = req.allowedSiteIds !== null ? 'WHERE sn.site_id = ANY($1::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
+    const r = await db.query(
+      `SELECT a.status, COUNT(*) AS c
+         FROM ipam_addresses a
+         JOIN ipam_subnets sn ON sn.id = a.subnet_id
+         ${siteFilter}
+        GROUP BY a.status`,
+      params
+    );
     const out = { available: 0, dhcp: 0, reserved: 0, unknown: 0, offline: 0 };
     r.rows.forEach(row => { out[row.status] = parseInt(row.c); });
     res.json({ data: out });
@@ -4249,14 +4533,19 @@ app.get('/api/dashboard/ip-distribution', async (req, res) => {
 });
 
 // Lease trend over last N days (for dashboard line chart)
-app.get('/api/dashboard/lease-trend', async (req, res) => {
+app.get('/api/dashboard/lease-trend', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const days = safeInt(req.query.days, 7, 90);
+    const siteFilter = req.allowedSiteIds !== null ? 'AND srv.site_id = ANY($2::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [days, req.allowedSiteIds] : [days];
     const r = await db.query(
-      `SELECT date_trunc('day', recorded_at) AS day, ROUND(AVG(in_use)) AS leases
-         FROM dhcp_scope_history
-        WHERE recorded_at > NOW() - ($1 || ' days')::interval
-        GROUP BY day ORDER BY day ASC`, [days]);
+      `SELECT date_trunc('day', h.recorded_at) AS day, ROUND(AVG(h.in_use)) AS leases
+         FROM dhcp_scope_history h
+         JOIN dhcp_scopes sc ON sc.id = h.scope_id
+         JOIN ddi_servers srv ON srv.id = sc.server_id
+        WHERE h.recorded_at > NOW() - ($1 || ' days')::interval
+        ${siteFilter}
+        GROUP BY day ORDER BY day ASC`, params);
     res.json({ data: r.rows });
   } catch (err) {
     console.error('[API] lease-trend error:', err.message);
@@ -4264,8 +4553,11 @@ app.get('/api/dashboard/lease-trend', async (req, res) => {
   }
 });
 
-// Collector liveness derived from ddi_servers.last_polled
-app.get('/api/dashboard/collector-status', async (req, res) => {
+// Collector liveness derived from ddi_servers.last_polled.
+// requireAuth only (no attachSiteFilter): this is a global collector-heartbeat
+// summary (a timestamp + counts of active servers), not per-record data — there's
+// nothing here to attribute to a specific site.
+app.get('/api/dashboard/collector-status', requireAuth, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT
@@ -4299,15 +4591,18 @@ app.get('/api/dashboard/collector-status', async (req, res) => {
 });
 
 // Per-server health history sparklines (uptime, avg query, score points)
-app.get('/api/infrastructure/health-history', async (req, res) => {
+app.get('/api/infrastructure/health-history', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const hours = safeInt(req.query.hours, 168, 2160);
+    const siteFilter = req.allowedSiteIds !== null ? 'AND s.site_id = ANY($2::int[])' : '';
+    const params = req.allowedSiteIds !== null ? [hours, req.allowedSiteIds] : [hours];
     const r = await db.query(
       `SELECT h.server_id, s.hostname, h.health_score, h.winrm_ok, h.query_ms, h.recorded_at
          FROM server_health_history h
          JOIN ddi_servers s ON s.id = h.server_id
         WHERE h.recorded_at > NOW() - ($1 || ' hours')::interval
-        ORDER BY h.server_id, h.recorded_at ASC`, [hours]);
+        ${siteFilter}
+        ORDER BY h.server_id, h.recorded_at ASC`, params);
     const byServer = new Map();
     for (const row of r.rows) {
       let entry = byServer.get(row.server_id);
@@ -4351,14 +4646,19 @@ app.get('/api/infrastructure/health-history', async (req, res) => {
 });
 
 // Dashboard pillar scores (overall + DHCP/DNS/IPAM/Security) with hourly trend
-app.get('/api/dashboard/pillars', async (req, res) => {
+app.get('/api/dashboard/pillars', requireAuth, attachSiteFilter, async (req, res) => {
   try {
+    const restricted = req.allowedSiteIds !== null;
+
     // Latest row per site, averaged across sites
+    const latestSiteFilter = restricted ? 'WHERE site_id = ANY($1::int[])' : '';
+    const latestParams = restricted ? [req.allowedSiteIds] : [];
     const latest = await db.query(
       `WITH latest AS (
          SELECT DISTINCT ON (site_id) site_id, calculated_at,
                 overall_score, dhcp_score, ipam_score, dns_score, security_score
            FROM site_health_scores
+           ${latestSiteFilter}
           ORDER BY site_id, calculated_at DESC
        )
        SELECT
@@ -4369,11 +4669,13 @@ app.get('/api/dashboard/pillars', async (req, res) => {
          ROUND(AVG(security_score)) AS security,
          MAX(calculated_at)         AS as_of,
          COUNT(*)                   AS sites
-       FROM latest`);
+       FROM latest`, latestParams);
     const row = latest.rows[0] || {};
     const sites = parseInt(row.sites) || 0;
 
     // Hourly trend across all sites — last ~24 buckets, ascending
+    const trendSiteFilter = restricted ? 'AND site_id = ANY($1::int[])' : '';
+    const trendParams = restricted ? [req.allowedSiteIds] : [];
     const trendRows = await db.query(
       `SELECT bucket,
               ROUND(AVG(dhcp_score))     AS dhcp,
@@ -4385,10 +4687,11 @@ app.get('/api/dashboard/pillars', async (req, res) => {
                   dhcp_score, ipam_score, dns_score, security_score
              FROM site_health_scores
             WHERE calculated_at > NOW() - INTERVAL '24 hours'
+            ${trendSiteFilter}
          ) t
         GROUP BY bucket
         ORDER BY bucket ASC
-        LIMIT 24`);
+        LIMIT 24`, trendParams);
     const trend = (col) =>
       trendRows.rows.map(r => (r[col] != null ? parseInt(r[col]) : 0));
     const num = (v) => (v != null ? parseInt(v) : null);

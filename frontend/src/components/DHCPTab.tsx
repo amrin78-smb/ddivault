@@ -768,10 +768,11 @@ export default function DHCPTab({ focusScope }: { focusScope?: string | null }) 
   const { canWrite: rbacCanWrite } = useRBAC();
   const { state: licenseState } = useLicense();
 
-  // Download leases CSV via an AUTHENTICATED fetch. /api/leases/export now requires
-  // a signed-in identity (requireAuth), which is carried by the x-ddi-actor-* headers
-  // the global fetch patch injects — a plain <a>/window.open navigation sends none of
-  // them and would 401. fetch → blob → anchor keeps the request authenticated.
+  // Download leases CSV via fetch → blob → anchor rather than a plain <a>/window.open.
+  // /api/leases/export requires a signed-in identity (requireAuth); identity now rides
+  // the NextAuth session cookie (verified and stamped as x-ddi-actor-* headers
+  // server-side by middleware.ts), which a plain navigation would also carry — this
+  // approach is kept for its error handling and filename control.
   const downloadLeases = useCallback(async () => {
     try {
       const res = await fetch('/api/leases/export');

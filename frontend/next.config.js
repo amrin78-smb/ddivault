@@ -1,53 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: { unoptimized: true },
-  async rewrites() {
-    return [
-      { source: '/api/health',             destination: 'http://127.0.0.1:3007/api/health' },
-      { source: '/api/stats',              destination: 'http://127.0.0.1:3007/api/stats' },
-      { source: '/api/dashboard/:path*',   destination: 'http://127.0.0.1:3007/api/dashboard/:path*' },
-      { source: '/api/scopes/:path*',      destination: 'http://127.0.0.1:3007/api/scopes/:path*' },
-      { source: '/api/leases/:path*',      destination: 'http://127.0.0.1:3007/api/leases/:path*' },
-      { source: '/api/events/:path*',      destination: 'http://127.0.0.1:3007/api/events/:path*' },
-      { source: '/api/alerts/:path*',      destination: 'http://127.0.0.1:3007/api/alerts/:path*' },
-      { source: '/api/alert-rules/:path*', destination: 'http://127.0.0.1:3007/api/alert-rules/:path*' },
-      { source: '/api/servers/:path*',     destination: 'http://127.0.0.1:3007/api/servers/:path*' },
-      { source: '/api/servers',            destination: 'http://127.0.0.1:3007/api/servers' },
-      { source: '/api/settings/:path*',    destination: 'http://127.0.0.1:3007/api/settings/:path*' },
-      { source: '/api/settings',           destination: 'http://127.0.0.1:3007/api/settings' },
-      { source: '/api/subnets/:path*',     destination: 'http://127.0.0.1:3007/api/subnets/:path*' },
-      { source: '/api/subnets',            destination: 'http://127.0.0.1:3007/api/subnets' },
-      { source: '/api/dns/:path*',         destination: 'http://127.0.0.1:3007/api/dns/:path*' },
-      { source: '/api/dhcp/:path*',        destination: 'http://127.0.0.1:3007/api/dhcp/:path*' },
-      { source: '/api/ipam/:path*',        destination: 'http://127.0.0.1:3007/api/ipam/:path*' },
-      { source: '/api/search', destination: 'http://127.0.0.1:3007/api/search' },
-      { source: '/api/scopes/history/:path*', destination: 'http://127.0.0.1:3007/api/scopes/history/:path*' },
-      { source: '/api/sites',              destination: 'http://127.0.0.1:3007/api/sites' },
-      { source: '/api/audit/:path*',          destination: 'http://127.0.0.1:3007/api/audit/:path*' },
-      { source: '/api/audit',                 destination: 'http://127.0.0.1:3007/api/audit' },
-      { source: '/api/reports/:path*',        destination: 'http://127.0.0.1:3007/api/reports/:path*' },
-      { source: '/api/reports',               destination: 'http://127.0.0.1:3007/api/reports' },
-      { source: '/api/api-keys/:path*',       destination: 'http://127.0.0.1:3007/api/api-keys/:path*' },
-      { source: '/api/api-keys',              destination: 'http://127.0.0.1:3007/api/api-keys' },
-      { source: '/api/infrastructure/:path*', destination: 'http://127.0.0.1:3007/api/infrastructure/:path*' },
-      { source: '/api/v1/:path*',             destination: 'http://127.0.0.1:3007/api/v1/:path*' },
-      { source: '/api/smtp/:path*',            destination: 'http://127.0.0.1:3007/api/smtp/:path*' },
-      { source: '/api/smtp',                   destination: 'http://127.0.0.1:3007/api/smtp' },
-      { source: '/api/alert-recipients/:path*', destination: 'http://127.0.0.1:3007/api/alert-recipients/:path*' },
-      { source: '/api/alert-recipients',       destination: 'http://127.0.0.1:3007/api/alert-recipients' },
-      { source: '/api/alert-rule-config/:path*', destination: 'http://127.0.0.1:3007/api/alert-rule-config/:path*' },
-      { source: '/api/alert-rule-config',      destination: 'http://127.0.0.1:3007/api/alert-rule-config' },
-      { source: '/api/forecasts/:path*',       destination: 'http://127.0.0.1:3007/api/forecasts/:path*' },
-      { source: '/api/forecasts',              destination: 'http://127.0.0.1:3007/api/forecasts' },
-      { source: '/api/anomalies/:path*',       destination: 'http://127.0.0.1:3007/api/anomalies/:path*' },
-      { source: '/api/anomalies',              destination: 'http://127.0.0.1:3007/api/anomalies' },
-      { source: '/api/site-health/:path*',     destination: 'http://127.0.0.1:3007/api/site-health/:path*' },
-      { source: '/api/site-health',            destination: 'http://127.0.0.1:3007/api/site-health' },
-      { source: '/api/license-status',         destination: 'http://127.0.0.1:3007/api/license-status' },
-      { source: '/api/hub/:path*',             destination: 'http://127.0.0.1:3007/api/hub/:path*' },
-      { source: '/api/system/:path*',          destination: 'http://127.0.0.1:3007/api/system/:path*' },
-    ];
-  },
+  // NOTE: /api/* is proxied to the Express API (127.0.0.1:3007) by
+  // frontend/src/middleware.ts, NOT by a next.config.js rewrites() table.
+  // A config-level rewrite is a dumb URL-level forward with no code-execution
+  // point — it cannot verify a session or strip/stamp identity headers, which
+  // is exactly what let a client set x-ddi-actor-role itself via a bare curl
+  // request and bypass every RBAC check. middleware.ts now owns all /api/*
+  // routing: it verifies the NextAuth JWT, overwrites x-ddi-actor* from the
+  // verified token, and rewrites to Express itself. Do not reintroduce a
+  // rewrites() table here — see middleware.ts for the real routing table.
 };
 
 module.exports = nextConfig;

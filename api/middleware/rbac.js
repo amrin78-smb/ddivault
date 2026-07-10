@@ -10,11 +10,20 @@
  * mutates roles — it only enforces them.
  *
  * Actor identity reaches this localhost-only API one of two ways:
- *   1. Web UI  — the Next.js frontend stamps every /api/* request with
- *                x-ddi-actor / x-ddi-actor-role / x-ddi-actor-id headers
- *                (see frontend/src/components/AuditActor.tsx). The role in
- *                that header originates from the signed NextAuth session,
- *                which in turn came from NetVault SSO.
+ *   1. Web UI  — frontend/src/middleware.ts stamps every proxied /api/*
+ *                request with x-ddi-actor / x-ddi-actor-role / x-ddi-actor-id
+ *                headers, SERVER-SIDE, after verifying the caller's NextAuth
+ *                JWT itself (getToken() against NEXTAUTH_SECRET). The role in
+ *                that header is read from the verified token, which in turn
+ *                came from NetVault SSO — never from anything the browser
+ *                sends. The middleware always OVERWRITES any x-ddi-actor*
+ *                headers a client supplies, so this API can trust them
+ *                verbatim: they cannot be forged by a direct request to the
+ *                frontend, because there is no code path that forwards a
+ *                client-supplied value through unmodified (the old
+ *                next.config.js rewrites() table that did this — and the
+ *                client-side AuditActor.tsx fetch patch that fed it — have
+ *                both been removed).
  *   2. API key — the public /api/v1/* surface authenticates with an API key
  *                whose permissions (read/write/admin) map onto a role here.
  *
