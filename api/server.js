@@ -29,6 +29,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.21.0': [
+    'Per-user app-access enforcement: DDIVault now blocks users who are not granted the DDIVault app at the app level (not just on the hub launcher) — an unauthorised user landing on any DDIVault page is redirected to the NocVault hub launcher with a "denied" banner.',
+    'The allowed-apps claim now flows through SSO into the DDIVault session: the list of apps a user may access is carried from the NetVault sign-in token into DDIVault\'s own session and read by the page guard.',
+    'Enforcement fails open on older sessions — a token minted before this feature (no apps claim) keeps full access, so nobody is locked out by an in-flight upgrade; the hub (netvault) is always allowed.',
+    'The gate uses the signed session token only (never client-supplied headers), so app access cannot be self-granted by a forged request.',
+  ],
   '1.20.7': [
     'Fixed: loading a saved DHCP Scope Health view no longer silently reverts the scope filter to "All scopes". The saved scope selection now sticks, so a follow-up Apply, PDF, or CSV export re-scopes to exactly the scopes the view was saved with. This completes the 1.20.4 saved-view scope fix, which did not hold when the view was loaded while a different report (or none) was open.',
   ],

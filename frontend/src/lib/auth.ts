@@ -15,6 +15,24 @@ const netvaultDb = new Pool({
 
 const HUB_URL = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 
+// Extract the `apps` claim (string[] of allowed app slugs) from an SSO JWT's
+// payload. Read-only decode of the middle segment — NO signature verification
+// here on purpose: the caller only invokes this AFTER the hub's sso-verify has
+// already cryptographically validated the same token, so a forged/expired token
+// never reaches this point. Returns undefined on any malformed input so callers
+// fall back to default-all (fail open) rather than locking a user out.
+function ssoApps(token: string): string[] | undefined {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return undefined;
+    const json = Buffer.from(part, 'base64').toString('utf8');
+    const apps = JSON.parse(json).apps;
+    return Array.isArray(apps) ? apps : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -38,11 +56,19 @@ export const authOptions: NextAuthOptions = {
             if (!res.ok) return null;
             const data = await res.json();
             if (!data.email) return null;
+            // Carry the allowed-apps claim from the incoming SSO token so
+            // middleware.ts can gate per-user app access. `apps` is a string[]
+            // of app slugs (e.g. ["netvault","ddivault"]); absent/empty =
+            // default-all. The token was already cryptographically verified by
+            // the hub's sso-verify above (it rejects forged/expired tokens), so
+            // reading the apps claim from that same verified token's payload is
+            // safe — a forged token never reaches this line.
             return {
               id:    String(data.userId || data.email),
               name:  data.name  || data.email,
               email: data.email,
               role:  data.role  || 'user',
+              apps:  ssoApps(credentials.token),
             };
           } catch (err) {
             console.error('[Auth] SSO verify error:', err);
@@ -80,6 +106,12 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.role = (user as any).role;
         token.id   = (user as any).id;
+        // Persist the allowed-apps claim into DDIVault's own JWT so middleware.ts
+        // (getToken) can enforce per-user app access. Only set when present on the
+        // SSO login so older tokens (no claim) stay default-all (fail open).
+        if (Array.isArray((user as any).apps)) {
+          (token as any).apps = (user as any).apps;
+        }
       }
       return token;
     },
@@ -87,6 +119,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         (session.user as any).role = token.role;
         (session.user as any).id   = token.id;
+        (session.user as any).apps = (token as any).apps;
       }
       return session;
     },
