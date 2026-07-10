@@ -15,6 +15,17 @@ const BACKEND   = 'http://127.0.0.1:3007';
 // never carry a NextAuth session cookie at all.
 const PUBLIC_API = /^\/api\/(health|stats|license-status|system\/update-available)$/;
 
+// One-click "acknowledge alert" email link (api/emailer.js builds it as
+// APP_URL + '/api/alerts/:id/acknowledge?token=' + ackToken(id)). It must work
+// for a logged-out recipient clicking from their inbox, so it can't go through
+// the session gate below — but it's already protected server-side by an HMAC
+// token (api/server.js GET handler → emailer.verifyAckToken), NOT a session.
+// Scoped tightly to GET + a `token` query param so we don't accidentally also
+// expose POST /api/alerts/:id/acknowledge (the session-gated admin-ack route,
+// which reuses the same path but relies on this middleware's session check —
+// it has no HMAC guard of its own).
+const ACK_LINK_API = /^\/api\/alerts\/[^/]+\/acknowledge$/;
+
 // Per-user app-access gate (NocVault suite). `apps` is the list of app slugs the
 // user is allowed, carried from the SSO token into DDIVault's session JWT
 // (lib/auth.ts). Fail OPEN: no/empty claim = default-all, so older tokens minted
@@ -49,7 +60,11 @@ export async function middleware(req: NextRequest) {
     // Public, no-session routes and the API-key-authenticated /api/v1/*
     // surface proxy straight through with the forged headers stripped (but
     // none stamped — these routes don't rely on x-ddi-actor* for identity).
-    if (PUBLIC_API.test(pathname) || pathname.startsWith('/api/v1/')) {
+    const isAckLink =
+      req.method === 'GET' &&
+      ACK_LINK_API.test(pathname) &&
+      req.nextUrl.searchParams.has('token');
+    if (PUBLIC_API.test(pathname) || pathname.startsWith('/api/v1/') || isAckLink) {
       return NextResponse.rewrite(target, { request: { headers } });
     }
 
@@ -61,6 +76,14 @@ export async function middleware(req: NextRequest) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Per-user app-access enforcement (same gate as the page-route branch
+    // below): a valid session whose allowed-apps claim omits ddivault must
+    // not reach the API either — page-nav-only enforcement left this proxy
+    // as a bypass for a denied-but-authenticated user hitting /api/* directly.
+    if (!appAllowed((token as { apps?: unknown }).apps, 'ddivault')) {
+      return NextResponse.json({ error: 'forbidden', reason: 'app_access_denied' }, { status: 403 });
     }
 
     headers.set('x-ddi-actor', (token.name as string) || (token.email as string) || 'user');

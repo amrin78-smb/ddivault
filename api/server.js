@@ -29,6 +29,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.1': [
+    'Security fix: the per-user app-access block only stopped a denied user from reaching DDIVault pages — a valid session could still call the API directly and get full data. The API now enforces the same check.',
+    'Fixed a regression from the 1.22.0 auth rewrite: the one-click "acknowledge alert" link in alert emails stopped working for anyone without an active browser session (it was blocked before reaching its own token check). Restored, without weakening any other route.',
+  ],
   '1.22.0': [
     'SECURITY: fixed a critical full-authentication-bypass — every API request\'s identity was carried by a plain, client-supplied x-ddi-actor-role header that the browser itself set and the backend trusted verbatim, with zero cryptographic verification. Anyone who could reach the app could send a request with x-ddi-actor-role: super_admin and get full admin access, no login required — including minting durable API keys and creating a SYSTEM-level scheduled task via the update endpoint. Identity is now verified server-side from the signed NextAuth session on every request; a client-supplied identity header is always discarded and never trusted.',
     'Roughly 40 API routes had no auth check of any kind — not even the (forgeable) old header check. All now require a signed-in session, and most also enforce the same per-site scoping their sibling list views already had, closing several cross-site data-exposure gaps (a site_admin could previously read DNS/DHCP/IPAM data outside their assigned sites via a handful of by-ID routes and the smart search endpoint).',
