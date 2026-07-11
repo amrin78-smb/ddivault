@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getHubUrl } from '@/lib/hubUrl';
 
-const HUB_URL = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+const HUB_URL = getHubUrl();
 const WARNING_MS = 60 * 1000; // show warning 60s before expiry
 
 // Sub-component defined at module scope — never inside the main component (causes remount on every render)

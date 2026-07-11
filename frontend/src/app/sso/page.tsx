@@ -3,12 +3,13 @@
 import { Suspense, useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { getHubUrl } from '@/lib/hubUrl';
 
 function SSOHandler() {
   const params  = useSearchParams();
   const router  = useRouter();
   const token   = params.get('token');
-  const hub     = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hub     = getHubUrl();
   const [status, setStatus] = useState('Verifying token...');
   const [error,  setError]  = useState('');
 

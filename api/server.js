@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.2': [
+    'Fixed: links back to the NocVault hub (sign-out, home button, license page, session-expiry redirect) always pointed at the server\'s original install-time IP address, regardless of what hostname you actually used to reach DDIVault. Every hub link now follows your current hostname instead.',
+  ],
   '1.22.1': [
     'Security fix: the per-user app-access block only stopped a denied user from reaching DDIVault pages — a valid session could still call the API directly and get full data. The API now enforces the same check.',
     'Fixed a regression from the 1.22.0 auth rewrite: the one-click "acknowledge alert" link in alert emails stopped working for anyone without an active browser session (it was blocked before reaching its own token check). Restored, without weakening any other route.',
@@ -463,6 +466,28 @@ function safeLimit(val) {
   return safeInt(val, 50, 500);
 }
 
+// Local plain-JS port of frontend/src/lib/publicUrl.ts's resolveOrigin, adapted
+// for Express's req shape (req.headers is a plain object, not the Fetch API's
+// Headers, and there's no req.nextUrl — use req.protocol instead). Derives the
+// NocVault hub origin from the CURRENT REQUEST (x-forwarded-host/-proto first,
+// for reverse-proxy deployments, else plain host/protocol) instead of the
+// static install-time env var, so hub links/redirects still work if a customer
+// later reaches the suite via a local-DNS hostname instead of the install IP.
+// `legacyFallback` (the existing env-var chain) is used ONLY when the request
+// doesn't carry a usable Host — never worse than today's behavior.
+const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+function resolveHubOrigin(req, port, legacyFallback) {
+  const rawHost = req.headers['x-forwarded-host'] || req.headers['host'] || '';
+  const hostname = String(rawHost).split(':')[0].trim();
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+
+  if (hostname && hostname.length <= 253 && HOSTNAME_RE.test(hostname) && (proto === 'http' || proto === 'https')) {
+    return `${proto}://${hostname}${port ? ':' + port : ''}`;
+  }
+  return legacyFallback;
+}
+
 // ── License enforcement ───────────────────────────────────────
 async function enforceLicense(req, res, next) {
   const license = await getLicense();
@@ -480,7 +505,7 @@ async function enforceLicense(req, res, next) {
         error: 'License expired — write operations disabled',
         license_status: license?.status,
         days_remaining: license?.daysRemaining,
-        renew_url: `${process.env.NOCVAULT_HUB_URL || ''}/settings/license`,
+        renew_url: `${resolveHubOrigin(req, 3000, process.env.NOCVAULT_HUB_URL || '')}/settings/license`,
       });
     }
   }
@@ -494,7 +519,7 @@ async function enforceLicense(req, res, next) {
     return res.status(402).json({
       error: 'DDIVault license has expired. Please renew your NocVault license.',
       license_status: license?.status,
-      renew_url: `${process.env.NOCVAULT_HUB_URL || ''}/settings/license`,
+      renew_url: `${resolveHubOrigin(req, 3000, process.env.NOCVAULT_HUB_URL || '')}/settings/license`,
     });
   }
   next();
@@ -507,8 +532,8 @@ app.get('/api/license-status', async (req, res) => {
 });
 
 // ── NocVault hub proxy (avoids browser CORS to the hub) ───────
-app.get('/api/hub/settings', requireAuth, async (_req, res) => {
-  const hub = (process.env.NOCVAULT_HUB_URL || 'http://localhost:3000').replace(/\/+$/, '');
+app.get('/api/hub/settings', requireAuth, async (req, res) => {
+  const hub = resolveHubOrigin(req, 3000, process.env.NOCVAULT_HUB_URL || 'http://localhost:3000').replace(/\/+$/, '');
   try {
     const r = await fetch(`${hub}/api/settings`, { headers: { Accept: 'application/json' } });
     if (!r.ok) return res.status(502).json({ error: `Hub returned ${r.status}` });

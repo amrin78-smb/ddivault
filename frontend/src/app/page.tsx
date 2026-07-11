@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
+import { getHubUrl } from '@/lib/hubUrl';
 import { Header } from '@/components/Header';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useToast } from '@/components/Toast';
@@ -1279,7 +1280,7 @@ function SystemUpdates() {
     }
   }, []);
 
-  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hubUrl = getHubUrl();
 
   const hasError = !!(status?.error) || !!checkErr;
   const errText = status?.error || checkErr;
@@ -1405,7 +1406,7 @@ function SettingsPill({ label, active, onClick, badge }: { label: string; active
 
 // ── NocVault hub integration card — Integrations tab ──────────
 function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
-  const hub = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hub = getHubUrl();
   return (
     <div style={{ ...CARD, padding: 20 }}>
       <div style={titleStyle}>NocVault Hub</div>

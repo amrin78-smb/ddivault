@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
 import { useRBAC } from '@/components/RBACContext';
+import { getHubUrl } from '@/lib/hubUrl';
 
 function DDIVaultLogo({ className }: { className?: string }) {
   return (
@@ -76,7 +77,7 @@ export function Header(props: HeaderProps) {
   const [alertTotal, setAlertTotal] = useState(0);
   const dropRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLDivElement>(null);
-  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hubUrl = getHubUrl();
 
   const userName    = session?.user?.name  || session?.user?.email || 'User';
   const userEmail   = session?.user?.email || '';
@@ -403,7 +404,7 @@ export function Header(props: HeaderProps) {
                     });
                   } catch (_) {}
                   // Hard redirect — no callbackUrl, goes straight to launcher
-                  window.location.replace(`${process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000'}/launcher`);
+                  window.location.replace(`${hubUrl}/launcher`);
                 }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,

@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { resolveOrigin } from '@/lib/publicUrl';
 
-// Uses NOCVAULT_HUB_URL (server-side env var, no NEXT_PUBLIC_ needed in middleware)
-const HUB_URL   = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
-const LOGIN_URL = `${HUB_URL}/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`;
+// Legacy fallback chain (server-side env var, no NEXT_PUBLIC_ needed in
+// middleware) — used only when the incoming request doesn't carry a usable
+// Host. The hub origin is otherwise derived per-request via resolveOrigin()
+// below so a customer accessing the suite via a local-DNS hostname instead of
+// the install-time IP still gets working hub redirects.
+const HUB_URL_FALLBACK = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
 const BACKEND   = 'http://127.0.0.1:3007';
 
 // Explicit, narrow allow-list of Express-backed API routes that must work with
@@ -38,6 +42,8 @@ function appAllowed(apps: unknown, slug: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
+  // NetVault (the hub) always runs on port 3000.
+  const hubUrl = resolveOrigin(req, 3000, HUB_URL_FALLBACK);
 
   // Proxy /api/* to the Express API ourselves — verifying identity here
   // instead of leaving it to a dumb config-level rewrite. The matcher below
@@ -97,14 +103,14 @@ export async function middleware(req: NextRequest) {
   // pre-login SSO handshake page).
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   if (!token) {
-    return NextResponse.redirect(LOGIN_URL);
+    return NextResponse.redirect(`${hubUrl}/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`);
   }
 
   // Per-user app-access enforcement: a valid session whose allowed-apps claim
   // omits ddivault is bounced to the hub launcher with a denied banner. The
   // launcher lives on the hub origin, so this never loops inside DDIVault.
   if (!appAllowed((token as { apps?: unknown }).apps, 'ddivault')) {
-    return NextResponse.redirect(`${HUB_URL}/launcher?denied=ddivault`);
+    return NextResponse.redirect(`${hubUrl}/launcher?denied=ddivault`);
   }
 
   return NextResponse.next();

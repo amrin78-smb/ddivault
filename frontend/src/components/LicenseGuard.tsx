@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { getHubUrl } from '@/lib/hubUrl';
 
 interface LicenseState {
   mode: 'active' | 'trial' | 'grace' | 'disabled' | 'unlicensed' | 'unreachable' | 'unknown';
@@ -89,7 +90,7 @@ export function LicenseBanner() {
     // still allow the "expiring soon" warning for active licenses below
     if (!license || (state.mode === 'active' && license.daysRemaining > 30)) return null;
   }
-  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hubUrl = getHubUrl();
 
   const banners: Record<string, { bg: string; text: string; message: string }> = {
     trial: {
@@ -151,7 +152,7 @@ export function LicenseBanner() {
 
 export function LicenseDisabledScreen() {
   const { state } = useLicense();
-  const hubUrl = process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL || 'http://localhost:3000';
+  const hubUrl = getHubUrl();
   const unlicensed = state.mode === 'unlicensed';
   return (
     <div style={{
