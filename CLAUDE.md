@@ -205,6 +205,17 @@ NEXT_PUBLIC_NOCVAULT_HUB_URL=http://YOUR-SERVER:3000
 
 Do NOT use `NETVAULT_HUB_URL` or `NEXT_PUBLIC_NETVAULT_HUB_URL` — those are the old names and will cause SSO to fail silently by falling back to `localhost:3000`.
 
+**These vars are now the LAST-RESORT fallback only, not the primary source**
+(added 2026-07). Server-side hub-redirect call sites (`frontend/src/middleware.ts`,
+`frontend/src/app/api/sso/route.ts`, `api/server.js`'s license/hub-settings
+routes) call `resolveOrigin(req, 3000, <the env-var fallback chain>)` from
+`frontend/src/lib/publicUrl.ts` instead — it derives the hub's origin from the
+CURRENT request's `x-forwarded-host`/`host` + `x-forwarded-proto` (validated
+against a hostname-shape regex), so hub links keep working when the suite is
+reached via a hostname different from the install-time server IP. Client-side
+call sites use `getHubUrl()` (`frontend/src/lib/hubUrl.ts`, `window.location`-
+derived) instead of reading `NEXT_PUBLIC_NOCVAULT_HUB_URL` directly.
+
 Existing installations must update their `.env.local` manually — this is a one-time rename.
 
 ## Database
@@ -644,6 +655,18 @@ Every new Express API route must be added to `frontend/next.config.js` rewrites 
 ```
 
 Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
+
+**This is why `frontend/src/app/api/sso/route.ts` (a real Next.js Route
+Handler proxying to the hub server-to-server) works here** — `/api/sso` is
+NOT in the rewrites list above, so it's never intercepted; Next.js's own App
+Router handles it directly. **This pattern does NOT transfer to SpanVault**,
+whose `middleware.ts` proxies every `/api/*` call to Express by default
+(opposite default: allow-list here vs. deny-list there) — copying this exact
+file into SpanVault to fix a similar CORS issue shipped broken in 1.71.3
+(request always hit Express's 404 first) and needed a different fix in
+1.71.4 (the proxy logic moved into SpanVault's own Express server instead).
+Before reusing an API-route pattern across suite apps, check each app's own
+`/api/*` routing architecture first.
 
 ---
 
