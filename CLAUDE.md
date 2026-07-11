@@ -76,14 +76,31 @@ work. **NEVER run `npm audit fix --force`.**
 ### File Structure
 ddivault/
 ├── api/
-│   └── server.js              # Express API server (port 3007)
+│   ├── server.js              # Express API server (port 3007)
+│   ├── licenseCheck.js        # getLicense()/getLicenseState() — hub license fetch + cache
+│   ├── emailer.js             # Alert/report email templates + HMAC ack tokens
+│   ├── alertDispatcher.js     # Cooldown + recipient filtering + digest
+│   ├── ouiLookup.js / deviceClassifier.js  # Device fingerprinting
+│   ├── reports.js / reportsScheduling.js   # Report generation + scheduling/saved views
+│   ├── v1.js                  # Public REST API (API-key authenticated), mounted /api/v1
+│   └── middleware/
+│       ├── rbac.js            # Role + site-scope resolution, attachSiteFilter/requireSuperAdmin
+│       ├── audit.js           # auditContext / writeAudit
+│       └── apiAuth.js         # Public API key auth (SHA-256 hash lookup)
 ├── collector/
 │   ├── collector.js           # Background polling service
 │   ├── ipamScanner.js         # IPAM subnet scanner (PS5 compatible)
 │   ├── scanWorker.js          # Child process for non-blocking scans
 │   ├── powershellRunner.js    # WinRM PowerShell execution
 │   ├── dhcpReader.js          # DHCP log reader
-│   └── credStore.js           # AES-256-GCM credential encryption
+│   ├── credStore.js           # AES-256-GCM credential encryption
+│   ├── forecastEngine.js      # Capacity planning (least-squares regression)
+│   ├── anomalyDetector.js     # Behavioral/security + DNS anomaly detection
+│   ├── dnsMonitor.js          # DNS health & intelligence (roles, sync, forwarders, stale records)
+│   ├── haMonitor.js           # DHCP failover / DNS replication monitoring
+│   ├── healthScorer.js        # Per-site health scoring
+│   ├── ipamSync.js            # IPAM↔DHCP reconciliation
+│   └── reportScheduler.js     # Scheduled report delivery (runDueReports/deliverSchedule)
 ├── scripts/
 │   ├── schema.sql             # Main schema (run first)
 │   ├── schema-ipam.sql        # IPAM tables (run second)
@@ -112,13 +129,26 @@ ddivault/
 │   │   │   ├── AuthProvider.tsx   # NextAuth session provider
 │   │   │   ├── ThemeContext.tsx   # Dark/light mode
 │   │   │   ├── Toast.tsx          # Toast notifications
-│   │   │   └── ErrorBoundary.tsx  # Error boundaries per tab
+│   │   │   ├── ErrorBoundary.tsx  # Error boundaries per tab
+│   │   │   ├── LicenseGuard.tsx   # LicenseProvider/useLicense/LicenseBanner/LicenseDisabledScreen
+│   │   │   ├── RBACContext.tsx    # Client-side role/site-scope context
+│   │   │   ├── AuditTab.tsx / ReportsTab.tsx  # Audit trail + Reports consoles
+│   │   │   ├── dashboard/         # Dashboard widgets: CommandBar, PriorityActionCenter,
+│   │   │   │                      # PillarScorecards, InfraRedundancy, ActivityFeed,
+│   │   │   │                      # DnsAnalyticsCard
+│   │   │   └── ipam/              # IPAM widgets: IpamDonut, IpamKpiTiles, IpamTopSubnets,
+│   │   │                          # IpamTrendChart
 │   │   ├── lib/
-│   │   │   └── auth.ts            # NextAuth config + NocVault SSO
-│   │   └── middleware.ts          # Auth redirect to NocVault login
+│   │   │   ├── auth.ts            # NextAuth config + NocVault SSO
+│   │   │   ├── publicUrl.ts       # resolveOrigin() — per-request hub origin (server-side)
+│   │   │   └── hubUrl.ts          # getHubUrl() — window.location-derived hub origin (client-side)
+│   │   └── middleware.ts          # Session gate for all pages + /api/*: verifies NextAuth JWT,
+│   │                              # strips/stamps x-ddi-actor* headers, rewrites to Express
+│   │                              # (127.0.0.1:3007), enforces the per-user app-access claim
 │   ├── public/
 │   │   └── logo.png
-│   ├── next.config.js             # API proxy rewrites to port 3007
+│   ├── next.config.js             # No rewrites — just images config + a comment pointing at
+│   │                              # middleware.ts (see "Adding New API Routes" below)
 │   ├── package.json
 │   └── tsconfig.json
 ├── logs/                          # Created manually on server
@@ -189,7 +219,13 @@ PS_TIMEOUT_MS=30000
 SCOPE_WARNING_PCT=80
 SCOPE_CRITICAL_PCT=90
 RETENTION_DAYS=90
+SERVER_IP=192.168.6.111
 ```
+
+`SERVER_IP` is required by the update-from-UI route in `api/server.js` (used to build the
+`Update-DDIVault.ps1` scheduled-task invocation) — the route returns `400 SERVER_IP not
+configured in .env.local` if it's unset, so it's not optional despite not affecting normal
+app operation.
 
 ### Frontend `.env.local` — copy of root (required at build time)
 ```bash
@@ -262,6 +298,8 @@ GRANT SELECT ON sites, countries TO ddivault_user;
 | `ipam_addresses` | Per-IP scan results |
 | `ipam_scan_jobs` | Scan job history |
 | `ipam_audit` | IPAM change audit trail |
+| `ipam_vlans` | VLAN definitions (`GET/POST /api/ipam/vlans`, `DELETE /api/ipam/vlans/:id`) |
+| `ipam_utilization_history` | Whole-system IPAM utilization snapshots for the trend chart (`GET /api/ipam/utilization-history`) |
 | `alert_events` | Fired alerts |
 | `alert_rules` | Alert thresholds |
 | `app_settings` | Key-value app configuration |
@@ -323,7 +361,10 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - Rules: `GET /api/alert-rule-config`, `PUT /api/alert-rule-config/:type`
 - One-click ack from email: `GET /api/alerts/:id/acknowledge?token=`
 - Forecasts: `GET /api/forecasts/scopes`, `/api/forecasts/scopes/:id`, `/api/forecasts/summary`
-- Anomalies: `GET /api/anomalies`, `/api/anomalies/summary`, `POST /api/anomalies/:id/ack`
+- Anomalies: `GET /api/anomalies`, `/api/anomalies/summary`, `GET /api/anomalies/grouped`
+  (root-cause rollup: groups by `anomaly_type` + entity), `POST /api/anomalies/group/ack`
+  (bulk-ack a whole root cause). The old per-row `POST /api/anomalies/:id/ack` was removed
+  in v1.13.0 in favor of this grouped-rollup pattern.
 - Site health: `GET /api/site-health`, `/api/site-health/:siteId`
 - Audit: `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, `/api/audit/export` (super-admin CSV)
 - API keys: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin)
@@ -370,7 +411,11 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - `GET /api/ipam/supernets/:id/next-subnet?prefix=24` — next available subnet
 - `GET /api/ipam/conflicts` — overlapping subnet detection
 - `POST /api/ipam/import` — bulk import subnets from CSV
-- `GET /api/ipam/vlans` — VLANs
+- `GET/POST /api/ipam/vlans`, `DELETE /api/ipam/vlans/:id` — VLANs
+- `POST /api/ipam/subnets/:id/addresses/:ip/reserve` / `.../release` — reserve/release an IP
+- `POST /api/ipam/scan-all` — trigger a scan of every subnet; `POST /api/ipam/sync-from-dhcp` — reconcile from DHCP
+- `GET /api/ipam/audit` — IPAM change audit trail
+- `GET /api/ipam/utilization-history?days=` — whole-system utilization trend
 
 ### Servers
 - `GET /api/servers` — all known servers
@@ -388,6 +433,12 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 - `POST /api/alerts/:id/acknowledge` — acknowledge alert
 - `GET /api/events` — DHCP events
 - `GET /api/dashboard/stats` — dashboard KPIs
+- `GET /api/dashboard/recent-events`, `/api/dashboard/ip-distribution`, `/api/dashboard/lease-trend`, `/api/dashboard/collector-status`, `/api/dashboard/pillars` — dashboard widget data
+- `GET /api/hub/settings` — server-side proxy to the NocVault hub's `/api/settings` (avoids browser CORS)
+
+This list is not exhaustive (the app has ~120 real routes) — see "New API endpoints" above
+for the newer feature-area routes (SMTP, recipients, forecasts, anomalies, audit, reports,
+API keys, infrastructure, DNS health, public v1 API).
 
 ## Frontend Architecture
 
@@ -396,8 +447,11 @@ Tabs are managed in `page.tsx` with `useState<Tab>`. Tab types:
 `dashboard | scopes | ipam | dns | events | servers | settings`
 
 ### API proxy
-All `/api/*` calls from Next.js are proxied to Express port 3007 via `next.config.js` rewrites.
-`/api/auth/*` and `/api/sso/*` are handled by Next.js natively (NOT proxied).
+All `/api/*` calls from Next.js are proxied to Express port 3007 by `frontend/src/middleware.ts`
+(session-verifying code, NOT `next.config.js` rewrites — that mechanism was removed in
+v1.22.0; see "Adding New API Routes" above for the full mechanism). `/api/auth/*` and
+`/api/sso` are handled by Next.js natively (excluded from the middleware matcher, NOT
+proxied).
 
 ### SSO flow
 1. Unauthenticated user → middleware redirects to `NOCVAULT_HUB_URL/login?callbackUrl=/api/sso/ddivault`
@@ -405,6 +459,25 @@ All `/api/*` calls from Next.js are proxied to Express port 3007 via `next.confi
 3. NocVault redirects to `/api/sso/ddivault` with SSO token
 4. SSO route verifies token server-side → creates NextAuth session
 5. User lands on DDIVault dashboard
+
+### Per-user app-access gate (shipped across 1.21.0/1.22.0/1.22.1)
+The NocVault hub can restrict which suite apps a given user may open. The allowed-apps
+list travels as an `apps: string[]` claim inside the SSO token; `frontend/src/lib/auth.ts`
+reads it (`ssoApps()`, a read-only JWT-payload decode — no signature check needed there
+because the hub's `sso-verify` call already cryptographically validated the token a few
+lines earlier) and persists it onto DDIVault's own NextAuth JWT (`jwt`/`session` callbacks).
+`middleware.ts`'s `appAllowed(apps, 'ddivault')` then enforces it in two places:
+- **Page routes** — a denied user (valid session, `apps` array present and excluding
+  `ddivault`) is redirected to `${hubUrl}/launcher?denied=ddivault` (never loops inside
+  DDIVault).
+- **`/api/*` routes** — the same check runs in the proxy branch; a denied user gets
+  `403 { error: 'forbidden', reason: 'app_access_denied' }` instead of being proxied to
+  Express. This closes a gap fixed in 1.22.1 (`29e9f26`) where the page-nav gate alone
+  left the API reachable directly.
+
+**Fails open by design**: no claim, an empty array, or a malformed token ⇒ default-allow,
+so tokens minted before this feature (or a decode failure) never lock anyone out.
+`netvault` (the hub itself) is always allowed regardless of the claim.
 
 ### Sign out flow
 1. Fetch CSRF token from `/api/auth/csrf`
@@ -583,8 +656,14 @@ Rules:
 
 ## License Enforcement
 DDIVault enforces a NocVault license fetched from `GET {NOCVAULT_HUB_URL}/api/license` (no auth).
-- **Backend** (`api/licenseCheck.js`): `getLicense()` caches for 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). `api/server.js` checks on startup + every 24h, exposes `GET /api/license-status`, and applies `enforceLicense` middleware (registered before all business routes).
-- **Enforcement**: `trial`/`active` ⇒ full access. `active` with ≤30 days ⇒ expiry warning banner. `expired`/`grace` within 30-day grace ⇒ **read-only** (writes return HTTP 402; acknowledge endpoints exempt). Past grace (`daysRemaining ≤ -30`) ⇒ **disabled** (all routes 402 except `/api/health` + `/api/license-status`).
+- **Backend** (`api/licenseCheck.js`): `getLicense()` caches the hub response for **5 minutes** (`CACHE_TTL`, in-memory) — NOT 24h; `getLicenseState()` maps status → `{ mode, canWrite, canRead, disabled }`. Uses global `fetch` + AbortController (10s); **never blocks on network failure** (unreachable ⇒ full access). Separately, `api/server.js` force-refreshes the license on startup and again every 24h (`setInterval(() => getLicense(true)..., 24h)`) purely for the startup/health-check log line — that background refresh interval is independent of, and much less frequent than, the 5-minute in-memory cache TTL that actually governs how quickly a license change takes effect. Exposes `GET /api/license-status` and applies `enforceLicense` middleware (registered before all business routes).
+- **Enforcement**: `trial`/`active` ⇒ full access. `active` with ≤30 days ⇒ expiry warning banner. `expired`/`grace` within 30-day grace ⇒ **read-only** (writes return HTTP 402; acknowledge endpoints exempt). Past grace (`daysRemaining ≤ -30`) ⇒ **disabled** (all routes 402 except `/api/health`, `/api/stats`, `/api/license-status`, `/api/system/update-available`).
+- **Per-app module entitlement**: independent of the trial/expired/grace logic above, an
+  **active** license whose `modules` array is non-empty and omits `ddivault` hard-locks the
+  app (`mode: 'unlicensed'`, `canWrite: false`, `canRead: false`, `disabled: true`) —
+  same disabled-screen treatment as a fully expired license. Fails open: trial licenses,
+  licenses in grace, an unreachable hub, and legacy keys with no `modules` list all keep
+  full access, so no existing install is bricked by this check.
 - **Frontend** (`components/LicenseGuard.tsx`): `LicenseProvider` polls `/api/license-status` every 6h; `useLicense()` hook; `LicenseBanner` (trial/expiring/grace/disabled/unreachable); `LicenseDisabledScreen` full-screen lock. Wired in `layout.tsx`; `page.tsx` shows the disabled screen when `state.disabled`. Frontend reads only `/api/license-status` (never the hub directly — avoids CORS).
 
 ## NocVault Suite Context
@@ -592,7 +671,7 @@ DDIVault is one of several products:
 - **NetVault** — IT Asset Management / CMDB (port 3000)
 - **SpanVault** — Network monitoring
 - **DDIVault** — DNS/DHCP/IPAM (port 3006)
-- **LogVault** — Syslog analyzer (port 3002)
+- **LogVault** — Syslog analyzer (port 3004)
 
 All products share:
 - Same NocVault hub for SSO (`netvault` DB, `users` table)
@@ -646,27 +725,42 @@ grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-
 
 ## Adding New API Routes
 
-### ⚠️ Always add new routes to next.config.js
-Every new Express API route must be added to `frontend/next.config.js` rewrites or the frontend will get a 404.
+### No next.config.js registration needed — middleware.ts owns /api/* routing
+As of v1.22.0 (commit `24e886e`), `frontend/next.config.js` has **no rewrites table**.
+A new Express route needs **zero frontend routing changes** — `frontend/src/middleware.ts`
+proxies every `/api/*` request to Express (`127.0.0.1:3007`) itself, so any route you add
+to `api/server.js` is reachable immediately.
 
-```js
-// frontend/next.config.js
-{ source: '/api/your-new-route/:path*', destination: 'http://127.0.0.1:3007/api/your-new-route/:path*' },
-```
+The reason the old rewrites-table approach was removed: a config-level `rewrites()` entry
+is a dumb URL-level forward with no code-execution point — it can't verify a session or
+strip/stamp identity headers. That gap let a client set `x-ddi-actor-role` itself via a
+bare curl request and bypass every RBAC check. `middleware.ts` now does this instead, for
+every `/api/*` path (matcher excludes `/api/auth/*` and `/api/sso`, which are native
+Next.js route handlers):
+1. Strips any client-supplied `x-ddi-actor`/`x-ddi-actor-role`/`x-ddi-actor-id` headers.
+2. Lets a narrow public allow-list through with no session: `PUBLIC_API` (regex
+   `/^\/api\/(health|stats|license-status|system\/update-available)$/` — kept identical to
+   the `enforceLicense` exemption list in `api/server.js`), `/api/v1/*` (self-authenticates
+   via API key), and `ACK_LINK_API` (`GET /api/alerts/:id/acknowledge?token=` only — the
+   one-click email ack link, guarded server-side by its own HMAC token instead of a
+   session).
+3. Every other `/api/*` route requires a verified NextAuth JWT (`getToken`) — no token ⇒
+   `401`. It also re-checks the per-user app-access claim (see below) ⇒ `403` if denied.
+4. Only then does it stamp `x-ddi-actor`/`x-ddi-actor-role`/`x-ddi-actor-id` from the
+   verified token and rewrite to Express — `api/middleware/rbac.js` trusts those headers
+   verbatim, so they must only ever come from here.
 
-Routes already proxied: health, dashboard, scopes, leases, events, alerts, alert-rules, servers, settings, subnets, dns, dhcp, ipam, sites, search, audit, reports, api-keys, infrastructure, v1, smtp, alert-recipients, alert-rule-config, forecasts, anomalies, site-health, license-status.
+**Practical implication for adding a route:** just add it to `api/server.js` under
+`requireAuth`/`requireWrite`/`requireSuperAdmin` as usual. Only touch `middleware.ts` if
+the new route must be reachable with **no session at all** (add it to `PUBLIC_API`) — do
+that sparingly, matching the existing `enforceLicense` exemption list so the two stay in
+sync.
 
-**This is why `frontend/src/app/api/sso/route.ts` (a real Next.js Route
-Handler proxying to the hub server-to-server) works here** — `/api/sso` is
-NOT in the rewrites list above, so it's never intercepted; Next.js's own App
-Router handles it directly. **This pattern does NOT transfer to SpanVault**,
-whose `middleware.ts` proxies every `/api/*` call to Express by default
-(opposite default: allow-list here vs. deny-list there) — copying this exact
-file into SpanVault to fix a similar CORS issue shipped broken in 1.71.3
-(request always hit Express's 404 first) and needed a different fix in
-1.71.4 (the proxy logic moved into SpanVault's own Express server instead).
-Before reusing an API-route pattern across suite apps, check each app's own
-`/api/*` routing architecture first.
+**Do not reintroduce a `next.config.js` rewrites table** — see the comment at the top of
+that file. This pattern does not necessarily transfer to sibling apps as-is; SpanVault's
+own `/api/*` routing architecture previously defaulted the opposite way (deny-list) and
+needed its own fix — check each app's own routing file before reusing a pattern across the
+suite.
 
 ---
 
