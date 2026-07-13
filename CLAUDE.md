@@ -343,7 +343,17 @@ New columns: `dhcp_leases.{device_type,device_vendor,device_os,risk_level,is_mac
 
 ## Platform & Integration modules
 - **Audit trail** — `api/middleware/audit.js` (`auditContext` attaches per-request user/IP context, `writeAudit` records changes); writes to `audit_log`. Exposed via `GET /api/audit`, `/api/audit/stats`, `/api/audit/:id`, and `/api/audit/export` (super-admin, CSV).
-- **RBAC** — `api/middleware/rbac.js` resolves role (`super_admin`/`admin`/`site_admin`/`viewer`) and site scope from NetVault `user_sites`; `attachSiteFilter`, `requireSuperAdmin` guards.
+- **RBAC** — `api/middleware/rbac.js` resolves role (`super_admin`/`admin`/`site_admin`/`viewer`) and site scope from NetVault `user_sites`; `attachSiteFilter`, `requireAuth`, `requireWrite`, `requireSuperAdmin` guards.
+  - **⚠️ Rule — a site-scope/auth fix is a class fix, not an instance fix.** This
+    codebase has had ~40 routes missing `attachSiteFilter`/`requireAuth`/`requireWrite`
+    found in one pass, only because a full audit was run instead of fixing routes
+    one at a time as each was reported — and the same "fixed the reported one, missed
+    the identical sibling" pattern has bitten other apps in this suite on
+    site-scoping fixes. When you add or fix `attachSiteFilter`/`requireAuth`/
+    `requireWrite`/`requireSuperAdmin` on one route, grep `api/server.js` (and
+    `api/v1.js`) for every other route on the same resource (same table/entity,
+    same URL prefix) and confirm they ALL carry the equivalent guard. Do not assume
+    fixing the reported instance closes the whole class of bug.
 - **Public REST API (v1)** — `api/v1.js` mounted at `/api/v1`, authenticated by API keys via `api/middleware/apiAuth.js` (SHA-256 hash lookup in `api_keys`, `read`/`write` permission gates, rate-limit headers, allowed-IP check, `request_count`/`last_used_at` tracking). Key management: `GET/POST /api/api-keys`, `DELETE /api/api-keys/:id` (super-admin).
 - **Reports** — `api/reports.js` mounted at `/api/reports`; generates PDF (via `pdfkit`) and CSV reports for IPAM/DHCP/DNS/audit. `GET /api/reports` lists types; `GET /api/reports/:type`. Trend reports include SVG charts drawn into the PDF; `renderPdf` is split into `buildPdfDoc`/`renderPdfToBuffer` so the renderer is reusable off-request. Exports `generateReport(db,opts)` and `generatePack(db,opts)` (multi-report "compliance pack" PDF) for the scheduler and the pack route.
 - **Report scheduling / saved views / history** — `api/reportsScheduling.js` (`createReportsSchedulingRouter`, mounted at `/api/reports` BEFORE the main reports router so `/saved`, `/schedules`, `/history`, `/pack` win over the catch-all `/:type`). Saved views + run history are open to any authenticated user (`requireAuth`/`requireWrite`); schedule create/edit/delete/run-now are `requireSuperAdmin`. Rolling date windows (`24h`/`7d`/`30d`/`90d`) persist as `range_preset` (re-resolved each run via `expandRangePreset` at the generation boundary), NOT frozen `from`/`to`. Delivery runs on the collector — see `collector/reportScheduler.js` (`runDueReports`/`deliverSchedule`/`computeNextRun`), wired into `collector.js` on a 5-min `setInterval` (re-entrancy-guarded); it generates via `generateReport` and emails via `emailer.sendReport` (attachments). **No new NSSM service or OS scheduled task** — piggybacks the existing `DDIVault-Collector`. New tables live in `scripts/schema.sql` so neither installer needs a schema edit; only `../netvault/installer/Test-NocVault-Suite.ps1` was updated (role-scoped SELECT check for the 4 new tables + version min).
@@ -478,6 +488,15 @@ lines earlier) and persists it onto DDIVault's own NextAuth JWT (`jwt`/`session`
 **Fails open by design**: no claim, an empty array, or a malformed token ⇒ default-allow,
 so tokens minted before this feature (or a decode failure) never lock anyone out.
 `netvault` (the hub itself) is always allowed regardless of the claim.
+
+**⚠️ Rule for any future access-control gate:** this feature originally shipped in 1.21.0
+with only the page-nav redirect wired up — a denied user's still-valid session could hit
+`/api/*` directly and get full data, since only the page branch of `middleware.ts` called
+`appAllowed()`. Fixed in 1.22.1 (`29e9f26`) by adding the same check to the proxy branch.
+Any new access-control gate (a new claim, a new role check, a new per-feature entitlement)
+must be verified against BOTH paths that share the same session — the page-rendering
+branch AND the `/api/*` proxy branch in `middleware.ts` — not just the one the feature
+request describes. A gate that only blocks the UI is not a security control.
 
 ### Sign out flow
 1. Fetch CSRF token from `/api/auth/csrf`
@@ -762,6 +781,41 @@ own `/api/*` routing architecture previously defaulted the opposite way (deny-li
 needed its own fix — check each app's own routing file before reusing a pattern across the
 suite.
 
+### ⚠️ Checklist — new route that must work with NO session at all
+
+SpanVault shipped an SSO-verify proxy route that needed exactly this, and it took **three
+separate broken releases** to land — each fix only exposed the next gate, because a
+middleware allowlist, a global RBAC write-gate, and a license-enforcement exemption list
+all had to be updated independently before the route actually worked end-to-end. DDIVault
+has the same layered shape, so any new route that must respond with **no NextAuth session**
+(a webhook, a health/status probe, a token-guarded one-click link, etc.) needs ALL of the
+following in the same change — missing one won't fail loudly, it'll just 401/402 in
+whichever gate you forgot:
+
+1. **`frontend/src/middleware.ts`** — the request never reaches Express unless it's let
+   through here first. Add the path to the `PUBLIC_API` regex (currently
+   `/^\/api\/(health|stats|license-status|system\/update-available)$/`) if it should work
+   with literally no session; match the `ACK_LINK_API` pattern
+   (`/^\/api\/alerts\/[^/]+\/acknowledge$/`, scoped to `GET` + a `token` query param) if it's
+   a token-guarded link instead of a session; or put it under the `/api/v1/` prefix if it
+   should self-authenticate via API key (`api/middleware/apiAuth.js`).
+2. **`api/server.js`'s `enforceLicense`** — this app has no single named exemption array;
+   it's two separate inline `req.path.startsWith(...)` checks. The **fully-disabled block**
+   (guards `/api/health`, `/api/stats`, `/api/license-status`,
+   `/api/system/update-available`) must list the new path too, or an expired-past-grace
+   license 402s it even though `middleware.ts` let it through. The **write-block isAck
+   check** (`req.path` starts with `/api/alerts` or `/api/anomalies` AND contains
+   `acknowledge`/`/ack`) only matters if the new route is a write that must succeed during
+   the read-only grace period.
+3. **The route handler itself, in `api/server.js`** — must NOT be wrapped in
+   `requireAuth`/`requireWrite`/`requireSuperAdmin` (`api/middleware/rbac.js`). A request that
+   came through the `PUBLIC_API`/`ACK_LINK_API` allowlist never gets `x-ddi-actor*` headers
+   stamped (see `middleware.ts` step 4 above), so `getRequestUser()` returns `null` and any
+   RBAC guard 401s it regardless of what steps 1-2 allowed.
+
+Verify all three by hitting the route with `curl` and no cookies/session — not just reading
+the middleware allowlist and assuming it's done.
+
 ---
 
 ## Code Editing Rules
@@ -850,6 +904,11 @@ Examples of what counts as each type:
 Rules:
 - ALWAYS bump version as part of the same commit as the changes
 - NEVER skip the version bump
+- **Exception — documentation-only changes.** A commit that touches ONLY `CLAUDE.md` (or
+  adds/edits code comments with no logic change) does NOT require a version bump — it has
+  zero runtime/user-facing effect, and bumping would misleadingly imply a functional change
+  shipped. Anything else — any change to actual runtime behavior, however small (a copy
+  string, a default value, a log message users see) — still requires one.
 - Run npm version BEFORE npm run build
 - The app reads version from package.json via /api/health
 - NocVault suite itself has no version number — only the 4 apps
