@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.5': [
+    'Security: removed a weak hardcoded fallback secret used to derive the encryption key for stored DHCP/DNS server admin passwords and the SMTP password — the collector now refuses to start if neither NEXTAUTH_SECRET nor DDI_CRED_SECRET is set, instead of silently encrypting credentials with a guessable literal.',
+  ],
   '1.22.4': [
     'Hardened the in-app "Update" button: it now registers this repo as a git safe.directory for the SYSTEM account it runs under (Git refuses to operate in a repo it doesn\'t consider "owned" by the current account, which SYSTEM never is on an existing install) and writes a full transcript of the update run to installer\\logs\\ — previously a failed in-app-triggered update left no record of what happened, since that button runs fully in the background with no live output.',
   ],
