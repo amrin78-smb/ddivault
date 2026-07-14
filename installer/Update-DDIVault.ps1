@@ -50,6 +50,21 @@ $FrontendDir = "$AppDir\frontend"
 $LogDir      = "$AppDir\logs"
 $Services    = @("DDIVault-API", "DDIVault-App", "DDIVault-Collector")
 
+# The in-app updater (Settings -> Updates) is fire-and-forget: it schedules this
+# script as a SYSTEM task (see api/server.js) and immediately returns { started:
+# true } to the browser, with no live output stream. Without a transcript, a run
+# triggered that way leaves NO durable record of what happened - every Write-Host/
+# Write-Step/Write-Warn line below is otherwise lost the moment the scheduled
+# task's process exits, which is exactly the case that most needs diagnosing.
+# Start it as early as possible (before the Administrator/pre-flight checks below)
+# so even an early failure is captured. Best-effort: a transcript that fails to
+# start must never block the actual update.
+try {
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    $transcriptPath = Join-Path $LogDir "update-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    Start-Transcript -Path $transcriptPath -Append | Out-Null
+} catch { Write-Warning "Could not start transcript: $($_.Exception.Message)" }
+
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "    [!!] $msg" -ForegroundColor Yellow }
@@ -139,6 +154,15 @@ if (Test-Path $frontendEnvPath) {
 # STEP 3 - Pull latest
 Write-Step "Pulling latest from GitHub..."
 Set-Location $AppDir
+
+# SYSTEM has never run git in this repo before (only whichever interactive account
+# originally cloned it has), and Git >= 2.35.2 (the CVE-2022-24765 fix) refuses to
+# operate in a repo it doesn't consider "owned" by the current account, failing with
+# "fatal: detected dubious ownership in repository at '...'". Without this, an
+# in-app-triggered update could silently keep redeploying the OLD checkout while
+# still reporting success below. Best-effort: never block the update on this.
+try { $null = git config --global --add safe.directory $AppDir 2>&1 } catch {}
+
 $null = git fetch origin --quiet 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; exit 1 }
 
@@ -353,3 +377,7 @@ if ($allOk) {
     Write-Host "  DDIVault update completed with warnings - check above" -ForegroundColor Yellow
 }
 Write-Host ""
+
+# Best-effort - if Start-Transcript never succeeded (see top of script), this
+# throws harmlessly and is swallowed.
+try { Stop-Transcript | Out-Null } catch {}
