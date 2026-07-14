@@ -10,7 +10,18 @@ const APP_URL =
   process.env.DDI_APP_URL ||
   ('http://localhost:' + (process.env.DDI_APP_PORT || '3006'));
 
-const SECRET = process.env.NEXTAUTH_SECRET || 'ddivault';
+// NEXTAUTH_SECRET signs the alert-acknowledgment HMAC tokens (see ackToken/
+// verifyAckToken below) used by the one legitimate unauthenticated-by-design
+// endpoint in this app (GET /api/alerts/:id/acknowledge). There is no safe
+// fallback for a security-relevant secret — fail loud and immediate at
+// startup rather than silently signing tokens with a guessable literal.
+if (!process.env.NEXTAUTH_SECRET) {
+  throw new Error(
+    'NEXTAUTH_SECRET is not set. It is required to sign alert-acknowledgment ' +
+    'email tokens (api/emailer.js). Refusing to start with a weak fallback secret.'
+  );
+}
+const SECRET = process.env.NEXTAUTH_SECRET;
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let _smtpCache = null; // { config, ts }
@@ -87,7 +98,12 @@ function ackToken(alertId) {
 }
 
 function verifyAckToken(alertId, token) {
-  return ackToken(alertId) === token;
+  const expected = Buffer.from(ackToken(alertId));
+  const provided = Buffer.from(String(token || ''));
+  // Lengths must match before timingSafeEqual — it throws on a length
+  // mismatch rather than returning false, so guard first.
+  if (expected.length !== provided.length) return false;
+  return crypto.timingSafeEqual(expected, provided);
 }
 
 // ---------------------------------------------------------------------------

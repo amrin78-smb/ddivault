@@ -67,7 +67,7 @@ export const authOptions: NextAuthOptions = {
               id:    String(data.userId || data.email),
               name:  data.name  || data.email,
               email: data.email,
-              role:  data.role  || 'user',
+              role:  data.role  || 'viewer',
               apps:  ssoApps(credentials.token),
             };
           } catch (err) {

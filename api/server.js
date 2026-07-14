@@ -29,6 +29,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.3': [
+    'Security: removed a weak hardcoded fallback secret for alert-acknowledgment email tokens — the app now refuses to start if NEXTAUTH_SECRET is unset, instead of silently signing tokens with a guessable literal.',
+    'Security: alert-acknowledgment token verification now uses a constant-time comparison instead of a plain string equality check.',
+    'Fixed: an SSO login without a role claim fell back to a non-existent "user" role (ranking below viewer), which could lock an otherwise-valid session out of every auth-gated route. It now falls back to "viewer", matching the other NocVault suite apps.',
+  ],
   '1.22.2': [
     'Fixed: links back to the NocVault hub (sign-out, home button, license page, session-expiry redirect) always pointed at the server\'s original install-time IP address, regardless of what hostname you actually used to reach DDIVault. Every hub link now follows your current hostname instead.',
   ],
