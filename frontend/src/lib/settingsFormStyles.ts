@@ -34,10 +34,11 @@ export const LABEL: React.CSSProperties = {
 };
 
 // Short value: port number, percentage, day count, cooldown minutes, a
-// short dropdown (severity, site), a date field.
+// bare-word dropdown (e.g. AlertRules' severity select), a date field.
 export const INPUT_SM: React.CSSProperties = { ...INPUT, maxWidth: 140 };
 
-// Medium value: an IP allowlist (short CSV).
+// Medium value: an IP allowlist (short CSV), or a dropdown whose option text
+// runs longer (e.g. AlertRecipients' site/severity selects).
 export const INPUT_MD: React.CSSProperties = { ...INPUT, maxWidth: 220 };
 
 // ────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey } from '@/components/ui';
-import { INPUT, INPUT_SM } from '@/lib/settingsFormStyles';
+import { INPUT_SM } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
