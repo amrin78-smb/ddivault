@@ -5,7 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, Spinner, useRefreshKey } from '@/components/ui';
-import { INPUT, LABEL, INPUT_SM } from '@/lib/settingsFormStyles';
+import { INPUT, LABEL, INPUT_SM, FORM_ROW, FIELD_GROW, FIELD_FIXED } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -184,13 +184,13 @@ export default function SmtpSettings() {
         ) : (
           <>
             <div style={SECTION_HEADER}>Server</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div>
+            <div style={{ ...FORM_ROW, gap: 12, marginBottom: 16 }}>
+              <div style={FIELD_GROW}>
                 <label style={LABEL}>SMTP Host *</label>
                 <input value={form.host} onChange={e => set('host', e.target.value)}
                   style={{ ...INPUT, width: '100%' }} placeholder="smtp.office365.com" disabled={!canWrite} />
               </div>
-              <div>
+              <div style={FIELD_FIXED}>
                 <label style={LABEL}>Port</label>
                 <input type="number" value={form.port}
                   onChange={e => set('port', e.target.value === '' ? 0 : Number(e.target.value))}

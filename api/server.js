@@ -29,6 +29,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.7': [
+    'Follow-up to 1.22.6: capping a short-value field\'s width (SMTP port, alert-recipient site/severity) wasn\'t enough on its own when the field still sat inside a full-width CSS Grid column — the narrower input just left a dead gap of empty space rather than actually compacting the row. The SMTP host/port row and the Add Recipient site/severity row now use a flex-wrap layout instead of a fixed grid, so short fields size to their content and long fields fill the remaining space, closing the gap.',
+    'Audited the other fields fixed in 1.22.6 (Scope Warning/Critical Threshold, Retention Period, Alert Rule threshold/cooldown/severity, API Key expires/IP allowlist) — none of them share a row with another field (each is already alone on its own line, or laid out in an auto-sizing HTML table), so they did not have this gap bug and were left unchanged.',
+  ],
   '1.22.6': [
     'Fixed a duplicated-CSS bug on the Settings page: three files (SMTP, Alert Recipients, Alert Rules) each hand-copied their own local input/label style instead of using the shared `.input` class, and had drifted from it (wrong padding, wrong background, wrong font size) — every field in those three sections now renders identically to the rest of the app.',
     'Fixed short-value fields (SMTP port, scope warning/critical thresholds, retention period, alert rule threshold/cooldown/severity, API key expiry date/IP allowlist, recipient site/severity dropdowns) stretching across the full width of their grid cell or modal — they now size to a sensible max width like every other short field in the suite.',

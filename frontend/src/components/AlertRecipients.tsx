@@ -5,7 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey, useEscape } from '@/components/ui';
-import { INPUT, LABEL, INPUT_MD } from '@/lib/settingsFormStyles';
+import { INPUT, LABEL, INPUT_MD, FORM_ROW, FIELD_GROW, FIELD_FIXED, FIELD_FULL } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -104,16 +104,16 @@ function RecipientModal({ sites, onClose, onDone }: {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
+        <div style={{ ...FORM_ROW, gap: 12 }}>
+          <div style={FIELD_GROW}>
             <label style={LABEL}>Name</label>
             <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={{ ...INPUT, width: '100%' }} placeholder="Network Team" />
           </div>
-          <div>
+          <div style={FIELD_GROW}>
             <label style={LABEL}>Email *</label>
             <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={{ ...INPUT, width: '100%' }} placeholder="team@company.com" />
           </div>
-          <div>
+          <div style={FIELD_FIXED}>
             <label style={LABEL}>Site</label>
             <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))} style={INPUT_MD}>
               <option value="">All Sites</option>
@@ -124,13 +124,13 @@ function RecipientModal({ sites, onClose, onDone }: {
               ))}
             </select>
           </div>
-          <div>
+          <div style={FIELD_FIXED}>
             <label style={LABEL}>Severity</label>
             <select value={form.role_filter} onChange={e => setForm(p => ({ ...p, role_filter: e.target.value }))} style={INPUT_MD}>
               {SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
-          <div style={{ gridColumn: '1 / -1' }}>
+          <div style={FIELD_FULL}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
               <input type="checkbox" checked={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} />
               Active
