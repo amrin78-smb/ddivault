@@ -29,6 +29,7 @@ import InfraRedundancy from '@/components/dashboard/InfraRedundancy';
 import DnsAnalyticsCard from '@/components/dashboard/DnsAnalyticsCard';
 import ActivityFeed from '@/components/dashboard/ActivityFeed';
 import { ApiKeysSection } from '@/components/ApiKeysSection';
+import { INPUT_SM } from '@/lib/settingsFormStyles';
 import {
   PageHeader, EmptyState, UtilBar, Trend, TableSkeleton, Skeleton, pctColor,
 } from '@/components/ui';
@@ -1373,15 +1374,15 @@ function SystemUpdates() {
 // ════════════════════════════════════════════════════════════
 // TAB: SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingField({ label, value, settingKey, placeholder, helpText, type, onSave }: {
-  label: string; value: string; settingKey: string; placeholder?: string; helpText?: string; type?: string;
+function SettingField({ label, value, settingKey, placeholder, helpText, type, short, onSave }: {
+  label: string; value: string; settingKey: string; placeholder?: string; helpText?: string; type?: string; short?: boolean;
   onSave: (key: string, value: string) => void;
 }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <label style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>{label}</label>
       <input
-        className="input" style={{ width: '100%' }} type={type} defaultValue={value} placeholder={placeholder}
+        className="input" style={short ? INPUT_SM : { width: '100%' }} type={type} defaultValue={value} placeholder={placeholder}
         onBlur={e => { if (e.target.value !== value) onSave(settingKey, e.target.value); }}
       />
       {helpText && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 4 }}>{helpText}</div>}
@@ -1536,12 +1537,12 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
             <div style={{ ...CARD, padding: 20 }}>
               <div style={sectionTitle}>IPAM Scan Settings</div>
               <SettingField label="DNS Server for Scans" value={settings.scan_dns_server || ''} settingKey="scan_dns_server" placeholder="e.g. 192.168.1.10 (leave blank for system default)" helpText="Used for PTR / reverse DNS lookups during IPAM subnet scans." onSave={save} />
-              <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" onSave={save} />
-              <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" onSave={save} />
+              <SettingField label="Scope Warning Threshold (%)" value={settings.scope_warning_pct || '80'} settingKey="scope_warning_pct" type="number" short onSave={save} />
+              <SettingField label="Scope Critical Threshold (%)" value={settings.scope_critical_pct || '90'} settingKey="scope_critical_pct" type="number" short onSave={save} />
             </div>
             <div style={{ ...CARD, padding: 20 }}>
               <div style={sectionTitle}>Data Retention</div>
-              <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." onSave={save} />
+              <SettingField label="Retention Period (days)" value={settings.retention_days || ''} settingKey="retention_days" placeholder="90" helpText="DHCP events and scan history older than this are cleaned up automatically." short onSave={save} />
             </div>
           </div>
         )}

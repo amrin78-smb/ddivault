@@ -5,6 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, Spinner, useRefreshKey } from '@/components/ui';
+import { INPUT, LABEL, INPUT_SM } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -38,14 +39,6 @@ async function api(path: string, opts?: RequestInit) {
 // ════════════════════════════════════════════════════════════
 // Shared style tokens
 // ════════════════════════════════════════════════════════════
-const INPUT: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
-};
-const LABEL: React.CSSProperties = {
-  fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
-};
 const SECTION_HEADER: React.CSSProperties = {
   fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-muted)',
   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12,
@@ -195,13 +188,13 @@ export default function SmtpSettings() {
               <div>
                 <label style={LABEL}>SMTP Host *</label>
                 <input value={form.host} onChange={e => set('host', e.target.value)}
-                  style={INPUT} placeholder="smtp.office365.com" disabled={!canWrite} />
+                  style={{ ...INPUT, width: '100%' }} placeholder="smtp.office365.com" disabled={!canWrite} />
               </div>
               <div>
                 <label style={LABEL}>Port</label>
                 <input type="number" value={form.port}
                   onChange={e => set('port', e.target.value === '' ? 0 : Number(e.target.value))}
-                  style={INPUT} placeholder="587" disabled={!canWrite} />
+                  style={INPUT_SM} placeholder="587" disabled={!canWrite} />
               </div>
             </div>
 
@@ -217,7 +210,7 @@ export default function SmtpSettings() {
               <div>
                 <label style={LABEL}>Username</label>
                 <input value={form.username} onChange={e => set('username', e.target.value)}
-                  style={INPUT} placeholder="alerts@company.com" disabled={!canWrite} />
+                  style={{ ...INPUT, width: '100%' }} placeholder="alerts@company.com" disabled={!canWrite} />
               </div>
               <div>
                 <label style={LABEL}>Password {passwordSet && !passwordTouched ? '(leave unchanged to keep current)' : ''}</label>
@@ -229,7 +222,7 @@ export default function SmtpSettings() {
                     onFocus={() => {
                       if (passwordSet && !passwordTouched) { setPasswordTouched(true); set('password', ''); }
                     }}
-                    style={{ ...INPUT, paddingRight: 56 }}
+                    style={{ ...INPUT, width: '100%', paddingRight: 56 }}
                     placeholder={passwordSet ? PASSWORD_PLACEHOLDER : 'Enter password'}
                     disabled={!canWrite}
                   />
@@ -246,12 +239,12 @@ export default function SmtpSettings() {
               <div>
                 <label style={LABEL}>From Email</label>
                 <input value={form.from_email} onChange={e => set('from_email', e.target.value)}
-                  style={INPUT} placeholder="ddivault@company.com" disabled={!canWrite} />
+                  style={{ ...INPUT, width: '100%' }} placeholder="ddivault@company.com" disabled={!canWrite} />
               </div>
               <div>
                 <label style={LABEL}>From Name</label>
                 <input value={form.from_name} onChange={e => set('from_name', e.target.value)}
-                  style={INPUT} placeholder="DDIVault Alerts" disabled={!canWrite} />
+                  style={{ ...INPUT, width: '100%' }} placeholder="DDIVault Alerts" disabled={!canWrite} />
               </div>
             </div>
 
@@ -276,7 +269,7 @@ export default function SmtpSettings() {
               <div style={{ flex: 1 }}>
                 <label style={LABEL}>Recipient</label>
                 <input type="email" value={testTo} onChange={e => setTestTo(e.target.value)}
-                  style={INPUT} placeholder="you@company.com" disabled={!canWrite} />
+                  style={{ ...INPUT, width: '100%' }} placeholder="you@company.com" disabled={!canWrite} />
               </div>
               <button className="btn btn-navy" onClick={sendTest} disabled={busy || !canWrite} style={{ opacity: (busy || !canWrite) ? 0.7 : 1 }}>
                 {testing ? <><Spinner size={13} color="#fff" /> Sending…</> : 'Send Test Email'}

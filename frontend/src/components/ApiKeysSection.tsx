@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useEscape } from '@/components/ui';
+import { INPUT_SM, INPUT_MD } from '@/lib/settingsFormStyles';
 
 const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
@@ -75,11 +76,11 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
         </div>
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>IP Allowlist <span style={MUTED}>(comma-separated, optional)</span></label>
-          <input className="input" style={{ width: '100%' }} value={allowedIps} onChange={e => setAllowedIps(e.target.value)} placeholder="e.g. 10.0.0.5, 10.0.0.6" />
+          <input className="input" style={INPUT_MD} value={allowedIps} onChange={e => setAllowedIps(e.target.value)} placeholder="e.g. 10.0.0.5, 10.0.0.6" />
         </div>
         <div style={{ marginBottom: 20 }}>
           <label style={labelStyle}>Expires <span style={MUTED}>(optional)</span></label>
-          <input className="input" type="date" style={{ width: '100%' }} value={expiresAt} onChange={e => setExpiresAt(e.target.value)} />
+          <input className="input" type="date" style={INPUT_SM} value={expiresAt} onChange={e => setExpiresAt(e.target.value)} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button className="btn" onClick={onClose}>Cancel</button>

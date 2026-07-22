@@ -5,6 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey, useEscape } from '@/components/ui';
+import { INPUT, LABEL, INPUT_MD } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -32,14 +33,6 @@ async function api(path: string, opts?: RequestInit) {
 // ════════════════════════════════════════════════════════════
 // Shared style tokens
 // ════════════════════════════════════════════════════════════
-const INPUT: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
-};
-const LABEL: React.CSSProperties = {
-  fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 500,
-};
 const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 'var(--text-base)', color: 'var(--text-primary)' };
 
 // Severity mapping (role_filter value → friendly label)
@@ -114,15 +107,15 @@ function RecipientModal({ sites, onClose, onDone }: {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={LABEL}>Name</label>
-            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={INPUT} placeholder="Network Team" />
+            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={{ ...INPUT, width: '100%' }} placeholder="Network Team" />
           </div>
           <div>
             <label style={LABEL}>Email *</label>
-            <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={INPUT} placeholder="team@company.com" />
+            <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={{ ...INPUT, width: '100%' }} placeholder="team@company.com" />
           </div>
           <div>
             <label style={LABEL}>Site</label>
-            <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))} style={INPUT}>
+            <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))} style={INPUT_MD}>
               <option value="">All Sites</option>
               {sites.map(s => (
                 <option key={s.id} value={String(s.id)}>
@@ -133,7 +126,7 @@ function RecipientModal({ sites, onClose, onDone }: {
           </div>
           <div>
             <label style={LABEL}>Severity</label>
-            <select value={form.role_filter} onChange={e => setForm(p => ({ ...p, role_filter: e.target.value }))} style={INPUT}>
+            <select value={form.role_filter} onChange={e => setForm(p => ({ ...p, role_filter: e.target.value }))} style={INPUT_MD}>
               {SEVERITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>

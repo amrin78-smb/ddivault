@@ -29,6 +29,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.6': [
+    'Fixed a duplicated-CSS bug on the Settings page: three files (SMTP, Alert Recipients, Alert Rules) each hand-copied their own local input/label style instead of using the shared `.input` class, and had drifted from it (wrong padding, wrong background, wrong font size) — every field in those three sections now renders identically to the rest of the app.',
+    'Fixed short-value fields (SMTP port, scope warning/critical thresholds, retention period, alert rule threshold/cooldown/severity, API key expiry date/IP allowlist, recipient site/severity dropdowns) stretching across the full width of their grid cell or modal — they now size to a sensible max width like every other short field in the suite.',
+  ],
   '1.22.5': [
     'Security: removed a weak hardcoded fallback secret used to derive the encryption key for stored DHCP/DNS server admin passwords and the SMTP password — the collector now refuses to start if neither NEXTAUTH_SECRET nor DDI_CRED_SECRET is set, instead of silently encrypting credentials with a guessable literal.',
   ],

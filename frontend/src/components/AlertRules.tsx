@@ -5,6 +5,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey } from '@/components/ui';
+import { INPUT, INPUT_SM } from '@/lib/settingsFormStyles';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -31,11 +32,6 @@ async function api(path: string, opts?: RequestInit) {
 // ════════════════════════════════════════════════════════════
 // Shared style tokens
 // ════════════════════════════════════════════════════════════
-const INPUT: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
-  color: 'var(--text-primary)', fontSize: 'var(--text-md)', fontFamily: 'inherit', outline: 'none',
-};
 const TD: React.CSSProperties = { padding: '9px 14px', fontSize: 'var(--text-base)', color: 'var(--text-primary)', verticalAlign: 'middle' };
 
 // Friendly name + description per known rule_type
@@ -195,7 +191,7 @@ export default function AlertRules() {
                           value={r.threshold_value}
                           disabled={!canWrite}
                           onChange={e => update(r.rule_type, { threshold_value: e.target.value === '' ? null : Number(e.target.value) })}
-                          style={{ ...INPUT, width: 80 }}
+                          style={INPUT_SM}
                         />
                         {r.threshold_unit && <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{r.threshold_unit}</span>}
                       </div>
@@ -210,7 +206,7 @@ export default function AlertRules() {
                         value={r.severity}
                         disabled={!canWrite}
                         onChange={e => update(r.rule_type, { severity: e.target.value })}
-                        style={INPUT}
+                        style={INPUT_SM}
                         aria-label="Severity"
                       >
                         {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
@@ -223,7 +219,7 @@ export default function AlertRules() {
                       value={r.cooldown_mins}
                       disabled={!canWrite}
                       onChange={e => update(r.rule_type, { cooldown_mins: e.target.value === '' ? 0 : Number(e.target.value) })}
-                      style={{ ...INPUT, width: 80 }}
+                      style={INPUT_SM}
                     />
                   </td>
                   <td style={TD}>
