@@ -29,6 +29,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.13': [
+    'Security: closed the actual gap today\'s app_settings/api_keys fix left open — the cross-app diagnostic/dashboard read role could still read the encrypted DHCP/DNS server admin password and the encrypted SMTP password in full (the previous fix\'s own code comment claiming these were already safe was incorrect: not creating a filtered view does nothing to revoke a table\'s existing blanket read grant). Both are now excluded for that role; the servers table exposes every other diagnostic field via a column-level grant, and SMTP config exposes everything except the password via a new filtered view.',
+    'Fixed a gap in yesterday\'s app-settings allowlist: the retention-period and scan-DNS-server settings were left out even though they were already confirmed non-secret, so the diagnostic read role couldn\'t see them.',
+    'Hardened the update script (and the shared suite installer) so a broken database migration now aborts the update loudly instead of silently "succeeding" and leaving the app running against a half-migrated database.',
+  ],
   '1.22.12': [
     'Settings > Integrations: the NocVault Hub panel no longer stretches to the full page width around its 3 lines of text. API Keys keeps its full width since it holds a wide table once keys exist. Same panel-width fix already shipped in LogVault, NetVault, and SpanVault.',
   ],

@@ -58,7 +58,7 @@ only within the same file are omitted, except where noted.
 (c) Spinner  size, color
 (c) useRefreshKey(cb) / useEscape(cb) — hooks exported from ui.tsx, not components (listed for completeness, not counted in component total)
 
-### DHCPTab.tsx (1553 lines — skimmed structurally)
+### DHCPTab.tsx (1546 lines — skimmed structurally)
 (c) DHCPTab  focusScope — default export (sole export)
 Internal module-scope (not exported, never nested): `ReserveModal`, `CreateScopeModal`, `EditScopeModal`, `ScopeDetail`, `ScopeRow`, plus plain helper functions (`isIp`, `optionValueToString`, `formatDuration`, `ipFromRange`, `pctNum`, `isEmptyScope`, `stateBadge`, `fmtDate`, `deviceIcon`, `forecastColor`). All defined at column 0 (module top level) — none nested inside DHCPTab's function body.
 

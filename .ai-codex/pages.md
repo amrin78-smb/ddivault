@@ -9,7 +9,7 @@ Do not go looking for `/app/dashboard/page.tsx` etc — they don't exist.
 [client] / — page.tsx (RootLayout wraps it) — single-page app shell; renders
   `<Tab>` content via internal `useState<Tab>` switch, NOT nested routes.
   `type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'infra' | 'reports' | 'audit' | 'settings'`
-  (1822 lines). Composes: Header, ErrorBoundary, Toast, RBACContext,
+  (1842 lines). Composes: Header, ErrorBoundary, Toast, RBACContext,
   LicenseGuard (useLicense/LicenseDisabledScreen/LicenseBanner), UpdateNotifier,
   IPAMTab, DHCPTab, DNSTab, ServersTab, AuditTab, ReportsTab, InfraHealthTab,
   SmtpSettings, AlertRecipients, AlertRules, CapacityForecast, SiteHealth,

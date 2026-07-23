@@ -741,13 +741,21 @@ $$;
 -- added below, so a future secret can never leak by omission. Placed AFTER
 -- the blanket grant block — order matters, the LAST statement touching a
 -- privilege wins (see LogVault/SpanVault CLAUDE.md for the incident that
--- made this ordering rule explicit). smtp_config.password is already AES-
--- 256-GCM encrypted at rest (credStore.js) and is NOT granted to either role
--- at all (no *_public view for it) — ciphertext-with-no-read-access is safer
--- than any filtered view of it.
+-- made this ordering rule explicit).
+--
+-- CORRECTION (2026-07-23): the ORIGINAL version of this comment claimed
+-- smtp_config.password and ddi_servers.ps_password were already safe because
+-- "no *_public view exists for them, so they're not granted to either role at
+-- all". That reasoning was WRONG — not creating a view does nothing to
+-- revoke a table's PRE-EXISTING blanket `GRANT SELECT ON ALL TABLES` from the
+-- block above. Both columns were live-verified STILL fully SELECT-able by
+-- claude_readonly on 2026-07-23 despite that comment. Fixed below with an
+-- explicit REVOKE on each table (column-level GRANT for ddi_servers, a
+-- filtered view for smtp_config) — see that section for detail.
 CREATE OR REPLACE VIEW app_settings_public AS
 SELECT key, value, updated_at FROM app_settings
-WHERE key IN ('app_name', 'app_subtitle', 'company_name', 'theme');
+WHERE key IN ('app_name', 'app_subtitle', 'company_name', 'theme',
+              'retention_days', 'scan_dns_server');
 
 CREATE OR REPLACE VIEW api_keys_public AS
 SELECT id, key_prefix, name, description, created_by, created_at,
@@ -763,6 +771,65 @@ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
     REVOKE SELECT ON app_settings, api_keys FROM claude_readonly;
     GRANT SELECT ON app_settings_public, api_keys_public TO claude_readonly;
+  END IF;
+END
+$$;
+
+-- ── ddi_servers: exclude WinRM/PowerShell credential columns (2026-07-23) ──
+-- ps_username/ps_password (schema-server-auth.sql) are the per-server WinRM
+-- credential, ps_password AES-256-GCM encrypted via collector/credStore.js.
+-- The blanket grant above still gave nocvault_readonly/claude_readonly full
+-- table-level SELECT on ddi_servers, INCLUDING both columns — live-verified
+-- readable by claude_readonly on 2026-07-23 (this is the gap the previous
+-- pass's comment incorrectly claimed didn't exist). Unlike app_settings,
+-- ddi_servers has no secret/non-secret mix packed into one generic column,
+-- so a plain column-level GRANT (excluding only ps_username/ps_password) is
+-- sufficient here — no separate view needed. Column list is every OTHER
+-- ddi_servers column as of 2026-07-23 (live-verified via claude_readonly).
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
+    REVOKE SELECT ON ddi_servers FROM nocvault_readonly;
+    GRANT SELECT (id, hostname, ip_address, role, description, is_active,
+      last_polled, poll_status, poll_error, created_at, updated_at, site_id,
+      auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
+      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
+      ON ddi_servers TO nocvault_readonly;
+  END IF;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
+    REVOKE SELECT ON ddi_servers FROM claude_readonly;
+    GRANT SELECT (id, hostname, ip_address, role, description, is_active,
+      last_polled, poll_status, poll_error, created_at, updated_at, site_id,
+      auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
+      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
+      ON ddi_servers TO claude_readonly;
+  END IF;
+END
+$$;
+
+-- ── smtp_config: filtered view excluding the encrypted password (2026-07-23) ─
+-- smtp_config.password is AES-256-GCM encrypted (credStore.js), but the rest
+-- of the row (host/port/secure/username/from_email/from_name/enabled/
+-- updated_at) is genuinely useful for diagnostics — confirming SMTP is
+-- configured/enabled and which host/port it points at, without ever reading
+-- the secret. Same live-verified gap as ddi_servers above: the blanket grant
+-- still gave both roles full table-level SELECT including `password`.
+-- smtp_config_public mirrors the app_settings_public/api_keys_public
+-- allowlist-view pattern; `username` is kept (SMTP auth username, e.g. an
+-- email address — not itself a secret, same reasoning as ddi_servers.ps_username).
+CREATE OR REPLACE VIEW smtp_config_public AS
+SELECT id, host, port, secure, username, from_email, from_name, enabled, updated_at
+FROM smtp_config;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
+    REVOKE SELECT ON smtp_config FROM nocvault_readonly;
+    GRANT SELECT ON smtp_config_public TO nocvault_readonly;
+  END IF;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
+    REVOKE SELECT ON smtp_config FROM claude_readonly;
+    GRANT SELECT ON smtp_config_public TO claude_readonly;
   END IF;
 END
 $$;

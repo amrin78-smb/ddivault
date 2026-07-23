@@ -266,19 +266,45 @@ $$;
 
     $env:PGPASSWORD = $dbPass
     $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
+    $schemaFailed = $false
     foreach ($schema in $schemas) {
         $schemaPath = "$AppDir\scripts\$schema"
         if (Test-Path $schemaPath) {
             $prev = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
-            $output = & $psql -U $dbUser -d $dbName -f $schemaPath 2>&1
+            # -v ON_ERROR_STOP=1: without this, psql keeps going after a real SQL
+            # error (e.g. a typo'd column, a broken migration) and still exits 0,
+            # so a broken schema file silently "succeeds" here and the collector
+            # crashes on every poll afterwards with "column ... does not exist"
+            # (see CLAUDE.md's "Collector crashes with column does not exist").
+            # This does NOT affect the idempotent `IF NOT EXISTS`/`ON CONFLICT`
+            # statements schema files rely on - those aren't errors on a re-run.
+            $output = & $psql -U $dbUser -d $dbName -v ON_ERROR_STOP=1 -f $schemaPath 2>&1
+            $schemaExitCode = $LASTEXITCODE
             $ErrorActionPreference = $prev
             $output | Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
                 Out-File -FilePath "$LogDir\schema-migration.log" -Append
-            Write-OK "Applied $schema"
+            if ($schemaExitCode -ne 0) {
+                Write-Fail "Schema migration FAILED: $schema (psql exit $schemaExitCode)"
+                $output | Select-Object -Last 20 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+                Write-Fail "Full output: $LogDir\schema-migration.log"
+                $schemaFailed = $true
+                break
+            } else {
+                Write-OK "Applied $schema"
+            }
+        } else {
+            Write-Warn "$schema not found at $schemaPath - skipping"
         }
     }
     $env:PGPASSWORD = ""
+
+    if ($schemaFailed) {
+        Write-Fail "Aborting update: a schema migration failed - refusing to deploy new code against a partially-migrated database."
+        Write-Warn "Services remain STOPPED (not restarted). Fix the schema error above, then re-run this script."
+        try { Stop-Transcript | Out-Null } catch {}
+        exit 1
+    }
 } else {
     Write-Warn "psql not found - skipping schema migration. Run manually if needed."
 }
