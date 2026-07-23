@@ -1409,7 +1409,7 @@ function SettingsPill({ label, active, onClick, badge }: { label: string; active
 function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   const hub = getHubUrl();
   return (
-    <div style={{ ...CARD, padding: 20 }}>
+    <div style={{ ...CARD, padding: 20, maxWidth: 860 }}>
       <div style={titleStyle}>NocVault Hub</div>
       <div style={{ fontSize: 'var(--text-base)', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
         <div>DDIVault authenticates through the NocVault hub (SSO) and shares its sites directory.</div>

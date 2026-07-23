@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.12': [
+    'Settings > Integrations: the NocVault Hub panel no longer stretches to the full page width around its 3 lines of text. API Keys keeps its full width since it holds a wide table once keys exist. Same panel-width fix already shipped in LogVault, NetVault, and SpanVault.',
+  ],
   '1.22.11': [
     'Settings > Email Alerts now has a "How delivery works" panel explaining recipient filtering, cooldown, and digest behavior -- including that cooldown is checked by severity+scope rather than the specific alert, so a different alert at the same severity/scope can also get suppressed. Verified against the actual alertDispatcher code before writing it.',
   ],
