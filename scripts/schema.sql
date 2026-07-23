@@ -731,6 +731,42 @@ BEGIN
 END
 $$;
 
+-- ── Secret-bearing table row/column-level exclusion (security pass, 2026-07) ─
+-- The blanket grant above previously gave nocvault_readonly/claude_readonly
+-- unrestricted table-level SELECT on `app_settings` (generic key/value —
+-- currently holds no secret keys, but nothing stops a future one being added
+-- without remembering to protect it) and `api_keys` (key_hash) — live-
+-- verified readable. ALLOWLIST views: a newly added app_settings key or
+-- api_keys column defaults to HIDDEN from these two roles until deliberately
+-- added below, so a future secret can never leak by omission. Placed AFTER
+-- the blanket grant block — order matters, the LAST statement touching a
+-- privilege wins (see LogVault/SpanVault CLAUDE.md for the incident that
+-- made this ordering rule explicit). smtp_config.password is already AES-
+-- 256-GCM encrypted at rest (credStore.js) and is NOT granted to either role
+-- at all (no *_public view for it) — ciphertext-with-no-read-access is safer
+-- than any filtered view of it.
+CREATE OR REPLACE VIEW app_settings_public AS
+SELECT key, value, updated_at FROM app_settings
+WHERE key IN ('app_name', 'app_subtitle', 'company_name', 'theme');
+
+CREATE OR REPLACE VIEW api_keys_public AS
+SELECT id, key_prefix, name, description, created_by, created_at,
+       last_used_at, expires_at, is_active, permissions, allowed_ips, request_count
+FROM api_keys;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
+    REVOKE SELECT ON app_settings, api_keys FROM nocvault_readonly;
+    GRANT SELECT ON app_settings_public, api_keys_public TO nocvault_readonly;
+  END IF;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
+    REVOKE SELECT ON app_settings, api_keys FROM claude_readonly;
+    GRANT SELECT ON app_settings_public, api_keys_public TO claude_readonly;
+  END IF;
+END
+$$;
+
 -- ═══════════════════════════════════════════════════════════════
 -- Reporting Phase 4 — saved views, scheduled delivery, run history,
 -- per-recipient email log. All idempotent (CREATE ... IF NOT EXISTS).

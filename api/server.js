@@ -29,6 +29,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.9': [
+    'Added a pre-built codebase index (.ai-codex/) so future development sessions can find things faster, with a rule that keeps it in sync going forward.',
+    'Security: closed a gap where the cross-app diagnostic/dashboard read role could see full API key hashes and any secret that might ever be added to the app\'s settings table. Those now live behind filtered views that only expose safe fields -- any new sensitive field added in the future is hidden from that role by default until someone deliberately decides it\'s safe to share.',
+    'Fixed the same gap for NetVault, LogVault, and SpanVault, and fixed an installer ordering bug that would have silently undone this fix on every brand-new install of the whole suite.',
+  ],
   '1.22.8': [
     'Cleanup from an end-of-day bug sweep of the 1.22.6/1.22.7 Settings-field fixes: removed an unused import left over from the style consolidation, and corrected a shared style comment that referenced a usage (severity/site dropdowns using the "short" width) that didn\'t match which fields actually use which width tier. No behavior change.',
   ],
