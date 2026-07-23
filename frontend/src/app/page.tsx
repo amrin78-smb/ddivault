@@ -1509,6 +1509,15 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
 
   const sectionTitle: React.CSSProperties = { fontSize: 'var(--text-base)', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 14 };
   const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 };
+  // A settings panel stack paired with a short "what this actually does" explainer,
+  // for sections whose behavior isn't obvious from the form alone. The aside sticks
+  // to the top of this page's own scroll region (see "Independently-scrolling
+  // content region" below) since the header/tab bar live outside that scroller.
+  const settingsRow: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 16, alignItems: 'start' };
+  const infoCard: React.CSSProperties = { background: 'var(--tint-info)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 18px', position: 'sticky', top: 0 };
+  const infoCardTitle: React.CSSProperties = { margin: '0 0 12px', fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--tint-info-fg)' };
+  const infoCardDt: React.CSSProperties = { fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--text-primary)', marginTop: 12 };
+  const infoCardDd: React.CSSProperties = { margin: '3px 0 0', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5 };
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
     { id: 'general',       label: 'General',      subtitle: 'IPAM scan and data retention' },
@@ -1548,20 +1557,31 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
         )}
 
         {subTab === 'notifications' && (
-          <>
-            <div style={{ ...CARD, padding: 20 }}>
-              <div style={sectionTitle}>Email / SMTP</div>
-              <SmtpSettings />
+          <div style={settingsRow}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ ...CARD, padding: 20 }}>
+                <div style={sectionTitle}>Email / SMTP</div>
+                <SmtpSettings />
+              </div>
+              <div style={{ ...CARD, padding: 20 }}>
+                <div style={sectionTitle}>Alert Recipients</div>
+                <AlertRecipients />
+              </div>
+              <div style={{ ...CARD, padding: 20 }}>
+                <div style={sectionTitle}>Alert Rules</div>
+                <AlertRules />
+              </div>
             </div>
-            <div style={{ ...CARD, padding: 20 }}>
-              <div style={sectionTitle}>Alert Recipients</div>
-              <AlertRecipients />
+            <div style={infoCard}>
+              <div style={infoCardTitle}>How delivery works</div>
+              <div style={infoCardDt}>Recipient filters</div>
+              <div style={infoCardDd}>A recipient&apos;s Severity and Site must both match an alert for them to receive it. If nobody matches, the alert is sent to no one — silently.</div>
+              <div style={infoCardDt}>Cooldown</div>
+              <div style={infoCardDd}>Per rule type, checked by severity and scope — not by the specific alert. A different alert with the same severity in the same scope can also be suppressed within the window.</div>
+              <div style={infoCardDt}>Digest mode</div>
+              <div style={infoCardDd}>Matching alerts are queued and sent together in the hourly digest instead of immediately.</div>
             </div>
-            <div style={{ ...CARD, padding: 20 }}>
-              <div style={sectionTitle}>Alert Rules</div>
-              <AlertRules />
-            </div>
-          </>
+          </div>
         )}
 
         {subTab === 'integrations' && (

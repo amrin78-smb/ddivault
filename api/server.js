@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.11': [
+    'Settings > Email Alerts now has a "How delivery works" panel explaining recipient filtering, cooldown, and digest behavior -- including that cooldown is checked by severity+scope rather than the specific alert, so a different alert at the same severity/scope can also get suppressed. Verified against the actual alertDispatcher code before writing it.',
+  ],
   '1.22.10': [
     'Consolidated health-score, capacity-forecast, and alert-severity colors that had drifted into ~10 independent per-file copies (some disagreeing on which color meant "warning") into shared palette functions, so a badge or dot means the same color everywhere in the app. Purely cosmetic, plus one real fix: the Recent Activity feed\'s alert list previously rendered every non-critical severity (including info) as the same yellow -- info alerts now get their own color.',
   ],
