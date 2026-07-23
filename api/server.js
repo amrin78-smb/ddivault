@@ -29,6 +29,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.10': [
+    'Consolidated health-score, capacity-forecast, and alert-severity colors that had drifted into ~10 independent per-file copies (some disagreeing on which color meant "warning") into shared palette functions, so a badge or dot means the same color everywhere in the app. Purely cosmetic, plus one real fix: the Recent Activity feed\'s alert list previously rendered every non-critical severity (including info) as the same yellow -- info alerts now get their own color.',
+  ],
   '1.22.9': [
     'Added a pre-built codebase index (.ai-codex/) so future development sessions can find things faster, with a rule that keeps it in sync going forward.',
     'Security: closed a gap where the cross-app diagnostic/dashboard read role could see full API key hashes and any secret that might ever be added to the app\'s settings table. Those now live behind filtered views that only expose safe fields -- any new sensitive field added in the future is hidden from that role by default until someone deliberately decides it\'s safe to share.',

@@ -8,6 +8,7 @@ import {
   PageHeader, EmptyState, TableSkeleton, UtilBar, Spinner,
   pctColor, useRefreshKey, useEscape,
 } from '@/components/ui';
+import { forecastColor } from '@/components/palette';
 
 // ── Types ─────────────────────────────────────────────────────
 interface Scope {
@@ -163,14 +164,6 @@ const DEVICE_ICONS: Record<string, string> = {
 };
 const deviceIcon = (t?: string) => DEVICE_ICONS[t || 'unknown'] || '❓';
 
-// ── Forecast color coding (days to full) ──────────────────────
-function forecastColor(days?: number | null): string {
-  if (days == null) return 'var(--green)';
-  if (days < 14) return 'var(--red)';
-  if (days <= 30) return 'var(--yellow)';
-  return 'var(--green)';
-}
-
 // ── Shared inline styles (design-system aligned) ──────────────
 const INPUT: React.CSSProperties = {
   padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
@@ -236,7 +229,7 @@ function ReserveModal({ scope, lease, onClose, onDone }: {
         </div>
 
         <div style={{
-          background: 'var(--primary-light)', border: '1px solid #fde047',
+          background: 'var(--primary-light)', border: '1px solid var(--yellow)',
           borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 16, color: 'var(--yellow)',
         }}>
           This runs <span className="mono">Add-DhcpServerv4Reservation</span> on your Windows DHCP server via PowerShell remoting.
@@ -345,7 +338,7 @@ function CreateScopeModal({ servers, onClose, onDone }: {
         </div>
 
         <div style={{
-          background: 'var(--primary-light)', border: '1px solid #fde047',
+          background: 'var(--primary-light)', border: '1px solid var(--yellow)',
           borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: 'var(--text-sm)', marginBottom: 16, color: 'var(--yellow)',
         }}>
           This runs <span className="mono">Add-DhcpServerv4Scope</span> on your Windows DHCP server via PowerShell remoting.

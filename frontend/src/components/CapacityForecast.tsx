@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { EmptyState, TableSkeleton } from '@/components/ui';
+import { forecastColor as daysToFullColor } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -48,13 +49,6 @@ function num(v: number | null | undefined): number | null {
   if (v == null) return null;
   const n = Number(v);
   return isNaN(n) ? null : n;
-}
-
-function daysToFullColor(days: number | null): string {
-  if (days == null) return 'var(--green)';
-  if (days < 14) return 'var(--red)';
-  if (days <= 30) return 'var(--orange)';
-  return 'var(--green)';
 }
 
 function confidenceBadge(confidence: string | null): string {

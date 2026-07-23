@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui';
+import { scoreColor } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // PillarScorecards — four compact domain scorecards (DHCP / DNS /
@@ -21,14 +22,6 @@ async function api(path: string): Promise<any> {
   const res = await fetch(`/api${path}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
-}
-
-// ── Score → colour ────────────────────────────────────────────
-function scoreColor(n: number | null): string {
-  if (n == null) return 'var(--text-muted)';
-  if (n >= 90) return 'var(--green)';
-  if (n >= 70) return 'var(--yellow)';
-  return 'var(--red)';
 }
 
 // ── Tiny inline SVG sparkline ─────────────────────────────────

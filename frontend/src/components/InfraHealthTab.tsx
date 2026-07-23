@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { PageHeader, EmptyState, Skeleton, useRefreshKey } from '@/components/ui';
+import { scoreColor } from '@/components/palette';
 
 const CARD: React.CSSProperties = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)' };
 const TITLE: React.CSSProperties = { fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text-primary)' };
@@ -22,13 +23,6 @@ interface ServerHealth {
 interface FailoverPair {
   id: number; relationship_name: string; mode: string; state: string;
   primary_name: string | null; secondary_name: string | null; mclt: number | null; split_ratio: number | null; last_checked: string;
-}
-
-function scoreColor(s: number | null) {
-  if (s == null) return 'var(--text-muted)';
-  if (s >= 90) return 'var(--green)';
-  if (s >= 70) return 'var(--yellow)';
-  return 'var(--red)';
 }
 
 // ── Circular health gauge ─────────────────────────────────────

@@ -6,6 +6,7 @@ import { useRBAC, ReadOnlyBanner } from '@/components/RBACContext';
 import { useLicense } from '@/components/LicenseGuard';
 import { PageHeader, EmptyState, TableSkeleton, Spinner, useRefreshKey } from '@/components/ui';
 import { INPUT_SM } from '@/lib/settingsFormStyles';
+import { severityBadgeClass } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -56,15 +57,6 @@ const SEVERITY_OPTIONS = ['critical', 'warning', 'info'];
 
 // Tier sort order (Critical → Warning → Info → anything unknown last)
 const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
-
-// Badge class per severity, consistent with the app palette
-// (critical=red, warning=yellow, info=blue)
-function severityBadgeClass(s: string): string {
-  if (s === 'critical') return 'badge-red';
-  if (s === 'warning') return 'badge-yellow';
-  if (s === 'info') return 'badge-blue';
-  return 'badge-gray';
-}
 
 function ruleName(t: string): string { return RULE_INFO[t]?.name || t; }
 function ruleDesc(t: string): string { return RULE_INFO[t]?.desc || ''; }

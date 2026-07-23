@@ -8,6 +8,7 @@ import {
   PageHeader, EmptyState, TableSkeleton, Skeleton, Spinner,
   useRefreshKey, useEscape,
 } from '@/components/ui';
+import { scoreColor } from '@/components/palette';
 
 // ── Types ─────────────────────────────────────────────────────
 interface DnsServer {
@@ -188,13 +189,6 @@ function shortTime(iso?: string | null): string {
   const days = Math.floor(h / 24);
   if (days < 7) return `${days}d ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-// ── Health score → colour ─────────────────────────────────────
-function scoreColor(n: number): string {
-  if (n >= 90) return 'var(--green)';
-  if (n >= 70) return 'var(--yellow)';
-  return 'var(--red)';
 }
 
 // ── DNS server online status ──────────────────────────────────

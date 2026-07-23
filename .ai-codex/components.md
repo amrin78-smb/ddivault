@@ -46,6 +46,7 @@ only within the same file are omitted, except where noted.
 (c) TrendChart  chart, height
 (c) UpdateNotifier  onGoToSettings — default export
 (c) pctColor(pct)  — utility function (returns a color string, not JSX) — not a component, listed for completeness since it's exported from ui.tsx
+(c) scoreColor(score)/forecastColor(days)/severityColor(severity)/severityBadgeClass(severity)  — utility functions, from palette.tsx (canonical health-score/capacity-forecast/alert-severity color palettes, replacing ~10 per-file duplicates)
 (c) Skeleton  width, height, radius, style
 (c) TableSkeleton  rows, cols
 (c) CardSkeleton  count, height
@@ -106,12 +107,13 @@ Not counted as a violation.
 
 ## Totals
 
-- Exported components in root `components/` (34 files, including LicenseGuard's 4
+- Exported components in root `components/` (35 files, including LicenseGuard's 4
   exports, RBACContext's 3, ui.tsx's 10 UI primitives, IdleTimeout counted once despite
   two export forms, and DHCPTab/DNSTab/IPAMTab): **48**
 - Exported components in `components/dashboard/` (6 files): **6**
 - Exported components in `components/ipam/` (4 files): **4**
-- **Grand total: 58 exported components across 44 files.**
-- (`pctColor`, `useRefreshKey`, `useEscape` are exported from ui.tsx but are a utility
-  function / hooks, not components — excluded from the count above.)
+- **Grand total: 58 exported components across 45 files.**
+- (`pctColor` (ui.tsx), `useRefreshKey`/`useEscape` (ui.tsx), and `scoreColor`/
+  `forecastColor`/`severityColor`/`severityBadgeClass` (palette.tsx) are utility
+  functions / hooks, not components — excluded from the count above.)
 - Violations: **0**.

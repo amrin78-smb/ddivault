@@ -5,6 +5,7 @@ import { useTheme } from './ThemeContext';
 import { signOut, useSession } from 'next-auth/react';
 import { useRBAC } from '@/components/RBACContext';
 import { getHubUrl } from '@/lib/hubUrl';
+import { severityColor } from '@/components/palette';
 
 function DDIVaultLogo({ className }: { className?: string }) {
   return (
@@ -56,8 +57,6 @@ interface AlertItem {
   scope_id: string;
   fired_at: string;
 }
-
-const SEVERITY_COLOR: Record<string, string> = { critical: '#dc2626', warning: '#ca8a04' };
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
   super_admin: { label: 'Super Admin', color: '#C8102E' },
@@ -215,7 +214,7 @@ export function Header(props: HeaderProps) {
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-subtle)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: SEVERITY_COLOR[a.severity] || '#64748b', marginTop: 5, flexShrink: 0 }} />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: severityColor(a.severity), marginTop: 5, flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', lineHeight: 1.4 }}>{a.message}</div>
                       <div style={{ fontSize: 'var(--text-xs)', color: '#94a3b8', marginTop: 2 }}>

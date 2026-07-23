@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Skeleton, EmptyState } from '@/components/ui';
+import { scoreColor as healthColor } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // Infrastructure & Redundancy dashboard card.
@@ -21,15 +22,6 @@ async function api(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, opts);
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
   return res.json();
-}
-
-// ── Health score → colour ─────────────────────────────────────
-function healthColor(n: number | null | undefined): string {
-  if (n === null || n === undefined || isNaN(Number(n))) return 'var(--text-muted)';
-  const v = Number(n);
-  if (v >= 90) return 'var(--green)';
-  if (v >= 70) return 'var(--yellow)';
-  return 'var(--red)';
 }
 
 // ── Tiny inline SVG sparkline ─────────────────────────────────

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { EmptyState, CardSkeleton } from '@/components/ui';
+import { scoreColor } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -42,13 +43,6 @@ function num(v: number | null | undefined): number | null {
   if (v == null) return null;
   const n = Number(v);
   return isNaN(n) ? null : n;
-}
-
-function scoreColor(score: number | null): string {
-  if (score == null) return 'var(--text-muted)';
-  if (score >= 90) return 'var(--green)';
-  if (score >= 70) return 'var(--orange)';
-  return 'var(--red)';
 }
 
 function band(score: number | null): 'green' | 'amber' | 'red' {

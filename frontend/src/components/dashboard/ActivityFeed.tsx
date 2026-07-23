@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { EmptyState, TableSkeleton } from '@/components/ui';
+import { severityBadgeClass } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // ActivityFeed — a single tabbed "what just happened" dashboard
@@ -205,7 +206,7 @@ export default function ActivityFeed(props: Props) {
                 {alerts.map((a: any) => (
                   <tr key={a.id}>
                     <td>
-                      <span className={`badge ${a.severity === 'critical' ? 'badge-red' : 'badge-yellow'}`}>
+                      <span className={`badge ${severityBadgeClass(a.severity || 'warning')}`}>
                         {(a.severity || 'warning').toUpperCase()}
                       </span>
                     </td>

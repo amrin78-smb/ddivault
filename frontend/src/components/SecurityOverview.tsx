@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { EmptyState, TableSkeleton } from '@/components/ui';
+import { severityColor, severityBadgeClass as severityBadge } from '@/components/palette';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -37,22 +38,6 @@ const CARD: React.CSSProperties = {
   background: 'var(--bg-card)', border: '1px solid var(--border)',
   borderRadius: 'var(--radius)', overflow: 'hidden',
 };
-
-function severityBadge(severity: string | null): string {
-  const s = (severity || '').toLowerCase();
-  if (s === 'critical' || s === 'high') return 'badge-red';
-  if (s === 'medium' || s === 'warning' || s === 'warn') return 'badge-orange';
-  if (s === 'low' || s === 'info') return 'badge-blue';
-  return 'badge-gray';
-}
-
-function severityColor(severity: string | null): string {
-  const s = (severity || '').toLowerCase();
-  if (s === 'critical' || s === 'high') return 'var(--red)';
-  if (s === 'medium' || s === 'warning' || s === 'warn') return 'var(--orange)';
-  if (s === 'low' || s === 'info') return 'var(--blue)';
-  return 'var(--text-muted)';
-}
 
 // ════════════════════════════════════════════════════════════
 // Main

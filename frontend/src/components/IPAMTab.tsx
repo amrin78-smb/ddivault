@@ -224,7 +224,7 @@ function ipRange(network: string, prefix: number): string {
 // Utilization → health status badge
 function utilStatus(pct: number): { label: string; badge: string } {
   if (pct >= 90) return { label: 'Critical', badge: 'badge-red' };
-  if (pct >= 80) return { label: 'Warning',  badge: 'badge-orange' };
+  if (pct >= 80) return { label: 'Warning',  badge: 'badge-yellow' };
   return { label: 'Healthy', badge: 'badge-green' };
 }
 
