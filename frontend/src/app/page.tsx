@@ -8,6 +8,7 @@ import { useToast } from '@/components/Toast';
 import { useRBAC } from '@/components/RBACContext';
 import { useLicense, LicenseDisabledScreen, LicenseBanner } from '@/components/LicenseGuard';
 import UpdateNotifier from '@/components/UpdateNotifier';
+import UpdateFailureBanner from '@/components/UpdateFailureBanner';
 import IPAMTab    from '@/components/IPAMTab';
 import DHCPTab    from '@/components/DHCPTab';
 import DNSTab     from '@/components/DNSTab';
@@ -1820,6 +1821,7 @@ export default function DDIVaultApp() {
             root layout above the top bar, matching the rest of the NocVault suite. */}
         <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg-primary)' }}>
           <LicenseBanner />
+          <UpdateFailureBanner onGoToSettings={goToSettingsUpdates} />
           <UpdateNotifier onGoToSettings={goToSettingsUpdates} />
           {/* key={tab} remounts the boundary on tab change so one tab's caught error
               can't stick and brick every other tab (the boundary has no self-reset). */}

@@ -17,7 +17,7 @@ const BACKEND   = 'http://127.0.0.1:3007';
 // pre-login). /api/v1/* is handled separately below: it authenticates itself
 // with an API key (Authorization/X-API-Key header), so external integrations
 // never carry a NextAuth session cookie at all.
-const PUBLIC_API = /^\/api\/(health|stats|license-status|system\/update-available)$/;
+const PUBLIC_API = /^\/api\/(health|stats|license-status|system\/update-available|system\/last-update-status)$/;
 
 // One-click "acknowledge alert" email link (api/emailer.js builds it as
 // APP_URL + '/api/alerts/:id/acknowledge?token=' + ackToken(id)). It must work

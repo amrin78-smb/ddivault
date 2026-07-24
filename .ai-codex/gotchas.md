@@ -27,6 +27,36 @@
   operate in a repo it doesn't "own" as SYSTEM). Fixed 1.22.4 (`d03230d`):
   registers `git config safe.directory`, writes a transcript to
   `installer\logs\`.
+- **Update-DDIVault.ps1 self-updating resilience (added alongside NetVault's
+  equivalent).** A failed update used to just leave the app stopped (a bare
+  `exit 1`) — worse, a failed ROOT npm install didn't even stop the script,
+  it just warned and kept going into the frontend build/deploy against
+  possibly-broken API/Collector deps. The script now snapshots (via
+  `Rename-Item` — a metadata-only operation regardless of directory size, so
+  this is cheap even for a large `node_modules`) the pre-update git commit
+  PLUS three directories before touching anything: root `node_modules`
+  (API/Collector are plain JS with no build step, so a broken install can
+  break them directly), `frontend\.next`, and `frontend\node_modules`. DDIVault
+  has no `output: 'standalone'` build (unlike NetVault), so there's no single
+  self-contained bundle to snapshot — these three together are the
+  equivalent. Every failure path funnels through a `Fail-Update` helper that
+  reverts git + restores all three snapshots + restarts all 3 services +
+  re-verifies `/api/health` before giving up, and writes a structured
+  `logs\last-update-status.json` (stage/error code/rolled-back/health-check
+  flags) that `GET /api/system/last-update-status` (public, same access level
+  as `/api/system/update-available`) surfaces to `UpdateFailureBanner.tsx`
+  (admin-only). **A schema migration failure now also triggers this rollback**
+  instead of the old hard-stop-and-leave-down behavior — but this only rolls
+  back CODE, not the database: `scripts/schema*.sql` are not applied inside a
+  single transaction, so a code-level rollback cannot undo a partially-applied
+  migration. The script still refuses to deploy the NEW code against a DB it
+  failed to migrate (same reasoning as before); it now also gets the OLD code
+  back up and running instead of leaving the install fully down. The final
+  service-status + `/api/health` check (STEP 8) is now a MANDATORY gate — it
+  used to only set `$allOk=$false` and print "completed with warnings" while
+  still exiting 0; a health-check failure now triggers the same rollback path
+  as any other stage failure. **Don't revert any of these back to
+  warn-and-continue** — that's the exact bug class this exists to close.
 - Critical auth bypass (1.22.0, `24e886e`): `next.config.js` rewrites (a
   dumb URL-level forward) let a client set `x-ddi-actor-role` itself via a
   bare curl request and bypass RBAC. Fixed by moving all `/api/*` proxying

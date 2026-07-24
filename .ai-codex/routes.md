@@ -24,6 +24,7 @@ GET /api/license-status public external — current NocVault hub license + deriv
 GET /api/hub/settings auth external — server-side proxy to NocVault hub `/api/settings` (avoids browser CORS)
 GET /api/system/update-status auth external — git ls-remote/fetch HEAD vs local HEAD commit, release notes for the offered version
 GET /api/system/update-available public external — cached (24h-refreshed) update-availability flag, no live I/O at request time
+GET /api/system/last-update-status public — reads logs/last-update-status.json written by Update-DDIVault.ps1 (stage/error code/rollback outcome of the last update run); {exists:false} if none yet
 POST /api/system/update super-admin external — schedules a SYSTEM `schtasks` task running Update-DDIVault.ps1; license-gated
 
 ## DHCP (api/server.js)

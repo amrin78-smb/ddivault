@@ -44,6 +44,7 @@ only within the same file are omitted, except where noted.
 (c) ThemeProvider  children
 (c) ToastProvider  children
 (c) TrendChart  chart, height
+(c) UpdateFailureBanner  onGoToSettings — admin-only (useRBAC), polls /api/system/last-update-status every 5min, red banner on a failed Update-DDIVault.ps1 run (stage/error code/rolled-back state) — default export
 (c) UpdateNotifier  onGoToSettings — default export
 (c) pctColor(pct)  — utility function (returns a color string, not JSX) — not a component, listed for completeness since it's exported from ui.tsx
 (c) scoreColor(score)/forecastColor(days)/severityColor(severity)/severityBadgeClass(severity)  — utility functions, from palette.tsx (canonical health-score/capacity-forecast/alert-severity color palettes, replacing ~10 per-file duplicates)

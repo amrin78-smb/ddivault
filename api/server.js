@@ -17,6 +17,7 @@ const { execSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
 const path = require('path');
+const fs = require('fs');
 
 // Git invoked with prompts disabled so a bad/expired credential can never block
 // on an interactive password prompt (which would hang the timeout).
@@ -29,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.14': [
+    'Made the updater (Update-DDIVault.ps1) resilient to a failed update instead of just reporting one -- it now snapshots the current commit, root node_modules, and the frontend build (.next + node_modules) before touching anything, and if any stage fails (git pull, either npm install, the frontend build, service start, a database schema migration, or a new mandatory post-start health check) it automatically reverts to the last known-good version, restarts all 3 services, and re-verifies health -- instead of possibly leaving the app stopped or, in the case of a failed root npm install, silently continuing to deploy against broken dependencies (previously that specific failure only printed a warning and kept going).',
+    'A failed schema migration now also triggers the same rollback (restores the previous working code + restarts services) instead of just leaving the app stopped -- the new code still isn\'t deployed against a database it failed to migrate, but the service comes back up on the last known-good version instead of staying down.',
+    'Every update run (success or failure) now writes a structured result to logs/last-update-status.json -- what stage it reached, an error code, the error message, and whether it rolled back -- surfaced as a new in-app failure banner for admins (GET /api/system/last-update-status) so a failed update can\'t go unnoticed.',
+    'The post-start health/service check, which used to just print a warning and still report success if the API never came up healthy, is now a hard gate -- an update is no longer reported as successful unless the running version is actually confirmed serving traffic.',
+  ],
   '1.22.13': [
     'Security: closed the actual gap today\'s app_settings/api_keys fix left open — the cross-app diagnostic/dashboard read role could still read the encrypted DHCP/DNS server admin password and the encrypted SMTP password in full (the previous fix\'s own code comment claiming these were already safe was incorrect: not creating a filtered view does nothing to revoke a table\'s existing blanket read grant). Both are now excluded for that role; the servers table exposes every other diagnostic field via a column-level grant, and SMTP config exposes everything except the password via a new filtered view.',
     'Fixed a gap in yesterday\'s app-settings allowlist: the retention-period and scan-DNS-server settings were left out even though they were already confirmed non-secret, so the diagnostic read role couldn\'t see them.',
@@ -556,7 +563,8 @@ async function enforceLicense(req, res, next) {
       && !req.path.startsWith('/api/health')
       && !req.path.startsWith('/api/stats')
       && !req.path.startsWith('/api/license-status')
-      && !req.path.startsWith('/api/system/update-available')) {
+      && !req.path.startsWith('/api/system/update-available')
+      && !req.path.startsWith('/api/system/last-update-status')) {
     return res.status(402).json({
       error: 'DDIVault license has expired. Please renew your NocVault license.',
       license_status: license?.status,
@@ -767,6 +775,28 @@ app.get('/api/system/update-available', (_req, res) => {
     res.json({ available: true, current: updateAvailable.current, latest: updateAvailable.latest });
   } else {
     res.json({ available: false });
+  }
+});
+
+// Update-DDIVault.ps1 writes a structured result of the last update attempt to
+// logs/last-update-status.json on every run (success or failure) - see the
+// script's Write-StatusJson function. This route just surfaces that file so the
+// frontend can show a banner the moment a failed update needs attention, without
+// anyone having to go looking at the updater's log files. Same public access
+// level as /api/system/update-available (no auth required) - matches its sibling
+// exactly, including the enforceLicense exemption above.
+app.get('/api/system/last-update-status', (_req, res) => {
+  const statusPath = path.join(APP_ROOT, 'logs', 'last-update-status.json');
+  if (!fs.existsSync(statusPath)) {
+    return res.json({ exists: false });
+  }
+  try {
+    const BOM = String.fromCharCode(0xfeff);
+    const raw = fs.readFileSync(statusPath, 'utf8');
+    const status = JSON.parse(raw.startsWith(BOM) ? raw.slice(1) : raw);
+    res.json({ exists: true, ...status });
+  } catch (e) {
+    res.json({ exists: false, error: 'Could not read update status file' });
   }
 });
 

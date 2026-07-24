@@ -16,6 +16,19 @@ $env:PATH = @(
     $env:PATH
 ) -join ";"
 
+# Windows Task Scheduler's default task priority (level 7) maps to the BelowNormal
+# process priority class, unlike a manually-run script (Normal). This starves the
+# CPU-bound npm build under contention from the rest of the suite, making an
+# in-app-triggered update look "stuck" compared to the same update run manually.
+# Reset to Normal regardless of how this script was invoked - a no-op when already
+# Normal (the manual-run case). Child processes inherit the parent's priority class
+# by default, so this also covers the npm/node/Next.js build children it spawns.
+# (Same fix as NetVault's Update-NetVault.ps1 1.23.26 - see its own comment for detail.)
+try {
+    $proc = Get-Process -Id $PID
+    if ($proc.PriorityClass -ne 'Normal') { $proc.PriorityClass = 'Normal' }
+} catch { Write-Warning "Could not adjust process priority: $($_.Exception.Message)" }
+
 # Self-locate the app root from the script's own location instead of trusting
 # -InstallDir. This script lives at <appRoot>\installer\Update-DDIVault.ps1, so the
 # real app root is the parent of the installer folder. This works on BOTH a suite
@@ -74,6 +87,193 @@ function Get-ServiceStatus($name) {
     $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
     if (-not $svc) { return "NOT_FOUND" }
     return $svc.Status.ToString().ToUpper()
+}
+
+# --- Resilience: rollback + structured status reporting -------------------
+# DDIVault has no `output: 'standalone'` build - the App service runs `next start`
+# directly against a plain `frontend\.next`, sharing the app's normal node_modules
+# (root for API/Collector, frontend\node_modules for the Next.js app). Unlike
+# NetVault's self-contained standalone bundle, a rollback here has to protect THREE
+# things: the git source, root node_modules (API/Collector are plain JS with no
+# build step - a broken npm install can break them directly), and both
+# frontend\.next and frontend\node_modules (the Next.js build output + its deps).
+# Renaming is a metadata-only operation on the same NTFS volume regardless of
+# directory size, so snapshotting all three this way is just as cheap as NetVault's
+# single-folder version - not three times the cost.
+$StatusPath      = "$LogDir\last-update-status.json"
+$prevCommit      = $null
+$attemptedCommit = $null
+$currentStage    = 'init'
+$envBackupForRollback = $null  # set once STEP 2 has captured the .env.local backups
+
+$StageCodes = @{
+    'init'                 = 5
+    'pre-flight'           = 10
+    'git-pull'             = 20
+    'schema-apply'         = 25
+    'npm-install-root'     = 30
+    'npm-install-frontend' = 35
+    'npm-build'            = 40
+    'service-start'        = 50
+    'health-check'         = 60
+    'rollback-failed'      = 70
+}
+
+function Write-StatusJson {
+    param(
+        [bool]$Success,
+        [string]$Stage,
+        [int]$ErrorCode = 0,
+        [string]$ErrorMessage = $null,
+        [bool]$RolledBack = $false,
+        [bool]$HealthCheckPassed = $false
+    )
+    $status = [ordered]@{
+        timestamp         = (Get-Date).ToString('o')
+        success           = $Success
+        stage             = $Stage
+        errorCode         = $ErrorCode
+        errorMessage      = $ErrorMessage
+        previousCommit    = $prevCommit
+        attemptedCommit   = $attemptedCommit
+        finalCommit       = if ($RolledBack) { $prevCommit } else { $attemptedCommit }
+        rolledBack        = $RolledBack
+        healthCheckPassed = $HealthCheckPassed
+    }
+    try {
+        $json = $status | ConvertTo-Json
+        # Write via .NET directly with a BOM-less UTF8Encoding, not Out-File
+        # -Encoding UTF8 (which writes a UTF-8 BOM in Windows PowerShell 5.1) -
+        # Node's fs.readFileSync(path, 'utf8') doesn't strip a BOM, which would
+        # break JSON.parse on every single write. (Same bug found and fixed in
+        # NetVault's Update-NetVault.ps1 1.23.27 - fixed here from the start.)
+        [System.IO.File]::WriteAllText($StatusPath, $json, (New-Object System.Text.UTF8Encoding $false))
+    } catch {
+        Write-Warn "Could not write status file $StatusPath - $($_.Exception.Message)"
+    }
+}
+
+# Poll the API's /api/health until it reports ok+connected, or $TimeoutSec elapses.
+function Wait-Healthy([int]$TimeoutSec = 60) {
+    Write-Host "    Waiting for DDIVault API to respond on :3007 " -ForegroundColor Gray -NoNewline
+    $healthy = $false
+    for ($i = 0; $i -lt $TimeoutSec; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3007/api/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            $body = $resp.Content | ConvertFrom-Json
+            if ($resp.StatusCode -eq 200 -and $body.status -eq 'ok' -and $body.db -eq 'connected') { $healthy = $true; break }
+        } catch {}
+        Write-Host "." -ForegroundColor DarkGray -NoNewline
+        Start-Sleep -Seconds 1
+    }
+    Write-Host ""
+    return $healthy
+}
+
+# Revert to the pre-update commit + restore the node_modules/.next snapshots,
+# restart all 3 services, and confirm the OLD version is actually healthy before
+# declaring the rollback itself successful.
+#
+# Note on database migrations: this rolls back CODE, not schema. STEP 4.5 below
+# still refuses to deploy new code against a database it failed to migrate (a
+# schema migration is not something a code-level rollback can undo, and DDIVault's
+# schema files are not applied inside a single transaction) - but a schema failure
+# now triggers this same rollback instead of leaving the app down entirely, since
+# the old code is far more likely to tolerate a few extra/partial columns than
+# the DDIVault install is to tolerate being completely offline.
+function Invoke-Rollback([string]$Reason) {
+    Write-Host ""
+    Write-Step "ROLLING BACK - reason: $Reason"
+    $ok = $true
+    try {
+        Set-Location $AppDir
+        if ($prevCommit) {
+            Write-Host "    Reverting source to $prevCommit" -ForegroundColor Gray
+            $null = git reset --hard $prevCommit 2>&1
+            if ($LASTEXITCODE -eq 0) { Write-OK "Source reverted" } else { Write-Warn "git reset during rollback failed (exit $LASTEXITCODE)"; $ok = $false }
+        } else {
+            Write-Warn "No pre-update commit recorded - skipping source revert"
+        }
+
+        $rootModulesBackup     = "$AppDir\node_modules.lastgood"
+        $frontendNextBackup    = "$FrontendDir\.next.lastgood"
+        $frontendModulesBackup = "$FrontendDir\node_modules.lastgood"
+
+        if (Test-Path $rootModulesBackup) {
+            if (Test-Path "$AppDir\node_modules") { Remove-Item "$AppDir\node_modules" -Recurse -Force -ErrorAction SilentlyContinue }
+            Rename-Item -Path $rootModulesBackup -NewName 'node_modules' -ErrorAction Stop
+            Write-OK "Restored root node_modules"
+        } else {
+            Write-Warn "No root node_modules snapshot found to restore"
+        }
+        if (Test-Path $frontendNextBackup) {
+            if (Test-Path "$FrontendDir\.next") { Remove-Item "$FrontendDir\.next" -Recurse -Force -ErrorAction SilentlyContinue }
+            Rename-Item -Path $frontendNextBackup -NewName '.next' -ErrorAction Stop
+            Write-OK "Restored frontend .next build output"
+        } else {
+            Write-Warn "No frontend .next snapshot found to restore"
+            $ok = $false
+        }
+        if (Test-Path $frontendModulesBackup) {
+            if (Test-Path "$FrontendDir\node_modules") { Remove-Item "$FrontendDir\node_modules" -Recurse -Force -ErrorAction SilentlyContinue }
+            Rename-Item -Path $frontendModulesBackup -NewName 'node_modules' -ErrorAction Stop
+            Write-OK "Restored frontend node_modules"
+        } else {
+            Write-Warn "No frontend node_modules snapshot found to restore"
+            $ok = $false
+        }
+
+        if ($envBackupForRollback) {
+            if ($envBackupForRollback.Root) {
+                Set-Content -LiteralPath "$AppDir\.env.local" -Value $envBackupForRollback.Root -NoNewline -Encoding UTF8
+            }
+            if ($envBackupForRollback.Frontend) {
+                Set-Content -LiteralPath "$FrontendDir\.env.local" -Value $envBackupForRollback.Frontend -NoNewline -Encoding UTF8
+            }
+        }
+
+        Write-Step "Restarting services on last known-good version"
+        foreach ($svc in @("DDIVault-App", "DDIVault-API", "DDIVault-Collector")) {
+            if ((Get-ServiceStatus $svc) -eq "RUNNING") { sc.exe stop $svc | Out-Null }
+        }
+        Start-Sleep -Seconds 3
+        sc.exe start DDIVault-API | Out-Null
+        Start-Sleep -Seconds 8
+        sc.exe start DDIVault-App | Out-Null
+        Start-Sleep -Seconds 8
+        sc.exe start DDIVault-Collector | Out-Null
+        Start-Sleep -Seconds 3
+
+        foreach ($svc in $Services) {
+            if ((Get-ServiceStatus $svc) -ne "RUNNING") { Write-Warn "$svc is not running after rollback restart"; $ok = $false }
+        }
+
+        $healthy = Wait-Healthy -TimeoutSec 30
+        if ($healthy) { Write-OK "Rollback verified - last known-good version is up and healthy" }
+        else { Write-Warn "Rollback restart did not pass the health check"; $ok = $false }
+        return ($ok -and $healthy)
+    } catch {
+        Write-Warn "Rollback itself failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Every failure path in this script funnels through here instead of a bare
+# `exit 1`, so a failure always attempts recovery and always leaves a structured
+# record behind - see the resilience block above.
+function Fail-Update {
+    param([string]$Stage, [string]$Message)
+    $code = if ($StageCodes.ContainsKey($Stage)) { $StageCodes[$Stage] } else { 99 }
+    Write-Host ""
+    Write-Fail "Update failed at stage '$Stage': $Message"
+    $rollbackOk = Invoke-Rollback -Reason $Message
+    if (-not $rollbackOk) {
+        Write-Fail "!!! ROLLBACK ALSO FAILED - DDIVault may be DOWN. Manual intervention required. !!!"
+        $code = $StageCodes['rollback-failed']
+    }
+    Write-StatusJson -Success $false -Stage $Stage -ErrorCode $code -ErrorMessage $Message -RolledBack $rollbackOk -HealthCheckPassed $rollbackOk
+    try { Stop-Transcript | Out-Null } catch {}
+    exit 1
 }
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -150,9 +350,47 @@ if (Test-Path $frontendEnvPath) {
 } else {
     Write-Warn "No .env.local at $frontendEnvPath"
 }
+$envBackupForRollback = @{ Root = $rootEnvContent; Frontend = $frontendEnvContent }
+
+# STEP 2.5 - Snapshot current version for rollback
+# Must happen BEFORE git touches anything and BEFORE npm install/build overwrites
+# node_modules/.next, so a failure anywhere from here on can be undone by putting
+# these exact folders back rather than needing to rebuild (which could itself fail
+# for the same reason the original update did).
+Write-Step "Snapshotting current version for rollback"
+$currentStage = 'pre-flight'
+Set-Location $AppDir
+try {
+    $rp = git rev-parse HEAD 2>&1
+    if ($rp -match '^[0-9a-f]{40}$') { $prevCommit = $rp }
+} catch { $prevCommit = $null }
+if ($prevCommit) { Write-OK "Current commit: $prevCommit" }
+else { Write-Warn "Could not determine current commit - rollback will not be able to revert source" }
+
+$rootModulesBackup     = "$AppDir\node_modules.lastgood"
+$frontendNextBackup    = "$FrontendDir\.next.lastgood"
+$frontendModulesBackup = "$FrontendDir\node_modules.lastgood"
+# Clear any stale backups left by a prior interrupted run before snapshotting the
+# CURRENTLY-serving version, not an older leftover one.
+foreach ($stale in @($rootModulesBackup, $frontendNextBackup, $frontendModulesBackup)) {
+    if (Test-Path $stale) { Remove-Item $stale -Recurse -Force -ErrorAction SilentlyContinue }
+}
+if (Test-Path "$AppDir\node_modules") {
+    Rename-Item -Path "$AppDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
+    Write-OK "Snapshotted root node_modules"
+}
+if (Test-Path "$FrontendDir\.next") {
+    Rename-Item -Path "$FrontendDir\.next" -NewName '.next.lastgood' -ErrorAction Stop
+    Write-OK "Snapshotted frontend .next build output"
+}
+if (Test-Path "$FrontendDir\node_modules") {
+    Rename-Item -Path "$FrontendDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
+    Write-OK "Snapshotted frontend node_modules"
+}
 
 # STEP 3 - Pull latest
 Write-Step "Pulling latest from GitHub..."
+$currentStage = 'git-pull'
 Set-Location $AppDir
 
 # SYSTEM has never run git in this repo before (only whichever interactive account
@@ -164,15 +402,17 @@ Set-Location $AppDir
 try { $null = git config --global --add safe.directory $AppDir 2>&1 } catch {}
 
 $null = git fetch origin --quiet 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Fail "git fetch failed"; exit 1 }
+if ($LASTEXITCODE -ne 0) { Fail-Update -Stage 'git-pull' -Message "git fetch failed (exit $LASTEXITCODE)" }
 
 $null = git reset --hard origin/main 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Fail "git reset failed"; exit 1 }
+if ($LASTEXITCODE -ne 0) { Fail-Update -Stage 'git-pull' -Message "git reset failed (exit $LASTEXITCODE)" }
 
 $null = git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1
 
 $commitHash = git rev-parse --short HEAD
 $commitMsg  = git log -1 --pretty=format:"%s"
+$rp = git rev-parse HEAD 2>&1
+if ($rp -match '^[0-9a-f]{40}$') { $attemptedCommit = $rp }
 Write-OK "Now at commit $commitHash - $commitMsg"
 
 # STEP 4 - Restore .env.local
@@ -210,6 +450,7 @@ if ($ServerIp -and (Test-Path $rootEnvPath)) {
 
 # STEP 4.5 - Run schema migrations
 Write-Step "Running schema migrations..."
+$currentStage = 'schema-apply'
 $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
 if (Test-Path $psql) {
     $dbPass = (Get-Content $rootEnvPath | Select-String "DDI_DB_PASS=").ToString().Split("=",2)[1].Trim()
@@ -267,6 +508,7 @@ $$;
     $env:PGPASSWORD = $dbPass
     $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
     $schemaFailed = $false
+    $schemaFailure = $null
     foreach ($schema in $schemas) {
         $schemaPath = "$AppDir\scripts\$schema"
         if (Test-Path $schemaPath) {
@@ -289,6 +531,7 @@ $$;
                 $output | Select-Object -Last 20 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
                 Write-Fail "Full output: $LogDir\schema-migration.log"
                 $schemaFailed = $true
+                $schemaFailure = "$schema (psql exit $schemaExitCode)"
                 break
             } else {
                 Write-OK "Applied $schema"
@@ -300,10 +543,13 @@ $$;
     $env:PGPASSWORD = ""
 
     if ($schemaFailed) {
-        Write-Fail "Aborting update: a schema migration failed - refusing to deploy new code against a partially-migrated database."
-        Write-Warn "Services remain STOPPED (not restarted). Fix the schema error above, then re-run this script."
-        try { Stop-Transcript | Out-Null } catch {}
-        exit 1
+        # Still refuse to deploy new code against a database it failed to migrate
+        # (schema.sql's ON_ERROR_STOP=1 comment explains why) - but recover the
+        # SERVICE instead of leaving DDIVault down entirely. This rolls back CODE
+        # only; the database itself is left in whatever partial state the failed
+        # migration produced (schema files are not applied inside one transaction,
+        # so a code-level rollback cannot undo that part).
+        Fail-Update -Stage 'schema-apply' -Message "Schema migration failed: $schemaFailure - refusing to deploy new code against a partially-migrated database"
     }
 } else {
     Write-Warn "psql not found - skipping schema migration. Run manually if needed."
@@ -311,29 +557,33 @@ $$;
 
 # STEP 5 - Root npm install
 Write-Step "Installing root dependencies..."
+$currentStage = 'npm-install-root'
 $rootNpmLog = "$LogDir\npm-install-root.log"
 $proc = Start-Process "npm.cmd" -ArgumentList "install" -WorkingDirectory $AppDir `
     -RedirectStandardOutput $rootNpmLog -RedirectStandardError "$rootNpmLog.err" `
     -Wait -PassThru -NoNewWindow
 if ($proc.ExitCode -ne 0) {
-    Write-Warn "Root npm install exit code $($proc.ExitCode) - check $rootNpmLog"
-} else {
-    Write-OK "Root dependencies installed"
+    # Previously this only warned and kept going, deploying the API/Collector
+    # against a possibly-broken root node_modules. Root deps failing to install
+    # is exactly the class of failure the rollback exists for.
+    Fail-Update -Stage 'npm-install-root' -Message "Root npm install failed (exit $($proc.ExitCode)) - check $rootNpmLog"
 }
+Write-OK "Root dependencies installed"
 
 # STEP 6 - Frontend npm install + build
 Write-Step "Installing frontend dependencies..."
+$currentStage = 'npm-install-frontend'
 $frontendNpmLog = "$LogDir\npm-install-frontend.log"
 $proc = Start-Process "npm.cmd" -ArgumentList "install" -WorkingDirectory $FrontendDir `
     -RedirectStandardOutput $frontendNpmLog -RedirectStandardError "$frontendNpmLog.err" `
     -Wait -PassThru -NoNewWindow
 if ($proc.ExitCode -ne 0) {
-    Write-Warn "Frontend npm install exit code $($proc.ExitCode) - check $frontendNpmLog"
-} else {
-    Write-OK "Frontend dependencies installed"
+    Fail-Update -Stage 'npm-install-frontend' -Message "Frontend npm install failed (exit $($proc.ExitCode)) - check $frontendNpmLog"
 }
+Write-OK "Frontend dependencies installed"
 
 Write-Step "Building frontend (Next.js)..."
+$currentStage = 'npm-build'
 $buildLog = "$LogDir\npm-build.log"
 Write-Host "    Running npm run build..." -ForegroundColor DarkGray
 $proc = Start-Process "npm.cmd" -ArgumentList "run", "build" -WorkingDirectory $FrontendDir `
@@ -341,18 +591,16 @@ $proc = Start-Process "npm.cmd" -ArgumentList "run", "build" -WorkingDirectory $
     -Wait -PassThru -NoNewWindow
 
 if ($proc.ExitCode -ne 0) {
-    Write-Fail "Build FAILED (exit code $($proc.ExitCode))"
-    Write-Fail "Log: $buildLog"
     if (Test-Path "$buildLog.err") {
         Get-Content "$buildLog.err" -Tail 20 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
     }
-    Write-Warn "Services NOT restarted - old version still running."
-    exit 1
+    Fail-Update -Stage 'npm-build' -Message "Build failed (exit $($proc.ExitCode)) - check $buildLog"
 }
 Write-OK "Frontend build succeeded"
 
 # STEP 7 - Start services
 Write-Step "Starting services..."
+$currentStage = 'service-start'
 sc.exe start DDIVault-API | Out-Null
 Write-Host "    DDIVault-API started - waiting 5s..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 12
@@ -365,8 +613,9 @@ sc.exe start DDIVault-Collector | Out-Null
 Write-Host "    DDIVault-Collector started - waiting 3s..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 3
 
-# STEP 8 - Verify
+# STEP 8 - Verify (now a mandatory gate, not advisory)
 Write-Step "Verifying services..."
+$currentStage = 'health-check'
 $allOk = $true
 foreach ($svc in $Services) {
     $status = Get-ServiceStatus $svc
@@ -379,29 +628,33 @@ foreach ($svc in $Services) {
 }
 
 Write-Host ""
-try {
-    # 127.0.0.1 (not localhost): on Windows localhost resolves to IPv6 ::1 first, which the
-    # server may not answer, making the poll time out while the app is actually up.
-    $health = Invoke-WebRequest -Uri "http://127.0.0.1:3007/api/health" -UseBasicParsing -TimeoutSec 10
-    $body   = $health.Content | ConvertFrom-Json
-    if ($body.status -eq "ok" -and $body.db -eq "connected") {
-        Write-OK "API health check passed - DB connected"
-    } else {
-        Write-Warn "API unexpected response: $($health.Content)"
-        $allOk = $false
-    }
-} catch {
-    Write-Warn "API health check failed: $_"
+# Mandatory final health check (matches NetVault's resilience upgrade): a service
+# reporting RUNNING per SCM is not proof the app is actually serving traffic -
+# poll /api/health with retries instead of a single best-effort attempt, and treat
+# a failure here the same as any other stage failure (triggers a rollback) rather
+# than just printing a warning and reporting success anyway.
+$healthy = Wait-Healthy -TimeoutSec 60
+if ($healthy) {
+    Write-OK "API health check passed - DB connected"
+} else {
     $allOk = $false
 }
 
-Write-Host ""
-if ($allOk) {
-    Write-Host "  DDIVault updated successfully to $commitHash" -ForegroundColor Green
-    Write-Host "  $commitMsg" -ForegroundColor Green
-} else {
-    Write-Host "  DDIVault update completed with warnings - check above" -ForegroundColor Yellow
+if (-not $allOk) {
+    Fail-Update -Stage 'health-check' -Message "Services did not come up healthy after starting (see service status / health check above)"
 }
+
+# Update succeeded and is confirmed healthy - the pre-update snapshots are no
+# longer needed. Remove them so they don't accumulate across updates or get
+# mistaken for a stale rollback target on the next run.
+foreach ($snap in @("$AppDir\node_modules.lastgood", "$FrontendDir\.next.lastgood", "$FrontendDir\node_modules.lastgood")) {
+    if (Test-Path $snap) { Remove-Item $snap -Recurse -Force -ErrorAction SilentlyContinue }
+}
+Write-StatusJson -Success $true -Stage $null -ErrorCode 0 -RolledBack $false -HealthCheckPassed $true
+
+Write-Host ""
+Write-Host "  DDIVault updated successfully to $commitHash" -ForegroundColor Green
+Write-Host "  $commitMsg" -ForegroundColor Green
 Write-Host ""
 
 # Best-effort - if Start-Transcript never succeeded (see top of script), this
