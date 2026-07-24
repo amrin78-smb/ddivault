@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.17': [
+    'Fixed a real production regression from the 1.22.16 fix (the one that made rollback snapshots actually survive git clean): TypeScript\'s build-time type-check only excludes the exact name "node_modules" by default, not the "node_modules.lastgood"/".next.lastgood" snapshot directories now sitting right next to it -- so once those snapshots could survive, the very next build tried to type-check next-auth\'s source code inside the OLD snapshot copy and failed on an import that only resolves from within its own original dependency tree. The two fixes were masking each other: before 1.22.16, the snapshot was always deleted before the build ran, so this was never hit. Snapshot directories are now explicitly excluded from the TypeScript check.',
+  ],
   '1.22.16': [
     'Found via a full adversarial bug sweep of the resilience work (4 real issues, all fixed): the CRITICAL one -- git clean was deleting the rollback\'s own node_modules/.next backup snapshots on every single run, moments after creating them (verified by actually reproducing it against this repo\'s .gitignore), which meant the safety net added recently had never actually been able to restore anything. Fixed by excluding the backup naming pattern from the clean step.',
     'The service-stop step (both the main update flow and the rollback) only issued a stop command when a service read as exactly "RUNNING" -- a crash-looping service sampled mid-restart was skipped entirely, leaving its auto-restart armed during the exact moment files were being restored underneath it. Now always issues the stop regardless of the sampled status.',
