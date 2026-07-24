@@ -1099,32 +1099,70 @@ function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onC
   );
 }
 
-// Full-screen overlay shown during an update; polls /api/health for recovery.
-// State machine: 'starting' → 'down' → 'back_up'. A healthy response only counts
-// as recovery once the API has actually been seen down first, so we never declare
-// "complete" against the still-running pre-restart service.
+// Full-screen overlay shown during an update; polls /api/health for recovery,
+// then CONFIRMS the real outcome via /api/system/last-update-status before ever
+// declaring success. State machine: 'starting' → 'down' → 'confirming' →
+// 'success' | 'rolled_back' | 'rollback_failed' | 'unknown'. A healthy /api/health
+// response only counts as "back up" once the API has actually been seen down
+// first — but "back up" alone is NOT proof of success: a rolled-back failure
+// makes the OLD (still-healthy) version answer just as confidently as a genuine
+// new-version success, so the two used to be indistinguishable here (the overlay
+// would show a green "updated successfully" toast even after a silent rollback,
+// possibly at the same time UpdateFailureBanner was correctly showing red).
+// 'confirming' reads Update-DDIVault.ps1's own recorded outcome instead of
+// guessing from the health poll alone.
 function UpdatingOverlay() {
-  const [phase, setPhase] = useState<'starting' | 'down' | 'back_up' | 'timeout'>('starting');
+  const [phase, setPhase] = useState<'starting' | 'down' | 'confirming' | 'success' | 'rolled_back' | 'rollback_failed' | 'unknown' | 'timeout'>('starting');
   const [countdown, setCountdown] = useState(RELOAD_COUNTDOWN_SECONDS);
   const wentDown = useRef(false);
   const consecutiveUp = useRef(0);
 
-  // Navigate to the dashboard with a success banner. Used by both the countdown
-  // and the "Reload Now" button (which skips the remaining countdown).
+  // Only the confirmed-success path ever auto-navigates with ?updated=true (the
+  // green dashboard toast) — every other terminal phase requires a manual click,
+  // and none of them carry ?updated=true, so a rolled-back or failed run can
+  // never trigger that toast.
   const reloadToDashboard = () => { window.location.href = '/?updated=true'; };
+  const goToDashboard = () => { window.location.href = '/'; };
+
+  // Once /api/health is confirmed stably back up, this is the piece that used to
+  // be missing: check the REAL update outcome from
+  // /api/system/last-update-status (written by Update-DDIVault.ps1's
+  // Write-StatusJson) rather than assuming success just because something
+  // answered. Retries briefly — the script's own health gate runs just before it
+  // writes this file, so there's a small window where our health poll can win
+  // the race against the file landing on disk.
+  const confirmOutcome = async (active: { current: boolean }) => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (!active.current) return;
+      try {
+        const res = await fetch('/api/system/last-update-status', { cache: 'no-store' });
+        const data = await res.json();
+        if (data && data.exists) {
+          if (data.success === true) { setPhase('success'); return; }
+          if (data.success === false && data.rolledBack === true) { setPhase('rolled_back'); return; }
+          if (data.success === false && data.rolledBack === false) { setPhase('rollback_failed'); return; }
+        }
+      } catch {
+        // keep retrying
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    // Couldn't confirm the real outcome after retrying — never guess success.
+    if (active.current) setPhase('unknown');
+  };
 
   useEffect(() => {
-    let active = true;
+    const active = { current: true };
     const startedAt = Date.now();
     let pollId: ReturnType<typeof setInterval> | null = null;
 
     const stopPolling = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
 
     const tick = async () => {
-      if (!active) return;
+      if (!active.current) return;
       if (Date.now() - startedAt > UPDATE_TIMEOUT_MS) {
         stopPolling();
-        if (active) setPhase('timeout');
+        if (active.current) setPhase('timeout');
         return;
       }
       // Per-poll timeout via AbortController so a hung connection during the
@@ -1141,7 +1179,7 @@ function UpdatingOverlay() {
       } finally {
         clearTimeout(abortId);
       }
-      if (!active) return;
+      if (!active.current) return;
       if (!ok) {
         // API is down (restarting). Reset the consecutive-success counter: during
         // startup the API can answer one probe then drop again, so any failure
@@ -1159,10 +1197,9 @@ function UpdatingOverlay() {
         // mid-startup, which would trigger a premature reload.
         consecutiveUp.current += 1;
         if (consecutiveUp.current >= 3) {
-          setPhase('back_up');
+          setPhase('confirming');
           stopPolling();
-          // The reload itself is driven by the countdown effect below — the API
-          // is up, but Next.js needs a little longer before it can serve pages.
+          confirmOutcome(active);
         }
       }
       // else: still the pre-restart API — keep waiting for it to go down.
@@ -1172,15 +1209,15 @@ function UpdatingOverlay() {
     tick();
 
     return () => {
-      active = false;
+      active.current = false;
       stopPolling();
     };
   }, []);
 
-  // Once the API is confirmed stably back up, count down (15…14…13…) before
-  // reloading so the Next.js frontend has time to finish starting after the API.
+  // Only a CONFIRMED real success counts down (15…14…13…) before reloading, so
+  // the Next.js frontend has time to finish starting after the API.
   useEffect(() => {
-    if (phase !== 'back_up') return;
+    if (phase !== 'success') return;
     if (countdown <= 0) { reloadToDashboard(); return; }
     const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(id);
@@ -1188,34 +1225,48 @@ function UpdatingOverlay() {
 
   let statusLine = 'Starting update…';
   if (phase === 'down') statusLine = 'Services restarting…';
-  else if (phase === 'back_up') statusLine = `✓ Services are back online. Reloading in ${countdown} second${countdown === 1 ? '' : 's'}…`;
+  else if (phase === 'confirming') statusLine = 'Services are back online — confirming the update actually succeeded…';
+  else if (phase === 'success') statusLine = `✓ Update succeeded. Reloading in ${countdown} second${countdown === 1 ? '' : 's'}…`;
+  else if (phase === 'rolled_back') statusLine = 'The update failed and was automatically rolled back — DDIVault is running normally on the previous version.';
+  else if (phase === 'rollback_failed') statusLine = 'The update failed AND the automatic rollback also failed — DDIVault may be down or unstable. Manual intervention required.';
+  else if (phase === 'unknown') statusLine = 'Services are back up, but the update outcome could not be confirmed. Check the Updates tab before assuming it succeeded.';
   else if (phase === 'timeout') statusLine = 'Update is taking longer than expected. Try refreshing the page manually.';
+
+  const isSpinning = phase === 'starting' || phase === 'down' || phase === 'confirming';
+  const isWarning = phase === 'rolled_back' || phase === 'rollback_failed' || phase === 'unknown' || phase === 'timeout';
+  const isUrgent = phase === 'rollback_failed';
+
+  let buttonLabel = 'Reload Now';
+  let buttonAction = () => window.location.reload();
+  if (phase === 'success') { buttonLabel = 'Reload Now'; buttonAction = reloadToDashboard; }
+  else if (phase === 'rolled_back') { buttonLabel = 'Go to Dashboard'; buttonAction = goToDashboard; }
+  else if (phase === 'rollback_failed') { buttonLabel = 'Reload Page'; buttonAction = () => window.location.reload(); }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.78)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
-        {phase !== 'back_up' && phase !== 'timeout' && (
+        {isSpinning && (
           <div style={{ fontSize: 44, lineHeight: 1, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
         )}
-        {phase === 'back_up' && <div style={{ fontSize: 44, lineHeight: 1 }}>✓</div>}
-        {phase === 'timeout' && <div style={{ fontSize: 44, lineHeight: 1 }}>⚠</div>}
+        {phase === 'success' && <div style={{ fontSize: 44, lineHeight: 1 }}>✓</div>}
+        {isWarning && <div style={{ fontSize: 44, lineHeight: 1, color: isUrgent ? 'var(--red)' : 'var(--yellow)' }}>⚠</div>}
         <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginTop: 14 }}>Updating DDIVault…</div>
         <p style={{ ...MUTED, marginTop: 6 }}>Pulling latest code and restarting services. Do not close this window.</p>
-        <p style={{ fontWeight: 600, margin: '14px 0' }}>{statusLine}</p>
-        {phase === 'back_up' && (
+        <p style={{ fontWeight: 600, margin: '14px 0', color: isUrgent ? 'var(--red)' : undefined }}>{statusLine}</p>
+        {phase === 'success' && (
           <div style={{ fontSize: 40, fontWeight: 800, lineHeight: 1, margin: '4px 0 10px', color: 'var(--primary)' }}>
             {countdown}
           </div>
         )}
-        {phase !== 'back_up' && (
+        {isSpinning && (
           <p style={{ ...MUTED, fontSize: 'var(--text-sm)' }}>(This usually takes 1-3 minutes)</p>
         )}
         <button
           className="btn btn-primary"
           style={{ marginTop: 10 }}
-          onClick={phase === 'back_up' ? reloadToDashboard : () => window.location.reload()}
+          onClick={buttonAction}
         >
-          Reload Now
+          {buttonLabel}
         </button>
       </div>
     </div>
@@ -1266,6 +1317,15 @@ function SystemUpdates() {
       // 402 Payment Required → license expired/unverifiable, updates disabled.
       if (res.status === 402) {
         setLicenseBlocked(r?.error || 'License expired — updates disabled. Please renew your NocVault license.');
+        return;
+      }
+      // 409 Conflict → the concurrency-guard lock (Update-DDIVault.ps1's
+      // logs/update.lock, checked by this same route before scheduling a task)
+      // says a run is already in progress. Surface it distinctly rather than
+      // falling into the generic error branch, so this reads as "try again in a
+      // bit" rather than a real failure.
+      if (res.status === 409) {
+        setUpdateErr(r?.error || 'An update is already in progress. Please wait for it to finish before starting another.');
         return;
       }
       if (!res.ok) {

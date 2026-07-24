@@ -30,6 +30,15 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.18': [
+    'Hardened the updater against the exact bug class behind a real production incident: DB-credential extraction in the schema-migration step (DDI_DB_PASS/USER/NAME) had no error handling, so a missing/renamed .env.local variable crashed the script with services already stopped and node_modules/.next already swapped out -- and no rollback attempt. Now routes through the same recovery path every other stage uses.',
+    'DDIVault-Collector has no listening port, so the existing lingering-process safety net (which only checks the App/API ports) could never catch a Collector process that didn\'t fully exit in time -- exactly the mechanism behind that same incident (a live process still loading modules from node_modules while it was being replaced underneath it). Now matched and killed by command line, in both the update flow and the rollback path.',
+    'The pre-update backup cleanup no longer blindly deletes a leftover snapshot from a prior run -- if the last recorded update shows its OWN rollback also failed, that leftover snapshot may be the only way back to a working install, so the script now aborts loudly (restarting services first) instead of overwriting it.',
+    'The post-update and post-rollback health checks now confirm the actual running VERSION, not just that something answered -- closes the gap where a stuck old process or a partially-applied rollback could pass a health check while serving the wrong code.',
+    'A single failed health check during rollback no longer immediately declares "rollback also failed" -- it now gets one more, shorter retry window first, since this is a shared server where a purely transient blip (a concurrent Postgres restart) has nothing to do with whether the rollback itself worked.',
+    'Added a concurrency guard (lock file, both in the script and the update-trigger API route) so two overlapping update runs can no longer race on the same rollback snapshot mechanism.',
+    'The in-app "Update Now" overlay no longer declares success purely because the API answered again -- a silently rolled-back failure used to look identical to success. It now confirms the real outcome before showing success, with distinct states for "failed and rolled back" versus the more urgent "rollback also failed" (which no longer auto-reloads).',
+  ],
   '1.22.17': [
     'Fixed a real production regression from the 1.22.16 fix (the one that made rollback snapshots actually survive git clean): TypeScript\'s build-time type-check only excludes the exact name "node_modules" by default, not the "node_modules.lastgood"/".next.lastgood" snapshot directories now sitting right next to it -- so once those snapshots could survive, the very next build tried to type-check next-auth\'s source code inside the OLD snapshot copy and failed on an import that only resolves from within its own original dependency tree. The two fixes were masking each other: before 1.22.16, the snapshot was always deleted before the build ran, so this was never hit. Snapshot directories are now explicitly excluded from the TypeScript check.',
   ],
@@ -853,6 +862,29 @@ app.post('/api/system/update', requireSuperAdmin, async (_req, res) => {
   if (!serverIp) {
     return res.status(400).json({ error: 'SERVER_IP not configured in .env.local' });
   }
+
+  // Concurrency guard: Update-DDIVault.ps1 writes logs/update.lock (its own PID,
+  // removed in a `finally` when it's done) for the duration of a run. Check the
+  // SAME lock file here so a second click of "Update Now" (or a second API call)
+  // can't schedule an overlapping run while one is already mid-flight - two
+  // concurrent runs would race on the same node_modules/.next
+  // rename-to-.lastgood dance the rollback mechanism depends on.
+  const lockPath = path.join(APP_ROOT, 'logs', 'update.lock');
+  try {
+    if (fs.existsSync(lockPath)) {
+      const lockedPid = parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
+      let stillRunning = false;
+      if (lockedPid) {
+        try { process.kill(lockedPid, 0); stillRunning = true; } catch { stillRunning = false; }
+      }
+      if (stillRunning) {
+        return res.status(409).json({ error: 'An update is already in progress. Please wait for it to finish before starting another.' });
+      }
+    }
+  } catch (e) {
+    console.error('[Update] lock check failed (non-fatal, proceeding):', e.message);
+  }
+
   const scriptPath = path.join(__dirname, '..', 'installer', 'Update-DDIVault.ps1').replace(/\//g, '\\');
   try {
     try { execSync('schtasks /delete /tn "DDIVaultUpdate" /f', { stdio: 'ignore' }); } catch (_e) { /* none */ }

@@ -74,9 +74,46 @@ $Services    = @("DDIVault-API", "DDIVault-App", "DDIVault-Collector")
 # start must never block the actual update.
 try {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-    $transcriptPath = Join-Path $LogDir "update-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    # PID suffix (not just second-granularity timestamp) so two runs that start
+    # within the same second - only reachable if the lock below is somehow
+    # bypassed, but worth hardening anyway - can never append-interleave into
+    # the same log file.
+    $transcriptPath = Join-Path $LogDir "update-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$PID.log"
     Start-Transcript -Path $transcriptPath -Append | Out-Null
 } catch { Write-Warning "Could not start transcript: $($_.Exception.Message)" }
+
+# --- Concurrency guard: refuse to run if another update is already in flight ---
+# Neither this script nor the in-app trigger route (api/server.js's POST
+# /api/system/update) used to stop a SECOND overlapping run from starting - two
+# concurrent runs would race on the very same node_modules/.next
+# rename-to-.lastgood dance the rollback mechanism below depends on (one run's
+# snapshot step could rename a folder out from under the other run's restore,
+# corrupting both). A simple PID-checked lock file closes that gap. The API
+# route checks the SAME lock file before even scheduling a run (see the
+# concurrency-guard comment on POST /api/system/update in api/server.js).
+$LockPath = Join-Path $LogDir 'update.lock'
+if (Test-Path $LockPath) {
+    $lockedPid = $null
+    try { $lockedPid = [int]((Get-Content -LiteralPath $LockPath -Raw -ErrorAction Stop).Trim()) } catch {}
+    $lockedProc = if ($lockedPid) { Get-Process -Id $lockedPid -ErrorAction SilentlyContinue } else { $null }
+    # Confirm the PID is actually still a live powershell process, not just a PID
+    # reused by an unrelated process after a prior run crashed hard enough to
+    # skip its own `finally` cleanup below - otherwise a stale lock would block
+    # every future update forever.
+    if ($lockedProc -and $lockedProc.ProcessName -match 'powershell') {
+        Write-Warning "Another Update-DDIVault.ps1 run is already in progress (PID $lockedPid) - exiting without making any changes."
+        try { Stop-Transcript | Out-Null } catch {}
+        exit 1
+    } else {
+        Write-Warning "Found a stale update lock (PID $lockedPid not running) - removing it and continuing."
+        Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+    }
+}
+try {
+    [System.IO.File]::WriteAllText($LockPath, "$PID", (New-Object System.Text.UTF8Encoding $false))
+} catch {
+    Write-Warning "Could not write update lock file: $($_.Exception.Message)"
+}
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "    [OK] $msg" -ForegroundColor Green }
@@ -87,6 +124,35 @@ function Get-ServiceStatus($name) {
     $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
     if (-not $svc) { return "NOT_FOUND" }
     return $svc.Status.ToString().ToUpper()
+}
+
+# DDIVault-Collector has NO listening port (unlike App/API on 3006/3007), so the
+# port-based lingering-process kill below can't see it at all - a Collector
+# process that doesn't fully exit within the fixed stop-wait stays invisible and
+# can keep require()-ing from root node_modules while STEP 2.5/6 rename/restore
+# it underneath it. That exact mechanism (a live process still requiring from a
+# shared node_modules being renamed out from under it) caused a real production
+# incident. Match by command line instead, scoped to THIS install's collector
+# entrypoint ($AppDir\collector\collector.js, per the NSSM install command in
+# ../netvault/installer/Install-NocVault-Suite.ps1) so it can never catch a
+# sibling app's own node.exe on the shared server - same command-line-matching
+# approach NetVault's own updater uses for its lingering-process check (see
+# ../netvault/installer/Update-NetVault.ps1).
+function Stop-LingeringCollector {
+    try {
+        $procs = Get-CimInstance -ClassName Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.CommandLine -and
+                $_.CommandLine.ToLower().Contains($AppDir.ToLower()) -and
+                $_.CommandLine.ToLower().Contains('collector')
+            }
+        foreach ($p in $procs) {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            Write-Warn "Killed lingering DDIVault-Collector process PID $($p.ProcessId)"
+        }
+    } catch {
+        Write-Warn "Could not check for a lingering Collector process: $($_.Exception.Message)"
+    }
 }
 
 # --- Resilience: rollback + structured status reporting -------------------
@@ -103,6 +169,8 @@ function Get-ServiceStatus($name) {
 $StatusPath      = "$LogDir\last-update-status.json"
 $prevCommit      = $null
 $attemptedCommit = $null
+$prevVersion     = $null  # package.json version pre-update - what a rollback should restore
+$newVersion      = $null  # package.json version post-git-pull - what the main flow expects live
 $currentStage    = 'init'
 $envBackupForRollback = $null  # set once STEP 2 has captured the .env.local backups
 
@@ -154,14 +222,21 @@ function Write-StatusJson {
 }
 
 # Poll the API's /api/health until it reports ok+connected, or $TimeoutSec elapses.
-function Wait-Healthy([int]$TimeoutSec = 60) {
+# $ExpectedVersion is optional: when given, a response is only accepted as
+# healthy once /api/health's own `version` field (api/server.js reads this once
+# from package.json at process start) matches too - otherwise the service
+# answering at all (even the OLD, not-yet-replaced process, or after a rollback
+# that silently didn't fully take) is enough to satisfy this check, which can't
+# tell "something is answering" apart from "the RIGHT version is answering".
+function Wait-Healthy([int]$TimeoutSec = 60, [string]$ExpectedVersion = $null) {
     Write-Host "    Waiting for DDIVault API to respond on :3007 " -ForegroundColor Gray -NoNewline
     $healthy = $false
     for ($i = 0; $i -lt $TimeoutSec; $i++) {
         try {
             $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3007/api/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
             $body = $resp.Content | ConvertFrom-Json
-            if ($resp.StatusCode -eq 200 -and $body.status -eq 'ok' -and $body.db -eq 'connected') { $healthy = $true; break }
+            $versionOk = (-not $ExpectedVersion) -or ($body.version -eq $ExpectedVersion)
+            if ($resp.StatusCode -eq 200 -and $body.status -eq 'ok' -and $body.db -eq 'connected' -and $versionOk) { $healthy = $true; break }
         } catch {}
         Write-Host "." -ForegroundColor DarkGray -NoNewline
         Start-Sleep -Seconds 1
@@ -176,19 +251,28 @@ function Wait-Healthy([int]$TimeoutSec = 60) {
 #
 # Note on database migrations: this rolls back CODE, not schema. STEP 4.5 below
 # still refuses to deploy new code against a database it failed to migrate (a
-# schema migration is not something a code-level rollback can undo, and DDIVault's
-# schema files are not applied inside a single transaction) - but a schema failure
-# now triggers this same rollback instead of leaving the app down entirely, since
-# the old code is far more likely to tolerate a few extra/partial columns than
-# the DDIVault install is to tolerate being completely offline.
+# schema migration is not something a code-level rollback can undo). Each of the
+# 4 schema files now runs with --single-transaction, so a failure partway
+# through any ONE file cleanly rolls back just that file's own partial DDL -
+# but the 4 files are still not one combined transaction across all of them, so
+# "some files fully applied, then one failed" remains possible. Either way, a
+# schema failure triggers this same rollback instead of leaving the app down
+# entirely, since the old code is far more likely to tolerate a few
+# extra/partial columns than the DDIVault install is to tolerate being
+# completely offline.
 function Invoke-Rollback([string]$Reason) {
     Write-Host ""
     Write-Step "ROLLING BACK - reason: $Reason"
     $ok = $true
     try {
-        # Stop services BEFORE touching node_modules/.next below. STEP 7 already
-        # started all 3 services by the time a failure can trigger this function,
-        # so without this, the restore's Remove-Item/Rename-Item would be mutating
+        # Stop services BEFORE touching node_modules/.next below. This function
+        # can trigger from ANY stage - including git-pull/schema-apply/
+        # npm-install/npm-build, all of which run BEFORE STEP 7 ever starts a
+        # service - so services are not necessarily running by the time we get
+        # here. `sc.exe stop` on an already-stopped service is a harmless no-op,
+        # so issuing it unconditionally is always safe; the real reason it's
+        # still required is the case where STEP 7 DID already start them: without
+        # this, the restore's Remove-Item/Rename-Item would be mutating
         # a directory tree while DDIVault-API/-Collector are still live and
         # actively require()-ing from it - a real race that produced exactly this
         # symptom in production (LogVault's identical bug): the restore reported
@@ -205,6 +289,12 @@ function Invoke-Rollback([string]$Reason) {
             if ((Get-ServiceStatus $svc) -ne "NOT_FOUND") { sc.exe stop $svc | Out-Null }
         }
         Start-Sleep -Seconds 3
+        # The Collector could still be running at this point (no listening port
+        # to have caught it earlier, and rollback can trigger for reasons that
+        # never went near the port-based check at all, e.g. a schema-apply
+        # failure) - same protection as STEP 1's, applied here too before the
+        # node_modules restore below.
+        Stop-LingeringCollector
 
         Set-Location $AppDir
         if ($prevCommit) {
@@ -276,9 +366,23 @@ function Invoke-Rollback([string]$Reason) {
             if ($status -ne "RUNNING") { Write-Warn "$svc - $status (SCM status can lag - health check below is authoritative)" }
         }
 
-        $healthy = Wait-Healthy -TimeoutSec 30
+        $healthy = Wait-Healthy -TimeoutSec 30 -ExpectedVersion $prevVersion
+        if (-not $healthy) {
+            # A single failed health-check here used to be treated identically to
+            # a genuinely broken rollback and immediately declared the worst-case
+            # "ROLLBACK ALSO FAILED" state - but this is a shared, contended
+            # server, and a purely transient blip (a concurrent Postgres restart,
+            # momentary DB saturation from a sibling app) has nothing to do with
+            # whether the rollback itself actually worked. Give it one more,
+            # shorter retry window before giving up - the same way the MAIN
+            # flow's own Wait-Healthy call already retries internally during its
+            # health gate, just one level up.
+            Write-Warn "Rollback health check failed - retrying once after a short pause before declaring the rollback failed"
+            Start-Sleep -Seconds 10
+            $healthy = Wait-Healthy -TimeoutSec 20 -ExpectedVersion $prevVersion
+        }
         if ($healthy) { Write-OK "Rollback verified - last known-good version is up and healthy" }
-        else { Write-Warn "Rollback restart did not pass the health check"; $ok = $false }
+        else { Write-Warn "Rollback restart did not pass the health check (after retry)"; $ok = $false }
         return ($ok -and $healthy)
     } catch {
         Write-Warn "Rollback itself failed: $($_.Exception.Message)"
@@ -303,6 +407,14 @@ function Fail-Update {
     try { Stop-Transcript | Out-Null } catch {}
     exit 1
 }
+
+# Everything from here on is wrapped in try/finally purely so the concurrency-
+# guard lock file above is always released on the way out - normal completion,
+# any Fail-Update `exit 1` path, or an unexpected error - and can never
+# permanently wedge future updates. See the `finally` at the very end of this
+# script. (PowerShell's `exit` still runs enclosing `finally` blocks during its
+# call-stack unwind, including through a nested function like Fail-Update.)
+try {
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Fail "This script must be run as Administrator."
@@ -368,6 +480,10 @@ foreach ($port in @(3006, 3007)) {
         } catch {}
     }
 }
+# The port checks above only cover App (3006) and API (3007) - DDIVault-Collector
+# has no listening port at all, so a lingering Collector process is invisible to
+# them. See Stop-LingeringCollector's own comment for why this matters.
+Stop-LingeringCollector
 
 # STEP 2 - Backup .env.local
 Write-Step "Backing up .env.local files..."
@@ -405,9 +521,52 @@ try {
 if ($prevCommit) { Write-OK "Current commit: $prevCommit" }
 else { Write-Warn "Could not determine current commit - rollback will not be able to revert source" }
 
+# Capture the pre-update version too (not just the commit) - this is what a
+# rollback should restore, and what Invoke-Rollback's own health check below
+# gates on so "the API answered" and "the API answered running the OLD code"
+# aren't conflated.
+try {
+    $prevVersion = (Get-Content -LiteralPath "$AppDir\package.json" -Raw -ErrorAction Stop | ConvertFrom-Json).version
+} catch { $prevVersion = $null }
+
 $rootModulesBackup     = "$AppDir\node_modules.lastgood"
 $frontendNextBackup    = "$FrontendDir\.next.lastgood"
 $frontendModulesBackup = "$FrontendDir\node_modules.lastgood"
+
+# Before blindly deleting any leftover .lastgood snapshot below (as "stale
+# cruft from a prior interrupted run"), check whether it might actually be a
+# still-valid, never-consumed backup from a PRIOR run whose OWN rollback failed
+# partway - in that case this snapshot is the one remaining path back to a
+# working install, not cruft. Heuristic: last-update-status.json recording
+# success:false AND rolledBack:false is exactly the "ROLLBACK ALSO FAILED"
+# state Fail-Update writes when Invoke-Rollback itself returns $false - if
+# that's still the last recorded outcome, don't touch the leftover snapshot.
+$hasLeftoverBackup = (Test-Path $rootModulesBackup) -or (Test-Path $frontendNextBackup) -or (Test-Path $frontendModulesBackup)
+if ($hasLeftoverBackup -and (Test-Path $StatusPath)) {
+    $prevStatus = $null
+    try {
+        $BOM = [char]0xfeff
+        $raw = Get-Content -LiteralPath $StatusPath -Raw -ErrorAction Stop
+        $prevStatus = ($raw.TrimStart($BOM)) | ConvertFrom-Json
+    } catch { $prevStatus = $null }
+    if ($prevStatus -and $prevStatus.success -eq $false -and $prevStatus.rolledBack -eq $false) {
+        Write-Fail "!!! A leftover .lastgood snapshot exists AND the last recorded update ($($prevStatus.timestamp), stage '$($prevStatus.stage)') shows the rollback itself ALSO failed !!!"
+        Write-Fail "!!! Refusing to overwrite it - it may be the ONLY remaining path back to a working install. Manual intervention required before the next update can run. !!!"
+        Write-Fail "!!! Investigate/restore from: $rootModulesBackup / $frontendNextBackup / $frontendModulesBackup !!!"
+        # Services were stopped in STEP 1 above but nothing else has been
+        # touched yet (source/node_modules/.next are still whatever was live
+        # coming into this run) - restart them so aborting here doesn't ALSO
+        # take DDIVault down on top of the already-bad state being reported.
+        sc.exe start DDIVault-API | Out-Null
+        Start-Sleep -Seconds 8
+        sc.exe start DDIVault-App | Out-Null
+        Start-Sleep -Seconds 8
+        sc.exe start DDIVault-Collector | Out-Null
+        try { Stop-Transcript | Out-Null } catch {}
+        exit 1
+    }
+}
+
 # Wrapped in try/catch: despite the global $ErrorActionPreference = 'Stop',
 # these Rename-Item calls (-ErrorAction Stop) had no enclosing try/catch and no
 # top-level trap, so a transient failure here (e.g. a lingering process handle
@@ -464,6 +623,12 @@ $rp = git rev-parse HEAD 2>&1
 if ($rp -match '^[0-9a-f]{40}$') { $attemptedCommit = $rp }
 Write-OK "Now at commit $commitHash - $commitMsg"
 
+# Capture the post-pull version - this is what the main flow's final health
+# check (STEP 8) expects to see live once services restart.
+try {
+    $newVersion = (Get-Content -LiteralPath "$AppDir\package.json" -Raw -ErrorAction Stop | ConvertFrom-Json).version
+} catch { $newVersion = $null }
+
 # STEP 4 - Restore .env.local
 Write-Step "Restoring .env.local files..."
 if ($rootEnvContent) {
@@ -502,9 +667,31 @@ Write-Step "Running schema migrations..."
 $currentStage = 'schema-apply'
 $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
 if (Test-Path $psql) {
-    $dbPass = (Get-Content $rootEnvPath | Select-String "DDI_DB_PASS=").ToString().Split("=",2)[1].Trim()
-    $dbUser = (Get-Content $rootEnvPath | Select-String "DDI_DB_USER=").ToString().Split("=",2)[1].Trim()
-    $dbName = (Get-Content $rootEnvPath | Select-String "DDI_DB_NAME=").ToString().Split("=",2)[1].Trim()
+    # Wrapped in try/catch - none of this was previously guarded, unlike the
+    # POSTGRES_PASSWORD extraction just below (which uses Select-Object -First 1
+    # / a plain .Substring() and soft-skips when absent). If Select-String finds
+    # no match here (a missing/renamed env var, a malformed .env.local),
+    # .ToString() on the resulting $null throws - and despite the global
+    # $ErrorActionPreference = 'Stop', that was an UNCAUGHT terminating error at
+    # a point where services are ALREADY stopped and node_modules/.next are
+    # ALREADY renamed to .lastgood (STEP 2.5 above), so the script died with NO
+    # rollback attempt. Same bug class already found and fixed for STEP 2.5's own
+    # Rename-Item calls - just never applied to these three lines. These three
+    # ARE required (unlike POSTGRES_PASSWORD, which is an optional self-heal), so
+    # a failure here routes through Fail-Update rather than soft-skipping.
+    try {
+        $dbPassLine = Get-Content $rootEnvPath -ErrorAction Stop | Select-String "DDI_DB_PASS=" | Select-Object -First 1
+        $dbUserLine = Get-Content $rootEnvPath -ErrorAction Stop | Select-String "DDI_DB_USER=" | Select-Object -First 1
+        $dbNameLine = Get-Content $rootEnvPath -ErrorAction Stop | Select-String "DDI_DB_NAME=" | Select-Object -First 1
+        if (-not $dbPassLine) { throw "DDI_DB_PASS not found in $rootEnvPath" }
+        if (-not $dbUserLine) { throw "DDI_DB_USER not found in $rootEnvPath" }
+        if (-not $dbNameLine) { throw "DDI_DB_NAME not found in $rootEnvPath" }
+        $dbPass = $dbPassLine.ToString().Split("=",2)[1].Trim()
+        $dbUser = $dbUserLine.ToString().Split("=",2)[1].Trim()
+        $dbName = $dbNameLine.ToString().Split("=",2)[1].Trim()
+    } catch {
+        Fail-Update -Stage 'schema-apply' -Message "Could not read DB credentials from $rootEnvPath - $($_.Exception.Message)"
+    }
 
     # Self-heal: on fresh installs the tables are owned by postgres, but the schema
     # below is applied as ddivault_user (needs ownership) so CREATE OR REPLACE
@@ -570,7 +757,19 @@ $$;
             # (see CLAUDE.md's "Collector crashes with column does not exist").
             # This does NOT affect the idempotent `IF NOT EXISTS`/`ON CONFLICT`
             # statements schema files rely on - those aren't errors on a re-run.
-            $output = & $psql -U $dbUser -d $dbName -v ON_ERROR_STOP=1 -f $schemaPath 2>&1
+            # -h/-p pinned explicitly (matching the ownership-reassign psql call
+            # above) rather than relying on psql's PGHOST/PGPORT defaults, so a
+            # future environment change to those defaults can't silently make
+            # this call and the reassign call resolve to different servers.
+            # --single-transaction: none of the 4 schema files use a statement
+            # that can't run inside a transaction block (no CREATE INDEX
+            # CONCURRENTLY, ALTER TYPE ... ADD VALUE, VACUUM, or CREATE DATABASE -
+            # verified against all 4 files) - so a failure partway through ANY ONE
+            # file now cleanly rolls back just that file's own partial DDL,
+            # instead of leaving it partially applied (previously the only
+            # granularity was "N of 4 files applied", not "this file applied
+            # cleanly or not at all").
+            $output = & $psql -U $dbUser -h localhost -p 5432 -d $dbName -v ON_ERROR_STOP=1 --single-transaction -f $schemaPath 2>&1
             $schemaExitCode = $LASTEXITCODE
             $ErrorActionPreference = $prev
             $output | Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
@@ -693,11 +892,11 @@ Write-Host ""
 # poll /api/health with retries instead of a single best-effort attempt, and treat
 # a failure here the same as any other stage failure (triggers a rollback) rather
 # than just printing a warning and reporting success anyway.
-$healthy = Wait-Healthy -TimeoutSec 60
+$healthy = Wait-Healthy -TimeoutSec 60 -ExpectedVersion $newVersion
 if ($healthy) {
-    Write-OK "API health check passed - DB connected"
+    Write-OK "API health check passed - DB connected - version $newVersion confirmed"
 } else {
-    Fail-Update -Stage 'health-check' -Message "API did not answer /api/health within 60s of starting - service may be crash-looping or stuck"
+    Fail-Update -Stage 'health-check' -Message "API did not answer /api/health with the expected version ($newVersion) within 60s of starting - service may be crash-looping, stuck, or still serving the old version"
 }
 
 # Update succeeded and is confirmed healthy - the pre-update snapshots are no
@@ -712,6 +911,20 @@ Write-Host ""
 Write-Host "  DDIVault updated successfully to $commitHash" -ForegroundColor Green
 Write-Host "  $commitMsg" -ForegroundColor Green
 Write-Host ""
+
+} finally {
+    # Always release the concurrency-guard lock, however this run ends. Only
+    # remove it if it still names THIS run's own PID - a lock belonging to some
+    # other run should never be touched from here.
+    if (Test-Path $LockPath) {
+        try {
+            $ownedPid = (Get-Content -LiteralPath $LockPath -Raw -ErrorAction Stop).Trim()
+            if ($ownedPid -eq "$PID") { Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue }
+        } catch {
+            Remove-Item -LiteralPath $LockPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 
 # Best-effort - if Start-Transcript never succeeded (see top of script), this
 # throws harmlessly and is swallowed.

@@ -47,9 +47,14 @@
   as `/api/system/update-available`) surfaces to `UpdateFailureBanner.tsx`
   (admin-only). **A schema migration failure now also triggers this rollback**
   instead of the old hard-stop-and-leave-down behavior — but this only rolls
-  back CODE, not the database: `scripts/schema*.sql` are not applied inside a
-  single transaction, so a code-level rollback cannot undo a partially-applied
-  migration. The script still refuses to deploy the NEW code against a DB it
+  back CODE, not the database: each of the 4 `scripts/schema*.sql` files runs
+  with `--single-transaction` (verified none of the 4 use a statement that
+  can't run in a transaction block — no `CREATE INDEX CONCURRENTLY`,
+  `ALTER TYPE ... ADD VALUE`, `VACUUM`, or `CREATE DATABASE`), so a failure
+  partway through any ONE file cleanly rolls back just that file — but the 4
+  files are still not one combined transaction, so a code-level rollback still
+  cannot undo migrations from files that fully applied before a LATER file
+  failed. The script still refuses to deploy the NEW code against a DB it
   failed to migrate (same reasoning as before); it now also gets the OLD code
   back up and running instead of leaving the install fully down. The final
   service-status + `/api/health` check (STEP 8) is now a MANDATORY gate — it
@@ -57,6 +62,53 @@
   still exiting 0; a health-check failure now triggers the same rollback path
   as any other stage failure. **Don't revert any of these back to
   warn-and-continue** — that's the exact bug class this exists to close.
+  **Further hardening (2026-07-24, following a real production incident):**
+  - The `DDI_DB_PASS`/`DDI_DB_USER`/`DDI_DB_NAME` extraction in STEP 4.5 is now
+    wrapped in try/catch routing through `Fail-Update` — it used to be
+    unguarded, so a missing/renamed env var threw an uncaught null-reference
+    error AFTER services were stopped and node_modules/.next already renamed
+    to `.lastgood`, with no rollback attempt at all (the same bug class
+    already fixed for STEP 2.5's own `Rename-Item` calls, just not applied
+    here until now).
+  - **`Stop-LingeringCollector`** (command-line-matched, scoped to
+    `$AppDir` + `'collector'` — mirrors NetVault's own command-line-matching
+    lingering-process fix) now runs in STEP 1 and inside `Invoke-Rollback`.
+    `DDIVault-Collector` has no listening port (unlike App/API on
+    3006/3007), so the port-based kill loop couldn't see it at all — this was
+    the exact mechanism (a live process still `require()`-ing from a shared
+    `node_modules` being renamed underneath it) behind a real production
+    incident.
+  - The pre-flight `.lastgood` cleanup no longer blindly deletes a leftover
+    snapshot: if `last-update-status.json` shows the last run's outcome was
+    `success:false, rolledBack:false` (rollback itself also failed), the
+    leftover snapshot may be the ONLY remaining path back to a working
+    install — the script now aborts loudly (restarting services first, so the
+    abort itself doesn't cause an outage) instead of overwriting it.
+  - `Wait-Healthy` takes an optional `-ExpectedVersion` and only declares
+    healthy once `/api/health`'s own `version` field matches too — the main
+    flow gates on the post-pull version, `Invoke-Rollback` gates on the
+    pre-update version — so "something answered" and "the RIGHT version
+    answered" are no longer conflated.
+  - `Invoke-Rollback`'s own health check now retries once more (a ~10s pause,
+    then a shorter second window) before declaring "ROLLBACK ALSO FAILED" —
+    a single transient failure (concurrent Postgres restart, DB saturation on
+    this shared server) used to be reported identically to a genuinely broken
+    rollback.
+  - **Concurrency guard**: a PID-checked `logs\update.lock` file (script
+    start, released in a `finally` wrapping the whole run) stops two
+    overlapping runs from racing on the same node_modules/.next
+    rename-to-`.lastgood` dance. `POST /api/system/update` in `api/server.js`
+    checks the same lock file and returns `409` instead of scheduling a
+    second run; the frontend surfaces that 409 distinctly.
+  - **Frontend `UpdatingOverlay` (`page.tsx`)** no longer declares success
+    purely from a health-poll transition — a rolled-back failure makes the
+    OLD version answer `/api/health` just as confidently as a genuine
+    success. It now confirms the real outcome via
+    `/api/system/last-update-status` first, with distinct states for
+    "failed and rolled back" (warning) and "rollback also failed" (most
+    urgent — no auto-reload); only a confirmed real success ever navigates to
+    `/?updated=true` (the green toast), so it can no longer show at the same
+    time as `UpdateFailureBanner`'s red banner for the same failed run.
 - Critical auth bypass (1.22.0, `24e886e`): `next.config.js` rewrites (a
   dumb URL-level forward) let a client set `x-ddi-actor-role` itself via a
   bare curl request and bypass RBAC. Fixed by moving all `/api/*` proxying
