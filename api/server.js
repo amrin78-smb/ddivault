@@ -30,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.22.16': [
+    'Found via a full adversarial bug sweep of the resilience work (4 real issues, all fixed): the CRITICAL one -- git clean was deleting the rollback\'s own node_modules/.next backup snapshots on every single run, moments after creating them (verified by actually reproducing it against this repo\'s .gitignore), which meant the safety net added recently had never actually been able to restore anything. Fixed by excluding the backup naming pattern from the clean step.',
+    'The service-stop step (both the main update flow and the rollback) only issued a stop command when a service read as exactly "RUNNING" -- a crash-looping service sampled mid-restart was skipped entirely, leaving its auto-restart armed during the exact moment files were being restored underneath it. Now always issues the stop regardless of the sampled status.',
+    'The pre-update snapshot step had no exception handling, so a rare transient failure there (e.g. a lingering file handle) crashed the whole script immediately with services already stopped and no recovery attempt, instead of triggering the same rollback/reporting path every other failure goes through.',
+    'A license in its grace period could not use "Update Now" at all -- the generic write-block ran before the route\'s own explicit grace-period allowance was ever reached. The route\'s intent (grace-period updates are allowed) now actually takes effect.',
+  ],
   '1.22.15': [
     'Fixed two real bugs in the resilience mechanism added in 1.22.14, found from a live LogVault production incident with the identical code: (1) the post-start service-status check ran immediately after starting services and treated the normal, brief "STARTPENDING" state as a failure -- even when the health check passed right after, causing a working update to be wrongly rolled back (and the rollback\'s own identical check then made it report "rollback also failed" even though it had actually succeeded). Service status is now polled for up to 30s and is informational only; the health check alone decides success. (2) The rollback restored node_modules/.next BEFORE stopping the just-started services, mutating a live directory tree while the app was still running against it -- in LogVault this is what actually corrupted node_modules down to a handful of packages even though the restore reported success. The rollback now stops services first, matching the order the main update flow already used.',
   ],
@@ -551,7 +557,13 @@ async function enforceLicense(req, res, next) {
     const isAck = req.method === 'POST'
       && (req.path.startsWith('/api/alerts') || req.path.startsWith('/api/anomalies'))
       && (req.path.includes('acknowledge') || req.path.includes('/ack'));
-    if (!isAck) {
+    // POST /api/system/update has its own explicit license-state check further
+    // down (allowedStates includes 'grace') - without this exemption, this
+    // generic write-block 402s it unconditionally during grace before that
+    // route-level check is ever reached, silently contradicting the route's
+    // own documented intent to keep updates available during the grace period.
+    const isUpdateRoute = req.path === '/api/system/update';
+    if (!isAck && !isUpdateRoute) {
       return res.status(402).json({
         error: 'License expired — write operations disabled',
         license_status: license?.status,

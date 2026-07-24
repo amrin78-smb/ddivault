@@ -197,8 +197,12 @@ function Invoke-Rollback([string]$Reason) {
         # the safe order the main update flow already uses (STEP 1 stops services
         # before STEP 5/6 ever touch node_modules/.next).
         Write-Step "Stopping services before restoring last known-good version"
+        # Always issue the stop, regardless of sampled status - a service that
+        # isn't currently "RUNNING" isn't necessarily fully stopped (crash-loop,
+        # START_PENDING, or NSSM's own PAUSED throttle state all leave its
+        # auto-restart armed). Same reasoning as STEP 1's identical fix.
         foreach ($svc in @("DDIVault-App", "DDIVault-API", "DDIVault-Collector")) {
-            if ((Get-ServiceStatus $svc) -eq "RUNNING") { sc.exe stop $svc | Out-Null }
+            if ((Get-ServiceStatus $svc) -ne "NOT_FOUND") { sc.exe stop $svc | Out-Null }
         }
         Start-Sleep -Seconds 3
 
@@ -326,13 +330,23 @@ if (-not (Test-Path $LogDir))      { New-Item -ItemType Directory -Force -Path $
 Write-Step "Stopping services..."
 foreach ($svc in @("DDIVault-App", "DDIVault-API", "DDIVault-Collector")) {
     $status = Get-ServiceStatus $svc
-    if ($status -eq "RUNNING") {
+    if ($status -eq "NOT_FOUND") {
+        Write-Warn "$svc not found - skipping"
+    } elseif ($status -eq "RUNNING") {
         sc.exe stop $svc | Out-Null
         Write-OK "Stopped $svc"
-    } elseif ($status -eq "NOT_FOUND") {
-        Write-Warn "$svc not found - skipping"
     } else {
-        Write-OK "$svc already stopped ($status)"
+        # Any status other than NOT_FOUND/RUNNING (STOPPED-but-about-to-
+        # auto-restart, START_PENDING, STOP_PENDING, or PAUSED - NSSM's own
+        # throttle state after repeated rapid restarts, confirmed live during
+        # the LogVault incident this sweep followed up on) does NOT mean the
+        # service is safely, durably stopped - a crash-looping process can be
+        # sampled in any of these transient states. Always still issue the
+        # stop command so NSSM's auto-restart is actually disarmed rather than
+        # silently assumed to already be off; sc.exe stop on an
+        # already-stopped service is a harmless no-op.
+        sc.exe stop $svc | Out-Null
+        Write-OK "Stopped $svc (was $status)"
     }
 }
 Write-Host "    Waiting 5 seconds..." -ForegroundColor DarkGray
@@ -394,22 +408,33 @@ else { Write-Warn "Could not determine current commit - rollback will not be abl
 $rootModulesBackup     = "$AppDir\node_modules.lastgood"
 $frontendNextBackup    = "$FrontendDir\.next.lastgood"
 $frontendModulesBackup = "$FrontendDir\node_modules.lastgood"
-# Clear any stale backups left by a prior interrupted run before snapshotting the
-# CURRENTLY-serving version, not an older leftover one.
-foreach ($stale in @($rootModulesBackup, $frontendNextBackup, $frontendModulesBackup)) {
-    if (Test-Path $stale) { Remove-Item $stale -Recurse -Force -ErrorAction SilentlyContinue }
-}
-if (Test-Path "$AppDir\node_modules") {
-    Rename-Item -Path "$AppDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
-    Write-OK "Snapshotted root node_modules"
-}
-if (Test-Path "$FrontendDir\.next") {
-    Rename-Item -Path "$FrontendDir\.next" -NewName '.next.lastgood' -ErrorAction Stop
-    Write-OK "Snapshotted frontend .next build output"
-}
-if (Test-Path "$FrontendDir\node_modules") {
-    Rename-Item -Path "$FrontendDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
-    Write-OK "Snapshotted frontend node_modules"
+# Wrapped in try/catch: despite the global $ErrorActionPreference = 'Stop',
+# these Rename-Item calls (-ErrorAction Stop) had no enclosing try/catch and no
+# top-level trap, so a transient failure here (e.g. a lingering process handle
+# not caught by the port-kill loop above) used to terminate the whole script
+# immediately - services already stopped, app fully down, and
+# last-update-status.json still showing the PRIOR run's result since Fail-Update
+# was never reached. Route it through Fail-Update like every other stage.
+try {
+    # Clear any stale backups left by a prior interrupted run before snapshotting the
+    # CURRENTLY-serving version, not an older leftover one.
+    foreach ($stale in @($rootModulesBackup, $frontendNextBackup, $frontendModulesBackup)) {
+        if (Test-Path $stale) { Remove-Item $stale -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    if (Test-Path "$AppDir\node_modules") {
+        Rename-Item -Path "$AppDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
+        Write-OK "Snapshotted root node_modules"
+    }
+    if (Test-Path "$FrontendDir\.next") {
+        Rename-Item -Path "$FrontendDir\.next" -NewName '.next.lastgood' -ErrorAction Stop
+        Write-OK "Snapshotted frontend .next build output"
+    }
+    if (Test-Path "$FrontendDir\node_modules") {
+        Rename-Item -Path "$FrontendDir\node_modules" -NewName 'node_modules.lastgood' -ErrorAction Stop
+        Write-OK "Snapshotted frontend node_modules"
+    }
+} catch {
+    Fail-Update -Stage 'pre-flight' -Message "Snapshotting current version failed: $($_.Exception.Message)"
 }
 
 # STEP 3 - Pull latest
@@ -431,7 +456,7 @@ if ($LASTEXITCODE -ne 0) { Fail-Update -Stage 'git-pull' -Message "git fetch fai
 $null = git reset --hard origin/main 2>&1
 if ($LASTEXITCODE -ne 0) { Fail-Update -Stage 'git-pull' -Message "git reset failed (exit $LASTEXITCODE)" }
 
-$null = git clean -fd --exclude=".env.local" --exclude="node_modules" 2>&1
+$null = git clean -fd --exclude=".env.local" --exclude="node_modules" --exclude="*.lastgood" 2>&1
 
 $commitHash = git rev-parse --short HEAD
 $commitMsg  = git log -1 --pretty=format:"%s"
