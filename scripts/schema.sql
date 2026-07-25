@@ -775,37 +775,21 @@ BEGIN
 END
 $$;
 
--- ── ddi_servers: exclude WinRM/PowerShell credential columns (2026-07-23) ──
--- ps_username/ps_password (schema-server-auth.sql) are the per-server WinRM
--- credential, ps_password AES-256-GCM encrypted via collector/credStore.js.
--- The blanket grant above still gave nocvault_readonly/claude_readonly full
--- table-level SELECT on ddi_servers, INCLUDING both columns — live-verified
--- readable by claude_readonly on 2026-07-23 (this is the gap the previous
--- pass's comment incorrectly claimed didn't exist). Unlike app_settings,
--- ddi_servers has no secret/non-secret mix packed into one generic column,
--- so a plain column-level GRANT (excluding only ps_username/ps_password) is
--- sufficient here — no separate view needed. Column list is every OTHER
--- ddi_servers column as of 2026-07-23 (live-verified via claude_readonly).
-DO $$
-BEGIN
-  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
-    REVOKE SELECT ON ddi_servers FROM nocvault_readonly;
-    GRANT SELECT (id, hostname, ip_address, role, description, is_active,
-      last_polled, poll_status, poll_error, created_at, updated_at, site_id,
-      auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
-      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
-      ON ddi_servers TO nocvault_readonly;
-  END IF;
-  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
-    REVOKE SELECT ON ddi_servers FROM claude_readonly;
-    GRANT SELECT (id, hostname, ip_address, role, description, is_active,
-      last_polled, poll_status, poll_error, created_at, updated_at, site_id,
-      auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
-      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
-      ON ddi_servers TO claude_readonly;
-  END IF;
-END
-$$;
+-- ── ddi_servers: credential-column exclusion MOVED to schema-sites.sql (2026-07-25) ──
+-- The column-level GRANT that excludes ps_username/ps_password used to live
+-- here, but it references ddi_servers columns that DO NOT EXIST yet at this
+-- point in schema.sql: auth_mode/winrm_*/notes come from schema-server-auth.sql
+-- (the 3rd file) and site_id from schema-sites.sql (the 4th file). On a fresh
+-- install schema.sql runs FIRST, so the GRANT errored with
+-- 'column "site_id" of relation "ddi_servers" does not exist' and — now that
+-- every schema file is applied with -v ON_ERROR_STOP=1 — that aborted the whole
+-- suite install (it also silently failed to apply pre-ON_ERROR_STOP, leaving
+-- the secret columns readable on fresh installs). The block is relocated to the
+-- END of schema-sites.sql, the LAST of the 4 files, where all 25 ddi_servers
+-- columns exist; see that file for the actual REVOKE + column-GRANT. The
+-- app_settings/api_keys and smtp_config exclusions correctly STAY here — those
+-- tables and every column they reference are created within this same file, so
+-- they have no cross-file ordering problem.
 
 -- ── smtp_config: filtered view excluding the encrypted password (2026-07-23) ─
 -- smtp_config.password is AES-256-GCM encrypted (credStore.js), but the rest
