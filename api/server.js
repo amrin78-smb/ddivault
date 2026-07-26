@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.23.0': [
+    'IPAM now has a full VLANs management view. The previously "Coming Soon" VLANs tab in IPAM is enabled: list every registered VLAN with its ID, name, description, site, and a live count of linked subnets.',
+    'Add VLANs via a form (VLAN ID, name, description, site) and delete them with a confirm step. VLAN IDs are validated client-side to the valid 1-4094 range before submitting.',
+    'Create and delete controls are gated on the same write permission as the rest of IPAM, so read-only/viewer users see the registry but cannot modify it. Wires the existing GET/POST /api/ipam/vlans and DELETE /api/ipam/vlans/:id backend.',
+  ],
   '1.22.19': [
     'Fixed a fresh-install blocker: the readonly-role security grant that hides the ddi_servers WinRM credential columns (ps_username/ps_password) lived in schema.sql (the 1st of 4 schema files), but its column list references site_id, auth_mode and the winrm_* columns, which are only added by schema-server-auth.sql and schema-sites.sql (the 3rd and 4th files). On a fresh install schema.sql runs first, so the grant errored with "column site_id of relation ddi_servers does not exist" -- and because every schema file now applies with ON_ERROR_STOP=1, that aborted the ENTIRE NocVault suite install partway through DDIVault. (Before ON_ERROR_STOP was added it silently no-op\'d instead, which meant the credential columns were never actually protected on a fresh install.) The grant block is moved to the end of schema-sites.sql, the last file, where all 25 ddi_servers columns exist -- verified the 23-column allowlist matches the live database exactly (every column except the 2 secrets). Existing installs are unaffected; only fresh installs hit this.',
   ],

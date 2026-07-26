@@ -460,6 +460,8 @@ function AddVlanModal({ sites, onClose, onSaved }: { sites: Site[]; onClose: () 
 
   const save = async () => {
     if (!form.vlan_id.trim()) { toast('VLAN ID is required', 'error'); return; }
+    const num = Number(form.vlan_id);
+    if (!Number.isInteger(num) || num < 1 || num > 4094) { toast('VLAN ID must be a whole number between 1 and 4094', 'error'); return; }
     setBusy(true);
     try {
       await api('/ipam/vlans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
@@ -1051,11 +1053,7 @@ export default function IPAMTab() {
         <div className="segmented">
           <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}>Tree</button>
           <button className={view === 'flat' ? 'active' : ''} onClick={() => setView('flat')}>All Subnets</button>
-          <button
-            disabled
-            title="Coming Soon"
-            style={{ opacity: 0.45, cursor: 'not-allowed' }}
-          >VLANs</button>
+          <button className={view === 'vlans' ? 'active' : ''} onClick={() => setView('vlans')}>VLANs</button>
         </div>
         {canWrite && <button className="btn" onClick={() => setShowImport(true)}>Import CSV</button>}
         {canWrite && (
