@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.24.1': [
+    'Security hardening from the Phase 4b agent bug-sweep. Fixed a cross-tenant IPAM write: an agent could previously submit scan results (and raise "unknown device" alerts) for ANY subnet in the instance. Scan results are now ownership-scoped to the agent\'s own sites and fail closed if a subnet isn\'t one the agent was assigned — matching the DHCP/DNS write path.',
+    'The agent WebSocket ingest now refuses to start on a public (non-loopback) bind without TLS unless DDI_WS_ALLOW_PLAINTEXT is set (the installer sets =1 for the trusted-LAN default; use DDI_WS_TLS_CERT/KEY on an untrusted segment) — it also caps message size and rate-limits connections.',
+    'When a remote agent with assigned servers goes offline, its servers are now flagged stale and an alert fires, so the monitoring blind spot is visible instead of silent. Central on-demand IPAM scans skip subnets owned by an agent (no more racing/overwriting the agent\'s real results). The agent-revocation cross-DB grant now also applies on existing-install updates.',
+  ],
   '1.24.0': [
     'NocVault Agents Phase 4b — DDIVault can now collect DHCP/DNS/IPAM from remote sites via a local agent, instead of only central WinRM. A new hub-enrolled agent installed at a remote site runs the WinRM/DHCP-log/ICMP collection LOCALLY and ships the raw results back to DDIVault over an authenticated WebSocket (new agent-ingest port 3011), which writes them through the same paths the central collector uses. This reaches DHCP/DNS servers a central host cannot (isolated forests, cross-WAN sites, firewalled LANs).',
     'A new "Remote Agents" page (admin+) shows the agent roster (auto-populated when an agent connects) and lets you assign which DDI servers each agent collects; the central collector automatically stops polling servers owned by an agent, and assignment changes push to the agent live. Agents are enrolled and revoked from the NetVault hub — this page is domain config only.',
@@ -2588,16 +2593,25 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
 // after a change so it takes effect immediately.
 
 // Roster: every provisioned agent + count of servers assigned to it.
-app.get('/api/ddi-agents', requireAuth, async (req, res) => {
+// server_count is site-scoped for a restricted caller (attachSiteFilter) so a
+// site_admin/viewer only counts servers in sites they can see — matching the
+// detail route (GET /api/ddi-agents/:hubId). The site filter lives in the LEFT
+// JOIN's ON clause (not WHERE) so agents with zero in-scope servers still list.
+app.get('/api/ddi-agents', requireAuth, attachSiteFilter, async (req, res) => {
   try {
+    const scoped = req.allowedSiteIds !== null;
+    const joinSiteFilter = scoped ? ` AND s.site_id = ANY($1::int[])` : '';
+    const params = scoped ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT a.id, a.hub_agent_id, a.name, a.status, a.version,
               a.last_seen_at, a.created_at,
               COUNT(s.id)::int AS server_count
          FROM ddi_agents a
-         LEFT JOIN ddi_servers s ON s.agent_hub_id = a.hub_agent_id
+         LEFT JOIN ddi_servers s
+                ON s.agent_hub_id = a.hub_agent_id${joinSiteFilter}
         GROUP BY a.id
-        ORDER BY a.created_at DESC`
+        ORDER BY a.created_at DESC`,
+      params
     );
     res.json({ data: rows.rows });
   } catch (err) {
@@ -3045,10 +3059,27 @@ app.post('/api/ipam/subnets/:id/scan', requireWrite, async (req, res) => {
       return res.status(409).json({ error: 'Scan already in progress for this subnet' });
     }
     const subnetRes = await db.query(
-      'SELECT id, host(network) as network, prefix_length, name FROM ipam_subnets WHERE id=$1', [id]
+      'SELECT id, host(network) as network, prefix_length, name, site_id FROM ipam_subnets WHERE id=$1', [id]
     );
     if (!subnetRes.rows.length) return res.status(404).json({ error: 'Subnet not found' });
     const subnet = subnetRes.rows[0];
+
+    // A subnet whose site is owned by a remote agent is scanned by that agent from
+    // the remote LAN. Deny a central scan — the DDIVault host usually can't reach
+    // that LAN and would race/overwrite the agent's real results with all-'available'.
+    if (subnet.site_id != null) {
+      const owned = await db.query(
+        `SELECT 1 FROM ddi_servers WHERE site_id = $1 AND agent_hub_id IS NOT NULL LIMIT 1`,
+        [subnet.site_id]
+      );
+      if (owned.rows.length) {
+        return res.status(409).json({
+          error: 'Subnet is owned by a remote agent',
+          reason: 'agent_owned',
+          message: `${subnet.network}/${subnet.prefix_length} is in a site assigned to a remote agent, which scans it directly. Central scan skipped.`,
+        });
+      }
+    }
 
     if (req.audit) req.audit({ action: 'scan', entity_type: 'subnet', entity_id: id, entity_name: `${subnet.network}/${subnet.prefix_length}`, change_summary: `Started scan of ${subnet.network}/${subnet.prefix_length}` });
     res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });

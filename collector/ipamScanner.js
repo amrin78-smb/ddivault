@@ -443,10 +443,20 @@ async function scanSubnet(subnet) {
  * Scan all managed subnets sequentially.
  */
 async function scanAllSubnets() {
+  // Skip subnets whose site is owned by a remote agent: that agent already scans
+  // them from the remote LAN. The central host usually can't even reach that LAN,
+  // so a central sweep would race the agent and overwrite its real results with
+  // all-'available'. (Single-subnet scan enforces the same rule in server.js.)
   const result = await db.query(
-    `SELECT id, network::text, prefix_length, name FROM ipam_subnets WHERE is_managed=TRUE ORDER BY network`
+    `SELECT id, network::text, prefix_length, name FROM ipam_subnets s
+      WHERE is_managed=TRUE
+        AND NOT EXISTS (
+          SELECT 1 FROM ddi_servers d
+           WHERE d.site_id = s.site_id AND d.agent_hub_id IS NOT NULL
+        )
+      ORDER BY network`
   );
-  log(`Scanning ${result.rows.length} managed subnets...`);
+  log(`Scanning ${result.rows.length} managed subnets (agent-owned sites excluded)...`);
   for (const subnet of result.rows) {
     await scanSubnet(subnet);
   }

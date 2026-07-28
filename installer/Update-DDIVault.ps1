@@ -506,6 +506,27 @@ if (Test-Path $frontendEnvPath) {
 }
 $envBackupForRollback = @{ Root = $rootEnvContent; Frontend = $frontendEnvContent }
 
+# Phase 4b: ensure the agent-WS env vars exist in .env.local. Existing installs PRESERVE
+# .env.local (backed up above), so vars added in a release won't be there. Idempotent-append
+# them (api/server.js dotenv-loads .env.local, so append + the STEP 7 service restart is
+# enough). DDI_WS_ALLOW_PLAINTEXT=1 is REQUIRED for the WS ingest to bind non-loopback
+# without TLS (the trusted-LAN suite default) - without it the ingest refuses to start (the
+# API stays up, but agents can't connect). Runs AFTER the backup, so a rollback still
+# restores the pre-append env with the old code.
+if (Test-Path $rootEnvPath) {
+    try {
+        $envNow = Get-Content -LiteralPath $rootEnvPath -Raw
+        $ddiAppend = @()
+        if ($envNow -notmatch '(?m)^DDI_WS_PORT=')           { $ddiAppend += 'DDI_WS_PORT=3011' }
+        if ($envNow -notmatch '(?m)^DDI_WS_ALLOW_PLAINTEXT=') { $ddiAppend += 'DDI_WS_ALLOW_PLAINTEXT=1' }
+        if ($ddiAppend.Count -gt 0) {
+            $lead = if ($envNow.Length -eq 0 -or $envNow.EndsWith("`n")) { '' } else { "`n" }
+            Add-Content -LiteralPath $rootEnvPath -Value ($lead + ($ddiAppend -join "`n")) -NoNewline -Encoding UTF8
+            Write-OK ("Ensured agent-WS env in .env.local: " + ($ddiAppend -join ', '))
+        }
+    } catch { Write-Warn "Could not ensure agent-WS env vars in .env.local: $($_.Exception.Message)" }
+}
+
 # STEP 2.5 - Snapshot current version for rollback
 # Must happen BEFORE git touches anything and BEFORE npm install/build overwrites
 # node_modules/.next, so a failure anywhere from here on can be undone by putting
@@ -702,6 +723,25 @@ if (Test-Path $psql) {
     Write-Step "Reassigning table ownership (idempotent)..."
     $pgPwLine = Get-Content $rootEnvPath -ErrorAction SilentlyContinue | Where-Object { $_ -match '^POSTGRES_PASSWORD=' } | Select-Object -First 1
     $pgPw = if ($pgPwLine) { $pgPwLine.Substring('POSTGRES_PASSWORD='.Length).Trim() } else { '' }
+    # POSTGRES_PASSWORD is not guaranteed to be in the app .env.local (it isn't on
+    # many installs) - the durable, machine-level source is the suite installer's
+    # C:\ProgramData\NocVault\secrets.env. Fall back to it so the ownership reassign
+    # AND the netvault.agents grant below still run on those boxes. Guarded/non-fatal:
+    # a missing/unreadable secrets file just leaves $pgPw empty and soft-skips as before.
+    if (-not $pgPw) {
+        $secretsPath = "C:\ProgramData\NocVault\secrets.env"
+        if (Test-Path $secretsPath) {
+            try {
+                $secLine = Get-Content $secretsPath -ErrorAction Stop | Where-Object { $_ -match '^POSTGRES_PASSWORD=' } | Select-Object -First 1
+                if ($secLine) {
+                    $pgPw = $secLine.Substring('POSTGRES_PASSWORD='.Length).Trim()
+                    if ($pgPw) { Write-OK "Read POSTGRES_PASSWORD from $secretsPath" }
+                }
+            } catch {
+                Write-Warn "Could not read POSTGRES_PASSWORD from $secretsPath (non-fatal): $($_.Exception.Message)"
+            }
+        }
+    }
     if ($pgPw) {
         $reassign = @'
 DO $$
@@ -755,7 +795,9 @@ $$;
             Write-Warn "Could not grant netvault.agents to ddivault_user (non-fatal): $($_.Exception.Message)"
         }
     } else {
-        Write-Warn "POSTGRES_PASSWORD not in .env.local - skipping ownership reassign + netvault.agents grant"
+        Write-Warn "POSTGRES_PASSWORD not found in .env.local or C:\ProgramData\NocVault\secrets.env - skipping ownership reassign + netvault.agents grant"
+        Write-Warn "Agent-WS revocation checks will FAIL CLOSED (every agent connect 4003s) until an admin manually runs, as postgres, on the netvault DB:"
+        Write-Warn "  GRANT SELECT ON agents TO ddivault_user;"
     }
 
     $env:PGPASSWORD = $dbPass

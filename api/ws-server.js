@@ -62,7 +62,9 @@ const SETTINGS = {
   leases_interval_s:      900,   // INTERVAL_LEASE_SYNC
   reservations_interval_s: 900,
   dns_interval_s:         3600,  // INTERVAL_DNS_SYNC
-  dhcp_log_interval_s:    60,    // INTERVAL_LOG_TAIL
+  dhcp_events_interval_s: 60,    // INTERVAL_LOG_TAIL — key name MUST match the agent
+                                 // DDI module's reader (dhcp_events_interval_s); a
+                                 // mismatch silently drops the configured cadence.
   heartbeat_interval_s:   30,
 };
 
@@ -239,11 +241,26 @@ async function handleResult(hubAgentId, msg) {
 
 async function handleScanResult(hubAgentId, msg) {
   if (msg.subnet_id == null) return;
+  // FAIL CLOSED (mirrors ownedServer/handleResult): subnets have no agent_hub_id,
+  // so ownership is resolved through SITE — accept a subnet_id only if its site is
+  // one of the sites of the ddi_servers this agent owns (exactly the subnet set
+  // pushConfigToAgent advertised). Without this scoping an authenticated agent
+  // could write scan data + fire "unknown device" alerts for ANY subnet in the
+  // instance (cross-tenant IPAM write).
   const s = await ddi.query(
-    `SELECT id, network::text AS network, prefix_length, name FROM ipam_subnets WHERE id = $1`,
-    [msg.subnet_id]
+    `SELECT id, network::text AS network, prefix_length, name
+       FROM ipam_subnets
+      WHERE id = $1
+        AND site_id = ANY(
+          SELECT DISTINCT site_id FROM ddi_servers
+           WHERE agent_hub_id = $2 AND site_id IS NOT NULL
+        )`,
+    [msg.subnet_id, hubAgentId]
   );
-  if (!s.rows[0]) { console.warn(`[WS] ddi_scan_result for missing subnet ${msg.subnet_id}`); return; }
+  if (!s.rows[0]) {
+    console.warn(`[WS] ddi_scan_result for subnet ${msg.subnet_id} not owned by agent ${hubAgentId} — ignored`);
+    return;
+  }
   const results = Array.isArray(msg.data) ? msg.data : (msg.data && msg.data.results) || [];
   await writers.writeScanResult(ddi, s.rows[0], results, {});
 }
@@ -276,18 +293,37 @@ function startWsServer(port) {
   let wss;
   const certPath = process.env.DDI_WS_TLS_CERT;
   const keyPath  = process.env.DDI_WS_TLS_KEY;
-  if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+  const hasTls = !!(certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath));
+  // Cap inbound frame size — ws defaults to 100MB, which lets one authenticated
+  // (or half-authenticated) socket buffer huge payloads. Agent frames are small.
+  const MAX_PAYLOAD = parseInt(process.env.DDI_WS_MAX_PAYLOAD || String(8 * 1024 * 1024), 10);
+  if (hasTls) {
     const httpsServer = require('https').createServer({
       cert: fs.readFileSync(certPath),
       key:  fs.readFileSync(keyPath),
     });
-    wss = new WebSocketServer({ server: httpsServer });
+    wss = new WebSocketServer({ server: httpsServer, maxPayload: MAX_PAYLOAD });
     httpsServer.listen(port, '0.0.0.0');
     console.log('[WS] TLS enabled (DDI_WS_TLS_CERT/KEY configured)');
   } else {
-    wss = new WebSocketServer({ port, host: '0.0.0.0' });
+    // Cleartext guard: binding a NON-loopback interface with no TLS pushes
+    // DECRYPTED WinRM passwords over plain ws://. Refuse to start unless the
+    // operator has consciously opted into cleartext on a trusted segment via
+    // DDI_WS_ALLOW_PLAINTEXT=1. (Loopback-only binds are always allowed.)
+    const bindHost = process.env.DDI_WS_HOST || '0.0.0.0';
+    const isLoopback = bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1';
+    const allowPlaintext = process.env.DDI_WS_ALLOW_PLAINTEXT === '1';
+    if (!isLoopback && !allowPlaintext) {
+      throw new Error(
+        `[WS] REFUSING TO START: no TLS (DDI_WS_TLS_CERT/KEY) and binding non-loopback ` +
+        `interface ${bindHost}:${port}. The ddi_config frame carries DECRYPTED WinRM ` +
+        `passwords in cleartext over plain ws://. Configure TLS, OR set ` +
+        `DDI_WS_ALLOW_PLAINTEXT=1 to consciously accept cleartext creds on a trusted segment.`
+      );
+    }
+    wss = new WebSocketServer({ port, host: bindHost, maxPayload: MAX_PAYLOAD });
     console.warn(
-      `[WS] WARNING: TLS is NOT configured — agent connections are plain ws:// on port ${port}. ` +
+      `[WS] WARNING: TLS is NOT configured — agent connections are plain ws:// on ${bindHost}:${port}. ` +
       `The ddi_config frame carries DECRYPTED WinRM passwords; set DDI_WS_TLS_CERT and ` +
       `DDI_WS_TLS_KEY to enable wss:// and protect them in transit.`
     );
@@ -339,7 +375,20 @@ function startWsServer(port) {
       return;
     }
 
+    // Very simple per-connection message-rate guard: allow a burst, then cap the
+    // sustained rate. A well-behaved agent sends a handful of frames per interval.
+    const RATE_MAX = parseInt(process.env.DDI_WS_MSG_RATE || '120', 10); // msgs / window
+    const RATE_WINDOW_MS = 10000;
+    let rateCount = 0;
+    let rateWindowStart = Date.now();
     ws.on('message', async (raw) => {
+      const now = Date.now();
+      if (now - rateWindowStart >= RATE_WINDOW_MS) { rateWindowStart = now; rateCount = 0; }
+      if (++rateCount > RATE_MAX) {
+        console.warn(`[WS] Agent #${localId} (hub=${hubId}) exceeded message rate (${RATE_MAX}/${RATE_WINDOW_MS}ms) — closing`);
+        try { ws.close(4008, 'Rate limit exceeded'); } catch (_e) { /* ignore */ }
+        return;
+      }
       try {
         const msg = JSON.parse(raw);
         await handleAgentMessage(hubId, localId, msg);
@@ -367,14 +416,48 @@ function startWsServer(port) {
     try {
       const cutoff = new Date(Date.now() - 90000).toISOString();
       const stale = await ddi.query(
-        `SELECT id FROM ddi_agents WHERE status='online' AND (last_seen_at IS NULL OR last_seen_at < $1)`,
+        `SELECT id, hub_agent_id, name FROM ddi_agents
+          WHERE status='online' AND (last_seen_at IS NULL OR last_seen_at < $1)`,
         [cutoff]
       );
       for (const row of stale.rows) {
         // Only flip a row that has no live socket (a busy agent that hasn't sent
         // a heartbeat but is still connected keeps its socket in the map).
-        if (!connectedAgents.has(row.id)) {
-          await ddi.query(`UPDATE ddi_agents SET status='offline' WHERE id=$1`, [row.id]);
+        if (connectedAgents.has(row.id)) continue;
+        await ddi.query(`UPDATE ddi_agents SET status='offline' WHERE id=$1`, [row.id]);
+
+        // Visibility: an offline agent's assigned servers are collected by NOBODY
+        // (the central collector skips agent_hub_id-owned servers, and the dead
+        // agent can't collect either). Mark them 'stale' and fire ONE alert so the
+        // blind spot is visible. Idempotent: the monitor only selects rows still
+        // status='online', so each online->offline transition fires at most once
+        // per agent; the alert_events NOT EXISTS guard covers rapid flap.
+        try {
+          const owned = await ddi.query(
+            `SELECT id FROM ddi_servers WHERE agent_hub_id = $1`, [row.hub_agent_id]);
+          if (owned.rows.length) {
+            await ddi.query(
+              `UPDATE ddi_servers SET poll_status='stale', updated_at=NOW()
+                 WHERE agent_hub_id = $1 AND poll_status IS DISTINCT FROM 'stale'`,
+              [row.hub_agent_id]
+            );
+            const label = row.name || row.hub_agent_id;
+            await ddi.query(
+              `INSERT INTO alert_events (message, severity)
+               SELECT $1, 'warning'
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM alert_events
+                   WHERE message LIKE $2 AND fired_at > NOW()-INTERVAL '24 hours'
+                )`,
+              [
+                `Remote agent "${label}" is offline — ${owned.rows.length} assigned DDI server(s) are no longer being collected`,
+                `Remote agent "${label}" is offline%`,
+              ]
+            );
+            console.warn(`[WS] Agent #${row.id} (hub=${row.hub_agent_id}) offline with ${owned.rows.length} assigned server(s) — alerted, servers marked stale`);
+          }
+        } catch (inner) {
+          console.error('[WS] Heartbeat offline-alert error:', inner.message);
         }
       }
     } catch (err) {

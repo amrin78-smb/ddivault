@@ -289,3 +289,37 @@
   The netvault agent module is built to those exact shapes — keep them in sync.
   `scope_options`/`dns_health`/`failover` are accepted but NOT yet persisted
   agent-side (central dnsMonitor/haMonitor still cover local servers).
+- **Agent writes are OWNERSHIP-SCOPED — fail closed.** `handleResult` scopes a
+  `ddi_result` to `ddi_servers WHERE id=? AND agent_hub_id=?` (`ownedServer`), and
+  `handleScanResult` scopes a `ddi_scan_result` subnet through SITE — a `subnet_id`
+  is accepted ONLY if its `site_id` is a site of a `ddi_servers` row owned by that
+  `hubAgentId` (exactly the subnet set `pushConfigToAgent` advertised). Subnets have
+  no `agent_hub_id`, so ownership goes via site. Without this an authenticated agent
+  could write scan data + fire "unknown device" alerts for ANY subnet in the instance
+  (cross-tenant IPAM write). Any NEW agent→server ingest frame must fail closed the
+  same way — resolve ownership before writing, drop with a warn otherwise.
+- **Central IPAM scans SKIP agent-owned subnets.** A subnet whose `site_id` has a
+  `ddi_servers` row with `agent_hub_id IS NOT NULL` is scanned by that remote agent
+  from its LAN. The central host usually can't reach that LAN, so a central sweep
+  races the agent and overwrites its real results with all-'available'. Both scan
+  paths enforce this: `POST /api/ipam/subnets/:id/scan` returns `409 {reason:'agent_owned'}`,
+  and `ipamScanner.scanAllSubnets()` filters agent-owned sites out of its query.
+  Keep both in sync if you add another central-scan entry point.
+- **ws-server refuses cleartext on a public bind.** With no `DDI_WS_TLS_CERT/KEY`,
+  binding a NON-loopback interface THROWS at startup unless `DDI_WS_ALLOW_PLAINTEXT=1`
+  is set — because the `ddi_config` frame pushes DECRYPTED WinRM passwords, and plain
+  ws:// on 0.0.0.0 leaks them. Loopback-only binds are always allowed. An operator on
+  a trusted segment must consciously opt into cleartext via that env var. Also: the
+  `WebSocketServer` sets `maxPayload` (default 8 MB, `DDI_WS_MAX_PAYLOAD`) and a simple
+  per-connection message-rate guard (`DDI_WS_MSG_RATE`, closes 4008) — don't drop these.
+- **Agent-offline blind spot is alerted.** When the heartbeat monitor flips an agent
+  to `status='offline'`, its assigned servers are collected by nobody (central skips
+  `agent_hub_id`, dead agent can't poll). If the agent HAS assigned servers, the monitor
+  marks them `poll_status='stale'` and fires ONE `alert_events` warning (idempotent: the
+  monitor only re-selects `status='online'` rows + a 24h `NOT EXISTS` message guard).
+  Servers self-heal to `poll_status='ok'` on the agent's next write via `writers.js`.
+- **SETTINGS key names are a wire contract with the agent module.** The `ddi_config`
+  `settings` object uses the agent module's canonical reader keys — e.g. DHCP-event
+  cadence is `dhcp_events_interval_s` (NOT `dhcp_log_interval_s`). A key the agent
+  doesn't read is silently ignored (polls fall back to the module default). Match the
+  agent module's exact key names when adding/renaming a setting.
