@@ -737,8 +737,25 @@ $$;
         $reassignOut | Where-Object { $_ -notmatch 'NOTICE|WARNING' } |
             Out-File -FilePath "$LogDir\schema-migration.log" -Append
         Write-OK "Reassigned public object ownership to ddivault_user"
+
+        # Phase 4b: DDIVault's agent-ingest WS cross-checks hub revocation by reading
+        # netvault.agents; the existing narrow netvault-read grant only covers
+        # sites/countries (the suite installer sets those on a fresh install). Grant
+        # SELECT on agents too (idempotent) so EXISTING installs pick it up on update -
+        # without it every agent connect fails closed (4003). Non-fatal: a grant failure
+        # only warns (e.g. the netvault DB isn't co-located on this host).
+        try {
+            $env:PGPASSWORD = $pgPw
+            $grantOut = & $psql -U postgres -h localhost -p 5432 -d netvault -c "GRANT SELECT ON agents TO ddivault_user;" 2>&1
+            $env:PGPASSWORD = ""
+            $grantOut | Where-Object { $_ -notmatch 'NOTICE|WARNING' } | Out-File -FilePath "$LogDir\schema-migration.log" -Append
+            Write-OK "Granted ddivault_user SELECT on netvault.agents (agent revocation check)"
+        } catch {
+            $env:PGPASSWORD = ""
+            Write-Warn "Could not grant netvault.agents to ddivault_user (non-fatal): $($_.Exception.Message)"
+        }
     } else {
-        Write-Warn "POSTGRES_PASSWORD not in .env.local - skipping ownership reassign"
+        Write-Warn "POSTGRES_PASSWORD not in .env.local - skipping ownership reassign + netvault.agents grant"
     }
 
     $env:PGPASSWORD = $dbPass
@@ -860,6 +877,26 @@ Start-Sleep -Seconds 12
 sc.exe start DDIVault-Collector | Out-Null
 Write-Host "    DDIVault-Collector started - waiting 3s..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 3
+
+# STEP 7.5 - Ensure the agent-WS ingest firewall port is open (Phase 4b)
+# DDI_WS_PORT (3011) is the agent-WS ingest, bound to all interfaces inside the
+# existing DDIVault-API process (no new NSSM service). Fresh installs open it in
+# ../netvault/installer/Install-NocVault-Suite.ps1, but existing installs only ever
+# run through THIS updater - so open it here too (installer parity) or upgraded
+# hosts would have the port listening yet firewalled off. New-NetFirewallRule does
+# NOT dedupe by DisplayName, so guard with Get-NetFirewallRule to stay idempotent
+# across repeated updates. Best-effort: never block the update on a firewall error.
+Write-Step "Ensuring agent-WS firewall port 3011 is open..."
+try {
+    if (-not (Get-NetFirewallRule -DisplayName "NocVault DDIVault WS 3011" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName "NocVault DDIVault WS 3011" -Direction Inbound -Protocol TCP -LocalPort 3011 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+        Write-OK "Firewall rule added: port 3011 (agent WS ingest)"
+    } else {
+        Write-OK "Firewall rule for port 3011 already present"
+    }
+} catch {
+    Write-Warn "Could not ensure firewall rule for port 3011: $($_.Exception.Message)"
+}
 
 # STEP 8 - Verify (now a mandatory gate, not advisory)
 Write-Step "Verifying services..."

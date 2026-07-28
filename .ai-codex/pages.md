@@ -8,10 +8,12 @@ Do not go looking for `/app/dashboard/page.tsx` etc — they don't exist.
 
 [client] / — page.tsx (RootLayout wraps it) — single-page app shell; renders
   `<Tab>` content via internal `useState<Tab>` switch, NOT nested routes.
-  `type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'infra' | 'reports' | 'audit' | 'settings'`
-  (1842 lines). Composes: Header, ErrorBoundary, Toast, RBACContext,
+  `type Tab = 'dashboard' | 'scopes' | 'ipam' | 'dns' | 'events' | 'servers' | 'agents' | 'infra' | 'reports' | 'audit' | 'settings'`
+  (~1850 lines). The `agents` tab (Remote Agents, Phase 4b) is admin+ only —
+  gated in `visibleItems` by `canWrite` and again at render. Composes: Header,
+  ErrorBoundary, Toast, RBACContext,
   LicenseGuard (useLicense/LicenseDisabledScreen/LicenseBanner), UpdateNotifier,
-  IPAMTab, DHCPTab, DNSTab, ServersTab, AuditTab, ReportsTab, InfraHealthTab,
+  IPAMTab, DHCPTab, DNSTab, ServersTab, AgentsTab, AuditTab, ReportsTab, InfraHealthTab,
   SmtpSettings, AlertRecipients, AlertRules, CapacityForecast, SiteHealth,
   SecurityOverview, DeviceDonut, dashboard/{CommandBar,PriorityActionCenter,
   PillarScorecards,InfraRedundancy,DnsAnalyticsCard,ActivityFeed}, ApiKeysSection.

@@ -13,6 +13,7 @@ only within the same file are omitted, except where noted.
 (c) AlertRules  (no props) — default export
 (c) ApiKeysSection  (no props) — named export; file also defines module-scope `CreateModal`, `RevealModal`, `PermBadges` (not exported)
 (s) AuditActor  (no props) — deliberate no-op (returns null); NO `'use client'` directive in this file — the only file in components/ without one. Kept only for a stale `<AuditActor />` import in app/layout.tsx; safe to delete.
+(c) AgentsTab  (no props) — default export (Remote Agents, Phase 4b); file also defines module-scope `AssignModal`, `AgentCard` (not exported) + helpers `isOnline`, `relTime`. Admin+ surface: lists ddi_agents roster (status/last-seen/version/#servers) + a per-agent server multi-select (grouped by site) that assigns/unassigns ddi_servers to the agent via POST /api/ddi-agents/:hubId/servers
 (c) AuditTab  (no props) — default export
 (c) AuthProvider  children
 (c) CapacityForecast  onViewAll, onRowClick — default export
@@ -108,12 +109,12 @@ Not counted as a violation.
 
 ## Totals
 
-- Exported components in root `components/` (35 files, including LicenseGuard's 4
+- Exported components in root `components/` (36 files, including LicenseGuard's 4
   exports, RBACContext's 3, ui.tsx's 10 UI primitives, IdleTimeout counted once despite
-  two export forms, and DHCPTab/DNSTab/IPAMTab): **48**
+  two export forms, AgentsTab, and DHCPTab/DNSTab/IPAMTab): **49**
 - Exported components in `components/dashboard/` (6 files): **6**
 - Exported components in `components/ipam/` (4 files): **4**
-- **Grand total: 58 exported components across 45 files.**
+- **Grand total: 59 exported components across 46 files.**
 - (`pctColor` (ui.tsx), `useRefreshKey`/`useEscape` (ui.tsx), and `scoreColor`/
   `forecastColor`/`severityColor`/`severityBadgeClass` (palette.tsx) are utility
   functions / hooks, not components — excluded from the count above.)

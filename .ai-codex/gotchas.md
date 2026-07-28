@@ -258,3 +258,34 @@
   reuse `api/csv.js`.
 - Audit writes NEVER throw (`api/middleware/audit.js`) — a failed audit
   write must never break the underlying request/operation being audited.
+
+## Remote agent data plane (Phase 4b — `api/ws-server.js` + `collector/writers.js`)
+- The DB-write half of the collector lives in `collector/writers.js`
+  (`writeScopeStats`/`writeLeases`/`writeReservations`/`writeDhcpEvents`/
+  `writeDnsZones`/`writeScanResult`). It is the SINGLE source of truth for
+  "given already-collected raw PS output for a server, UPSERT it". BOTH
+  `collector/collector.js` (central WinRM polling) and `api/ws-server.js`
+  (remote-agent ingest) call it — so an agent-written scope/lease/zone is
+  byte-identical to a centrally-polled one. When you change any DHCP/DNS write
+  logic, change it in `writers.js`, NOT in collector.js (collector.js now only
+  COLLECTS via powershellRunner, then delegates the write). Do NOT `require`
+  collector.js from anywhere — it runs `main()` at load and would start a 2nd
+  collector; the shared helpers/coercions are re-exported from `writers.js`.
+- `getActiveServers()` (collector.js) filters `agent_hub_id IS NULL` — the
+  central collector NEVER polls agent-owned servers. Config push does the
+  opposite (`agent_hub_id = <agent>`). If a server "stopped polling centrally",
+  check whether it got an `agent_hub_id` assigned.
+- `ws-server.js` runs IN the API process (started from `api/server.js`), bound
+  to all interfaces on `DDI_WS_PORT` (3011) while the REST API stays loopback.
+  It DECRYPTS `ps_password` (credStore) into the `ddi_config` frame so the agent
+  has usable WinRM creds — that frame carries plaintext creds, so wss:// (set
+  `DDI_WS_TLS_CERT`/`DDI_WS_TLS_KEY`) is strongly recommended in production.
+- The hub-JWT revocation cross-check queries `netvault.agents` over the SAME
+  cross-DB pool `api/server.js` uses (ddivault_user → netvault). ddivault_user
+  therefore needs `SELECT ON netvault.agents` (a NEW cross-DB grant beyond the
+  existing sites/countries grant) or every agent connect fails closed (4003).
+- Inner `data` shapes per `ddi_result` kind are defined in ws-server.js's header
+  comment (scope_stats→{stats,scopes}, dns_zones→{zones,recordsByZone}, etc.).
+  The netvault agent module is built to those exact shapes — keep them in sync.
+  `scope_options`/`dns_health`/`failover` are accepted but NOT yet persisted
+  agent-side (central dnsMonitor/haMonitor still cover local servers).

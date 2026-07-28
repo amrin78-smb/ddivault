@@ -30,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.24.0': [
+    'NocVault Agents Phase 4b — DDIVault can now collect DHCP/DNS/IPAM from remote sites via a local agent, instead of only central WinRM. A new hub-enrolled agent installed at a remote site runs the WinRM/DHCP-log/ICMP collection LOCALLY and ships the raw results back to DDIVault over an authenticated WebSocket (new agent-ingest port 3011), which writes them through the same paths the central collector uses. This reaches DHCP/DNS servers a central host cannot (isolated forests, cross-WAN sites, firewalled LANs).',
+    'A new "Remote Agents" page (admin+) shows the agent roster (auto-populated when an agent connects) and lets you assign which DDI servers each agent collects; the central collector automatically stops polling servers owned by an agent, and assignment changes push to the agent live. Agents are enrolled and revoked from the NetVault hub — this page is domain config only.',
+    'Security: the agent WebSocket verifies the hub-signed agent identity (HS256, shared secret) and cross-checks the NetVault agent registry to honour hub revocation (fails closed). Requires a new SELECT grant on netvault.agents for the DDIVault DB role (applied by the updater) and inbound port 3011.',
+    'Scope of the first agent pass: agent-owned servers collect DHCP scopes/leases/reservations/events and DNS zones/records. DHCP failover, DNS-health intelligence, and scope-option gateway auto-fill remain central-only for now (servers reachable centrally are unaffected).',
+  ],
   '1.23.0': [
     'IPAM now has a full VLANs management view. The previously "Coming Soon" VLANs tab in IPAM is enabled: list every registered VLAN with its ID, name, description, site, and a live count of linked subnets.',
     'Add VLANs via a form (VLAN ID, name, description, site) and delete them with a confirm step. VLAN IDs are validated client-side to the valid 1-4094 range before submitting.',
@@ -510,6 +516,7 @@ const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
 const alertDispatcher = require('./alertDispatcher');
+const { startWsServer, reconfigureAgent } = require('./ws-server'); // Phase 4b agent data plane
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(cors({ origin: 'http://localhost:3006', exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'] }));
@@ -624,6 +631,26 @@ app.get('/api/hub/settings', requireAuth, async (req, res) => {
     res.json(await r.json());
   } catch (e) {
     res.status(502).json({ error: e && e.message ? e.message : 'Hub unreachable' });
+  }
+});
+
+// ── Internal agent control (Phase 4b) ─────────────────────────
+// Re-push ddi_config to a connected remote agent after its ddi_servers
+// assignments change (an admin sets/clears ddi_servers.agent_hub_id). The WS
+// ingest server runs in THIS process, so assignment-change code can also call
+// reconfigureAgent(hubId) directly in-process — this route exists for
+// out-of-process callers (e.g. the collector). Registered BEFORE enforceLicense
+// so an expired license never blocks reconfiguration; gated by requireSuperAdmin
+// so it cannot be driven by a low-privilege session through the frontend proxy.
+app.post('/api/internal/ddi-agents/reconfigure', requireSuperAdmin, async (req, res) => {
+  try {
+    const hubId = req.body && req.body.hub_agent_id;
+    if (!hubId) return res.status(400).json({ error: 'hub_agent_id required' });
+    const pushed = await reconfigureAgent(hubId);
+    res.json({ ok: true, pushed });
+  } catch (e) {
+    console.error('[API] ddi-agents/reconfigure error:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -2390,7 +2417,7 @@ app.get('/api/servers', attachSiteFilter, async (req, res) => {
       `SELECT id, hostname, ip_address::text as ip_address, role, description,
               is_active, last_polled, poll_status, poll_error,
               auth_mode, ps_username, winrm_port, winrm_https,
-              winrm_test_ok, winrm_tested_at, notes, site_id,
+              winrm_test_ok, winrm_tested_at, notes, site_id, agent_hub_id,
               created_at, updated_at
        FROM ddi_servers ${siteFilter} ORDER BY created_at DESC`,
       params
@@ -2548,6 +2575,145 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
     });
   } catch (err) {
     console.error('[API] test connection error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Remote Agents (Phase 4b — federated data plane) ───────────
+// DDIVault owns the DOMAIN config for remote agents: which ddi_servers each
+// hub-enrolled agent collects (ddi_servers.agent_hub_id, keyed by the hub's
+// durable agent id). Agent lifecycle (enrollment / revocation) is the NetVault
+// hub's job — this app only MAPS servers to an already-provisioned agent and
+// re-pushes the config over the WS data plane (reconfigureAgent, in-process)
+// after a change so it takes effect immediately.
+
+// Roster: every provisioned agent + count of servers assigned to it.
+app.get('/api/ddi-agents', requireAuth, async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT a.id, a.hub_agent_id, a.name, a.status, a.version,
+              a.last_seen_at, a.created_at,
+              COUNT(s.id)::int AS server_count
+         FROM ddi_agents a
+         LEFT JOIN ddi_servers s ON s.agent_hub_id = a.hub_agent_id
+        GROUP BY a.id
+        ORDER BY a.created_at DESC`
+    );
+    res.json({ data: rows.rows });
+  } catch (err) {
+    console.error('[API] ddi-agents list error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// One agent + the ddi_servers assigned to it (site-scoped for site_admins).
+app.get('/api/ddi-agents/:hubId', attachSiteFilter, async (req, res) => {
+  try {
+    const hubId = String(req.params.hubId);
+    const a = await db.query(
+      `SELECT id, hub_agent_id, name, status, version, last_seen_at, created_at
+         FROM ddi_agents WHERE hub_agent_id = $1`, [hubId]);
+    if (!a.rows.length) return res.status(404).json({ error: 'Agent not found' });
+
+    const params = [hubId];
+    let siteClause = '';
+    if (req.allowedSiteIds !== null) { params.push(req.allowedSiteIds); siteClause = ` AND site_id = ANY($2::int[])`; }
+    const servers = await db.query(
+      `SELECT id, hostname, ip_address::text AS ip_address, role, is_active, site_id
+         FROM ddi_servers WHERE agent_hub_id = $1${siteClause}
+        ORDER BY hostname`, params);
+
+    const siteIds = [...new Set(servers.rows.map(r => r.site_id).filter(Boolean))];
+    let siteMap = {};
+    if (siteIds.length) {
+      const sn = await netvaultDb.query(`SELECT id, name FROM sites WHERE id = ANY($1)`, [siteIds]).catch(() => ({ rows: [] }));
+      for (const s of sn.rows) siteMap[s.id] = s.name;
+    }
+    res.json({
+      data: {
+        agent: a.rows[0],
+        servers: servers.rows.map(r => ({ ...r, site_name: r.site_id ? siteMap[r.site_id] || null : null })),
+      },
+    });
+  } catch (err) {
+    console.error('[API] ddi-agent detail error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Set / clear ddi_servers.agent_hub_id for a set of servers, then re-push
+// config to every affected agent (this one + any agent that LOST a server).
+// Body: { assign?: number[], unassign?: number[], assign_site_id?: number }
+//   assign         — server ids to hand to this agent (set agent_hub_id = hubId)
+//   unassign       — server ids to return to central polling (set NULL), only if
+//                    currently owned by THIS agent
+//   assign_site_id — optional: also assign every server of that site to this agent
+app.post('/api/ddi-agents/:hubId/servers', requireWrite, async (req, res) => {
+  try {
+    const hubId = String(req.params.hubId);
+    const agent = await db.query('SELECT hub_agent_id, name FROM ddi_agents WHERE hub_agent_id = $1', [hubId]);
+    if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
+
+    const body = req.body || {};
+    let assignIds   = Array.isArray(body.assign)   ? body.assign.map(Number).filter(Number.isInteger)   : [];
+    const unassignIds = Array.isArray(body.unassign) ? body.unassign.map(Number).filter(Number.isInteger) : [];
+
+    // Optional: assign every server of a site to this agent.
+    if (body.assign_site_id != null) {
+      const sid = parseInt(body.assign_site_id);
+      if (Number.isInteger(sid)) {
+        const siteServers = await db.query('SELECT id FROM ddi_servers WHERE site_id = $1', [sid]);
+        assignIds = [...new Set([...assignIds, ...siteServers.rows.map(r => r.id)])];
+      }
+    }
+
+    if (!assignIds.length && !unassignIds.length) {
+      return res.status(400).json({ error: 'No server ids provided (assign / unassign / assign_site_id)' });
+    }
+
+    // Validate every referenced server exists; capture prior ownership.
+    const allIds = [...new Set([...assignIds, ...unassignIds])];
+    const existing = await db.query('SELECT id, agent_hub_id FROM ddi_servers WHERE id = ANY($1::int[])', [allIds]);
+    if (existing.rows.length !== allIds.length) {
+      const found = new Set(existing.rows.map(r => r.id));
+      const missing = allIds.filter(id => !found.has(id));
+      return res.status(400).json({ error: `Unknown server id(s): ${missing.join(', ')}` });
+    }
+
+    // Agents that LOSE a server (a reassigned server's prior owner) also need a
+    // reconfigure so they stop collecting it.
+    const affected = new Set();
+    for (const r of existing.rows) {
+      if (r.agent_hub_id && r.agent_hub_id !== hubId) affected.add(r.agent_hub_id);
+    }
+
+    if (assignIds.length) {
+      await db.query('UPDATE ddi_servers SET agent_hub_id = $1, updated_at = NOW() WHERE id = ANY($2::int[])', [hubId, assignIds]);
+    }
+    if (unassignIds.length) {
+      await db.query('UPDATE ddi_servers SET agent_hub_id = NULL, updated_at = NOW() WHERE id = ANY($1::int[]) AND agent_hub_id = $2', [unassignIds, hubId]);
+    }
+
+    if (req.audit) req.audit({
+      action: 'modify', entity_type: 'agent', entity_id: hubId,
+      entity_name: agent.rows[0].name || hubId,
+      new_value: { assigned: assignIds, unassigned: unassignIds },
+      change_summary: `Agent ${agent.rows[0].name || hubId}: +${assignIds.length} / -${unassignIds.length} server(s)`,
+    });
+
+    // Re-push config to this agent + every agent that lost a server. Best-effort
+    // and in-process over the WS data plane — an offline agent (false result)
+    // simply picks up the new config on its next connect, so it is not an error.
+    affected.add(hubId);
+    const reconfigured = {};
+    for (const hid of affected) {
+      try { reconfigured[hid] = await reconfigureAgent(hid); }
+      catch (e) { reconfigured[hid] = false; console.error(`[API] reconfigureAgent(${hid}) failed:`, e.message); }
+    }
+
+    res.json({ success: true, assigned: assignIds.length, unassigned: unassignIds.length, reconfigured });
+  } catch (err) {
+    console.error('[API] ddi-agent assign error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4927,3 +5093,14 @@ setInterval(() => getLicense(true).catch(() => {}), 24 * 60 * 60 * 1000);
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`[${new Date().toISOString()}] DDIVault API running on http://127.0.0.1:${PORT}`);
 });
+
+// ── Agent WebSocket ingest server (Phase 4b) ──────────────────
+// Bound to all interfaces (unlike the loopback API) so remote agent hosts can
+// reach it. Default port 3011 (env DDI_WS_PORT). NEW firewall port + NSSM-served
+// WS — see the installer TODO in the Phase 4b report.
+const DDI_WS_PORT = parseInt(process.env.DDI_WS_PORT || '3011');
+try {
+  startWsServer(DDI_WS_PORT);
+} catch (e) {
+  console.error('[WS] Failed to start agent WebSocket ingest server:', e.message);
+}

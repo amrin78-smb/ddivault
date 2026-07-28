@@ -9,6 +9,7 @@ const ha        = require('./haMonitor');
 const dnsMonitor = require('./dnsMonitor');
 const ipamSync  = require('./ipamSync');
 const { decrypt } = require('./credStore');
+const writers   = require('./writers');   // shared DB-write half (also used by api/ws-server.js)
 const forecastEngine  = require('./forecastEngine');   // { runForecasts(db) }
 const anomalyDetector = require('./anomalyDetector');   // { detectAnomalies(db), buildBaselines(db) }
 const healthScorer    = require('./healthScorer');      // { scoreSites(db) }
@@ -109,10 +110,13 @@ function isValidIp(val) {
 }
 
 async function getActiveServers() {
+  // agent_hub_id IS NULL — servers owned by a remote agent (Phase 4b) are polled
+  // by that agent, NOT the central collector. The WS ingest server pushes them
+  // their config and writes back their results via collector/writers.js.
   const result = await db.query(
     `SELECT id, hostname, ip_address::text as ip_address, role,
             auth_mode, ps_username, ps_password, winrm_port, winrm_https
-     FROM ddi_servers WHERE is_active = TRUE ORDER BY id`
+     FROM ddi_servers WHERE is_active = TRUE AND agent_hub_id IS NULL ORDER BY id`
   );
   // Decrypt passwords
   return result.rows.map(row => ({
@@ -182,6 +186,12 @@ async function updateServerStatus(serverId, status, errorMsg) {
   );
 }
 
+// ── Per-type COLLECT functions (central only) ─────────────────
+// Each collects raw PowerShell/WinRM output for one server, then hands the
+// DB-WRITE half to collector/writers.js — the SAME writers the WS ingest server
+// (api/ws-server.js) calls for agent-shipped results, so a scope/lease/zone
+// written by an agent is byte-identical to one polled centrally.
+
 async function collectScopeStats(server) {
   if (server.role === 'dns') return;
   const ip   = cleanIp(server.ip_address);
@@ -191,149 +201,9 @@ async function collectScopeStats(server) {
   const stats  = ps.getDhcpScopeStats(ip, auth);
   const scopes = ps.getDhcpScopes(ip, auth);
 
-  if (!stats || !stats.length) {
-    warn(`[Scopes] No data from ${ip} — WinRM not reachable or DHCP role not installed`);
-    await updateServerStatus(server.id, 'error', 'No scope stats returned — check WinRM');
-    return;
-  }
-
-  const scopeConfig = {};
-  for (const s of (scopes || [])) {
-    const key = scopeIdStr(s.ScopeId);
-    if (key) scopeConfig[key] = s;
-  }
-
-  let upserted = 0;
-  const alertsToFire = [];
-
-  for (const stat of stats) {
-    const scopeId  = scopeIdStr(stat.ScopeId);
-    if (!scopeId) continue; // skip if no scope ID — avoids NOT NULL violation
-    // Total should only be InUse + Free (dynamic pool).
-    // Reserved IPs are not available for dynamic assignment, so they are
-    // excluded from total_ips and stored separately for info.
-    const inUse    = parseInt(stat.InUse    || 0);
-    const free     = parseInt(stat.Free     || 0);
-    const reserved = parseInt(stat.Reserved || 0);
-    const pending  = parseInt(stat.Pending  || 0);
-    const total    = inUse + free;
-    const pct      = total > 0 ? parseFloat(((inUse / total) * 100).toFixed(2)) : 0;
-    const cfg      = scopeConfig[scopeId] || {};
-    // A scope with no dynamic pool (InUse + Free = 0) is empty/unconfigured,
-    // not "Full". Force state to 'empty' rather than whatever Windows reports.
-    const scopeState = total === 0 ? 'empty' : (cfg.State || 'Active').toLowerCase();
-
-    const res = await db.query(
-      `INSERT INTO dhcp_scopes
-         (server_id, scope_id, name, start_range, end_range, subnet_mask,
-          state, lease_duration, total_ips, in_use, free, reserved, pending,
-          percent_used, description, last_updated)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
-       ON CONFLICT (server_id, scope_id) DO UPDATE SET
-         name=EXCLUDED.name, start_range=EXCLUDED.start_range,
-         end_range=EXCLUDED.end_range, subnet_mask=EXCLUDED.subnet_mask,
-         state=EXCLUDED.state, lease_duration=EXCLUDED.lease_duration,
-         total_ips=EXCLUDED.total_ips, in_use=EXCLUDED.in_use,
-         free=EXCLUDED.free, reserved=EXCLUDED.reserved,
-         pending=EXCLUDED.pending, percent_used=EXCLUDED.percent_used,
-         description=EXCLUDED.description, last_updated=NOW()
-       RETURNING id`,
-      [server.id, scopeId, cfg.Name||null,
-       scopeIdStr(cfg.StartRange)||null, scopeIdStr(cfg.EndRange)||null,
-       scopeIdStr(cfg.SubnetMask)||null, scopeState,
-       parsePsDuration(cfg.LeaseDuration),
-       total, inUse, free, reserved, pending, pct, cfg.Description||null]
-    );
-
-    const dbScopeId = res.rows[0]?.id;
-    if (dbScopeId) {
-      await db.query(
-        `INSERT INTO dhcp_scope_history (scope_id, in_use, free, reserved, percent_used)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [dbScopeId, inUse, free, reserved, pct]
-      );
-    }
-
-    // Sync utilization to the matching IPAM subnet if it exists (best-effort, silent).
-    const _mask = scopeIdStr(cfg.SubnetMask);
-    const prefixLength = _mask ? ipamSync.maskToPrefixLength(_mask) : 0;
-    if (prefixLength >= 1 && prefixLength <= 32) {
-      await db.query(
-        `UPDATE ipam_subnets SET used_hosts = $1, free_hosts = $2, total_hosts = $3, updated_at = NOW()
-         WHERE network = $4::inet AND prefix_length = $5`,
-        [inUse, free, total, scopeId, prefixLength]
-      ).catch(() => {}); // silent — subnet may not exist yet
-    }
-
-    if (pct >= 100) {
-      alertsToFire.push({ scopeId, pct, severity:'critical', msg:`[${ip}] Scope ${scopeId} is 100% FULL (${inUse}/${total} IPs)` });
-    } else if (pct >= SCOPE_CRITICAL_PCT) {
-      alertsToFire.push({ scopeId, pct, severity:'critical', msg:`[${ip}] Scope ${scopeId} is ${pct.toFixed(1)}% full — ${free} IPs remaining` });
-    } else if (pct >= SCOPE_WARNING_PCT) {
-      alertsToFire.push({ scopeId, pct, severity:'warning',  msg:`[${ip}] Scope ${scopeId} is ${pct.toFixed(1)}% full — ${free} IPs remaining` });
-    }
-
-    // Auto-resolve (hysteresis) — runs every poll for every scope, even healthy ones.
-    // Resolve OPEN critical alerts once utilization drops below the critical clear band.
-    if (pct < SCOPE_CRITICAL_CLEAR_PCT) {
-      await db.query(
-        `UPDATE alert_events
-            SET resolved_at = NOW(), resolved_reason = 'condition-cleared',
-                acknowledged = TRUE, acknowledged_by = COALESCE(acknowledged_by, 'system'),
-                acknowledged_at = COALESCE(acknowledged_at, NOW())
-          WHERE scope_id = $1 AND severity = 'critical'
-            AND acknowledged = FALSE AND resolved_at IS NULL`,
-        [scopeId]
-      ).catch(() => {});
-    }
-    // Resolve OPEN warning alerts once utilization drops below the warning clear band.
-    if (pct < SCOPE_WARNING_CLEAR_PCT) {
-      await db.query(
-        `UPDATE alert_events
-            SET resolved_at = NOW(), resolved_reason = 'condition-cleared',
-                acknowledged = TRUE, acknowledged_by = COALESCE(acknowledged_by, 'system'),
-                acknowledged_at = COALESCE(acknowledged_at, NOW())
-          WHERE scope_id = $1 AND severity = 'warning'
-            AND acknowledged = FALSE AND resolved_at IS NULL`,
-        [scopeId]
-      ).catch(() => {});
-    }
-    upserted++;
-  }
-
-  log(`[Scopes] ${ip} — updated ${upserted} scope(s)`);
-
-  for (const alert of alertsToFire) {
-    // OPEN-condition dedup: only one open alert per (scope, severity) at a time.
-    const open = await db.query(
-      `SELECT id FROM alert_events
-        WHERE scope_id=$1 AND severity=$2 AND acknowledged=FALSE AND resolved_at IS NULL
-        LIMIT 1`,
-      [alert.scopeId, alert.severity]
-    );
-    if (!open.rows.length) {
-      await db.query(
-        `INSERT INTO alert_events (scope_id, message, severity, server_id) VALUES ($1,$2,$3,$4)`,
-        [alert.scopeId, alert.msg, alert.severity, server.id]
-      );
-      log(`[Alert] ${alert.severity.toUpperCase()}: ${alert.msg}`);
-    }
-  }
-
-  await updateServerStatus(server.id, 'ok', null);
-
-  await syncScopesToIpam(server, auth, ip, scopeConfig);
-}
-
-// Auto-create IPAM subnets/supernets from discovered DHCP scopes.
-async function syncScopesToIpam(server, auth, ip, scopeConfig) {
-  const scopes = Object.entries(scopeConfig || {}).map(([scopeId, cfg]) => ({
-    scopeId,
-    subnetMask: scopeIdStr(cfg.SubnetMask),
-    name: cfg.Name || null,
-  }));
-  if (!scopes.length) return;
   // Resolve gateway (DHCP option 3) on demand — only invoked for NEW subnets.
+  // WinRM-backed; the agent-ingest path passes no getGateway (subnets just get
+  // no auto gateway), so this resolver stays central-only.
   const getGateway = async (scopeId) => {
     try {
       const opts = ps.getDhcpScopeOptions(ip, auth, scopeId);
@@ -344,29 +214,8 @@ async function syncScopesToIpam(server, auth, ip, scopeConfig) {
       return scopeIdStr(v) || null;
     } catch (_) { return null; }
   };
-  try {
-    const r = await ipamSync.syncScopesToIpam(db, scopes, { log, getGateway });
-    if (r.created || r.updated || r.supernetsCreated) {
-      log(`[IPAM Sync] ${ip} — ${r.created} created, ${r.updated} updated, ${r.supernetsCreated} supernet(s)`);
-    }
-  } catch (err) {
-    console.error(`[IPAM Sync] ${ip} error:`, err.message);
-  }
-}
 
-// Classify a device and persist fingerprint columns on a dhcp_leases row.
-async function classifyAndTagLease(serverId, ip, mac, hostname) {
-  if (!mac) return;
-  try {
-    const c = deviceClassifier.classifyDevice(mac, hostname || '');
-    const randomized = deviceClassifier.isMacRandomized(mac);
-    await db.query(
-      `UPDATE dhcp_leases SET device_type=$1, device_vendor=$2, device_os=$3, risk_level=$4,
-         is_mac_randomized=$5, first_seen=COALESCE(first_seen, NOW())
-       WHERE server_id=$6 AND ip_address=$7::inet`,
-      [c.type || null, c.vendor || null, c.os || null, c.risk_level || 'unknown', !!randomized, serverId, ip]
-    ).catch(()=>{});
-  } catch (_) {}
+  await writers.writeScopeStats(db, server, { stats, scopes }, { log, warn, getGateway });
 }
 
 async function syncLeases(server) {
@@ -376,40 +225,7 @@ async function syncLeases(server) {
   log(`[Leases] Syncing from ${ip}...`);
 
   const leases = ps.getDhcpLeases(ip, auth);
-  if (!leases || !leases.length) {
-    warn(`[Leases] No leases from ${ip}`);
-    return;
-  }
-
-  await db.query(
-    `UPDATE dhcp_leases SET address_state='Expired' WHERE server_id=$1 AND lease_expiry < NOW()`,
-    [server.id]
-  );
-
-  let upserted = 0;
-  for (const lease of leases) {
-    const ip_addr = scopeIdStr(lease.IPAddress) || null; // IPAddress object → string
-    const mac     = lease.ClientId     || null;
-    const host    = lease.HostName     || null;
-    const scopeId = scopeIdStr(lease.ScopeId) || null;   // IPAddress object → string
-    const state   = lease.AddressState || 'Active';
-    const expiry  = parsePsDate(lease.LeaseExpiryTime); // PS /Date(ms)/ → ISO-8601
-    if (!ip_addr) continue;
-
-    await db.query(
-      `INSERT INTO dhcp_leases
-         (server_id, scope_id, ip_address, hostname, mac_address, address_state, lease_expiry, last_seen)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
-       ON CONFLICT (server_id, ip_address) DO UPDATE SET
-         scope_id=EXCLUDED.scope_id, hostname=EXCLUDED.hostname,
-         mac_address=EXCLUDED.mac_address, address_state=EXCLUDED.address_state,
-         lease_expiry=EXCLUDED.lease_expiry, last_seen=NOW()`,
-      [server.id, scopeId, ip_addr, host, mac, state, expiry]
-    );
-    await classifyAndTagLease(server.id, ip_addr, mac, host);
-    upserted++;
-  }
-  log(`[Leases] ${ip} — synced ${upserted} leases`);
+  await writers.writeLeases(db, server, leases, { log, warn });
 }
 
 // Reservations are fetched separately from leases (Get-DhcpServerv4Reservation),
@@ -421,30 +237,7 @@ async function syncReservations(server) {
   const auth = serverAuth(server);
   try {
     const reservations = ps.getDhcpReservations(ip, null, auth);
-    if (!reservations || !reservations.length) return;
-    let upserted = 0;
-    for (const r of reservations) {
-      const scopeId = scopeIdStr(r.ScopeId);
-      const ipAddr  = scopeIdStr(r.IPAddress);
-      const mac     = String(r.ClientId || '').trim().toLowerCase().replace(/-/g, ':');
-      const name    = String(r.Name || '').trim() || null;
-      if (!scopeId || !ipAddr) continue;
-      await db.query(
-        `INSERT INTO dhcp_leases
-           (server_id, scope_id, ip_address, hostname, mac_address, address_state, last_seen)
-         VALUES ($1,$2,$3::inet,$4,$5,'Reservation',NOW())
-         ON CONFLICT (server_id, ip_address) DO UPDATE SET
-           scope_id      = EXCLUDED.scope_id,
-           hostname      = COALESCE(EXCLUDED.hostname, dhcp_leases.hostname),
-           mac_address   = COALESCE(EXCLUDED.mac_address, dhcp_leases.mac_address),
-           address_state = 'Reservation',
-           last_seen     = NOW()`,
-        [server.id, scopeId, ipAddr, name, mac]
-      );
-      await classifyAndTagLease(server.id, ipAddr, mac, name);
-      upserted++;
-    }
-    log(`[Reservations] ${ip} — synced ${upserted} reservation(s)`);
+    await writers.writeReservations(db, server, reservations, { log, warn });
   } catch (err) {
     console.error(`[Reservations] Error on ${ip}:`, err.message);
   }
@@ -464,73 +257,7 @@ async function tailDhcpLog(server) {
   const events = dhcp.readDhcpLogSince(since);
   if (!events.length) return;
 
-  let inserted = 0;
-  let lastTime = since;
-
-  for (const ev of events) {
-    if (!ev.event_time) continue;
-    try {
-      await db.query(
-        `INSERT INTO dhcp_events
-           (server_id, event_id, event_type, ip_address, hostname, mac_address, description, raw_line, event_time)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-        [serverId, ev.event_id, ev.event_type, ev.ip_address, ev.hostname,
-         ev.mac_address, ev.description, ev.raw_line, ev.event_time]
-      );
-      inserted++;
-
-      const t = new Date(ev.event_time);
-      if (!lastTime || t > lastTime) lastTime = t;
-
-      if ([10,11,12,20].includes(ev.event_id) && ev.ip_address) {
-        const typeMap = { 10:'assign', 11:'renew', 12:'release', 20:'expire' };
-        await db.query(
-          `INSERT INTO lease_history (server_id, ip_address, hostname, mac_address, event_type, event_time)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [serverId, ev.ip_address, ev.hostname, ev.mac_address, typeMap[ev.event_id], ev.event_time]
-        ).catch(() => {});
-      }
-
-      if (ev.event_id === 1020) {
-        // Dedup: skip if an OPEN scope-full alert already exists for this server+scope.
-        const msg1020 = `[${ip}] DHCP scope full: ${ev.description}`;
-        const open1020 = await db.query(
-          `SELECT id FROM alert_events
-            WHERE server_id=$1 AND scope_id=$2 AND message=$3
-              AND acknowledged=FALSE AND resolved_at IS NULL
-            LIMIT 1`,
-          [serverId, ev.ip_address, msg1020]
-        ).catch(() => ({ rows: [] }));
-        if (!open1020.rows.length) {
-          await db.query(
-            `INSERT INTO alert_events (server_id, scope_id, message, severity)
-             VALUES ($1,$2,$3,'critical')`,
-            [serverId, ev.ip_address, msg1020]
-          ).catch(() => {});
-        }
-      }
-      if (ev.event_id === 2019) {
-        // Dedup: skip if an OPEN Rogue DHCP alert already exists for this server.
-        const open2019 = await db.query(
-          `SELECT id FROM alert_events
-            WHERE server_id=$1 AND message LIKE '%Rogue DHCP server detected%'
-              AND acknowledged=FALSE AND resolved_at IS NULL
-            LIMIT 1`,
-          [serverId]
-        ).catch(() => ({ rows: [] }));
-        if (!open2019.rows.length) {
-          await db.query(
-            `INSERT INTO alert_events (server_id, message, severity) VALUES ($1,$2,'critical')`,
-            [serverId, `[${ip}] Rogue DHCP server detected!`]
-          ).catch(() => {});
-        }
-      }
-    } catch (err) {
-      if (!err.message.includes('unique')) console.error('[Log] Insert error:', err.message);
-    }
-  }
-
-  if (inserted > 0) log(`[Log] ${ip} — inserted ${inserted} new events`);
+  const { lastTime } = await writers.writeDhcpEvents(db, server, events, { log, warn });
   if (lastTime) lastLogEventTime[serverId] = lastTime;
 }
 
@@ -546,38 +273,17 @@ async function syncDns(server) {
     return;
   }
 
-  let zoneCount = 0;
+  // Collect records for the eligible primary zones (same filter the writer
+  // re-applies), keyed by zone name, then write zones + records in one call.
+  const recordsByZone = {};
   for (const zone of zones) {
-    const res = await db.query(
-      `INSERT INTO dns_zones (server_id, zone_name, zone_type, is_reverse, is_ds_integrated, is_auto_created)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (server_id, zone_name) DO UPDATE SET
-         zone_type=EXCLUDED.zone_type, is_reverse=EXCLUDED.is_reverse,
-         is_ds_integrated=EXCLUDED.is_ds_integrated, last_updated=NOW()
-       RETURNING id`,
-      [server.id, zone.ZoneName, zone.ZoneType, zone.IsReverseLookupZone===true,
-       zone.IsDsIntegrated===true, zone.IsAutoCreated===true]
-    );
-    zoneCount++;
-
-    const zoneDbId = res.rows[0]?.id;
-    if (zoneDbId && !zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary') {
+    if (!zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary') {
       const records = ps.getDnsRecords(ip, zone.ZoneName, auth);
-      if (records && records.length) {
-        for (const rec of records) {
-          await db.query(
-            `INSERT INTO dns_records (zone_id, hostname, record_type, record_data, ttl, last_seen)
-             VALUES ($1,$2,$3,$4,$5,NOW())
-             ON CONFLICT (zone_id, hostname, record_type, record_data)
-             DO UPDATE SET ttl = EXCLUDED.ttl, last_seen = NOW()`,
-            [zoneDbId, rec.HostName, rec.RecordType, String(rec.RecordData||''), rec.TimeToLive||null]
-          ).catch(() => {});
-        }
-        await db.query('UPDATE dns_zones SET record_count=$1 WHERE id=$2', [records.length, zoneDbId]);
-      }
+      if (records && records.length) recordsByZone[zone.ZoneName] = records;
     }
   }
-  log(`[DNS] ${ip} — synced ${zoneCount} zones`);
+
+  await writers.writeDnsZones(db, server, { zones, recordsByZone }, { log, warn });
 }
 
 // ── HA / health wrappers (adapt ha module signature to pollAll) ──

@@ -23,6 +23,22 @@ CREATE TABLE IF NOT EXISTS ddi_servers (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ── DDI Agents (remote data-plane collectors, Phase 4b) ─────
+-- One row per hub-provisioned remote agent that connects to the DDIVault
+-- WebSocket ingest server (api/ws-server.js, port DDI_WS_PORT). Auto-created
+-- on first authenticated connect, keyed by the hub's durable agent id.
+-- Non-secret: the agent authenticates with a hub-signed JWT, not a stored key,
+-- so there is no credential column to protect here.
+CREATE TABLE IF NOT EXISTS ddi_agents (
+  id            SERIAL PRIMARY KEY,
+  hub_agent_id  TEXT UNIQUE NOT NULL,          -- hub's durable agent id ("agt_…")
+  name          TEXT,
+  status        TEXT DEFAULT 'online',         -- 'online' | 'offline'
+  version       TEXT,
+  last_seen_at  TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ── DHCP Scopes ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dhcp_scopes (
   id              SERIAL PRIMARY KEY,
@@ -702,6 +718,33 @@ ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS last_scavenged TIMESTAMPTZ;
 -- DNS role/forwarder columns on ddi_servers
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS is_dns_primary BOOLEAN DEFAULT FALSE;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_forwarders TEXT[];
+
+-- ── Agent ownership (Phase 4b) ──────────────────────────────
+-- NULL  = polled centrally by DDIVault-Collector (getActiveServers()).
+-- non-NULL = owned by the remote agent whose hub_agent_id matches; the central
+-- collector SKIPS it (getActiveServers filters `agent_hub_id IS NULL`) and the
+-- WS ingest server pushes it (decrypted creds) to that agent instead.
+-- Plain TEXT, not an FK to ddi_agents.hub_agent_id: a server can be assigned to
+-- an agent that has not connected/provisioned its ddi_agents row yet.
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS agent_hub_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_ddi_servers_agent_hub ON ddi_servers(agent_hub_id);
+
+-- ── ddi_agents: readonly SELECT (non-secret) ────────────────
+-- ddi_agents holds no credential (agents auth via hub-signed JWT), so both
+-- diagnostic roles get plain table-level SELECT. Per-table grant, NOT the
+-- blanket "GRANT SELECT ON ALL TABLES" form (that form must never be re-run —
+-- it silently re-widens the credential-column exclusions elsewhere in this
+-- file). Guarded so it is a no-op on a standalone DB with no Hub roles.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'nocvault_readonly') THEN
+    GRANT SELECT ON ddi_agents TO nocvault_readonly;
+  END IF;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
+    GRANT SELECT ON ddi_agents TO claude_readonly;
+  END IF;
+END
+$$;
 
 -- ── Hub cross-DB read role ───────────────────────────────────
 -- The NocVault Hub reads across all suite DBs via the shared

@@ -1,7 +1,7 @@
 Express routes: no force-dynamic concept applies.
 
-Total routes found: 165 (162 Express + 3 Next.js route handlers)
-- api/server.js: 125 routes (app.get/post/put/patch/delete)
+Total routes found: 168 (165 Express + 3 Next.js route handlers)
+- api/server.js: 128 routes (app.get/post/put/patch/delete)
 - api/v1.js: 23 routes (mounted at /api/v1)
 - api/reports.js: 3 routes (mounted at /api/reports, registered AFTER reportsScheduling.js)
 - api/reportsScheduling.js: 11 routes (mounted at /api/reports, registered BEFORE reports.js)
@@ -26,6 +26,11 @@ GET /api/system/update-status auth external — git ls-remote/fetch HEAD vs loca
 GET /api/system/update-available public external — cached (24h-refreshed) update-availability flag, no live I/O at request time
 GET /api/system/last-update-status public — reads logs/last-update-status.json written by Update-DDIVault.ps1 (stage/error code/rollback outcome of the last update run); {exists:false} if none yet
 POST /api/system/update super-admin external — schedules a SYSTEM `schtasks` task running Update-DDIVault.ps1; license-gated; 409 if logs/update.lock (written by the running .ps1) shows a run already in progress
+POST /api/internal/ddi-agents/reconfigure super-admin — Phase 4b; re-pushes ddi_config to a connected remote agent (body `{hub_agent_id}`) after its ddi_servers assignments change. Registered BEFORE enforceLicense (never license-blocked). In-process callers should call `reconfigureAgent(hubId)` from api/ws-server.js directly instead.
+
+## Agent data plane — WebSocket (api/ws-server.js, Phase 4b)
+
+NOT an Express route: a separate `ws` WebSocketServer started from api/server.js on `DDI_WS_PORT` (default 3011), bound to ALL interfaces (the REST API stays loopback). Remote agents connect `wss?://host:3011/` with `Authorization: Bearer <hub agent JWT>`. Auth = hub-signed JWT (HS256/NEXTAUTH_SECRET, typ='agent', aud∋'ddi'/'ddivault' — api/agent-identity.js) + netvault.agents revocation cross-check (fail-closed, close 4003). Close codes: 4001 no token, 4003 invalid/revoked, 4000 setup error. Frames: server→agent `ddi_config`/`ddi_scan`; agent→server `ddi_result{server_id,kind,data}`, `ddi_scan_result{subnet_id,data}`, `heartbeat`. Ingest routes each kind to collector/writers.js.
 
 ## DHCP (api/server.js)
 
@@ -107,11 +112,22 @@ GET /api/search auth+site-filter db — smart search: `type:`/`vendor:`/`subnet:
 
 ## Servers (api/server.js)
 
-GET /api/servers auth+site-filter db — known DHCP/DNS servers, enriched with NetVault site names (netvaultDb query), password stripped
+GET /api/servers auth+site-filter db — known DHCP/DNS servers, enriched with NetVault site names (netvaultDb query), password stripped; SELECT now includes agent_hub_id (which remote agent owns the server, NULL = central polling)
 POST /api/servers write db+external — add server (encrypts ps_password) + fire-and-forget addToTrustedHosts (WinRM)
 PUT /api/servers/:id write db — update server row (re-encrypts password only if changed)
 DELETE /api/servers/:id write db — delete server
 POST /api/servers/:id/test-connection write db+external — live WinRM connectivity test (psWrite.testWinRM), records result
+
+## Remote Agents — domain config (api/server.js, Phase 4b federated model)
+
+DDIVault owns which ddi_servers each hub-enrolled agent collects (ddi_servers.agent_hub_id,
+keyed by ddi_agents.hub_agent_id). Agent lifecycle (enroll/revoke) is the NetVault hub's job;
+these routes only MAP servers to an already-provisioned agent and re-push the config over the
+WS data plane via reconfigureAgent(hubId) (in-process, imported from api/ws-server.js).
+
+GET /api/ddi-agents auth db — agent roster: id, hub_agent_id, name, status, version, last_seen_at, created_at + server_count (COUNT of ddi_servers assigned via LEFT JOIN on agent_hub_id)
+GET /api/ddi-agents/:hubId auth+site-filter db — one agent + the ddi_servers assigned to it (site-scoped for site_admins), server rows enriched with NetVault site names; 404 if hub_agent_id unknown
+POST /api/ddi-agents/:hubId/servers write db — set/clear ddi_servers.agent_hub_id for a set of servers. Body `{assign?:int[], unassign?:int[], assign_site_id?:int}` (assign→set to hubId; unassign→NULL only if currently this agent; assign_site_id→assign every server of that site). Validates all ids exist (400 on unknown), 404 if agent unknown, then calls reconfigureAgent() for THIS agent AND every agent that lost a reassigned server; returns `{success,assigned,unassigned,reconfigured:{hubId:bool}}` (bool = pushed live; offline agents sync on reconnect)
 
 ## Alerts / Alert Rules / Recipients (api/server.js)
 

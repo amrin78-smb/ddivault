@@ -48,7 +48,8 @@ BEGIN
     GRANT SELECT (id, hostname, ip_address, role, description, is_active,
       last_polled, poll_status, poll_error, created_at, updated_at, site_id,
       auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
-      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
+      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders,
+      agent_hub_id)
       ON ddi_servers TO nocvault_readonly;
   END IF;
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
@@ -56,7 +57,8 @@ BEGIN
     GRANT SELECT (id, hostname, ip_address, role, description, is_active,
       last_polled, poll_status, poll_error, created_at, updated_at, site_id,
       auth_mode, winrm_port, winrm_https, winrm_test_ok, winrm_tested_at, notes,
-      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders)
+      health_score, health_checked_at, query_ms, is_dns_primary, dns_forwarders,
+      agent_hub_id)
       ON ddi_servers TO claude_readonly;
   END IF;
 END
