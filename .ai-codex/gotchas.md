@@ -1,6 +1,7 @@
 # DDIVault Gotchas — non-obvious behaviours a new session would get wrong
 
 ## Security history (fixed, but the pattern can recur — check for it elsewhere)
+- `useRBAC()` exposes `ready` (false until the NextAuth session resolves). Until then `role` is the **'viewer' default**, not the user's real role — so anything that HIDES or RESETS UI on a capability must wait for it. `page.tsx`'s "reset to dashboard if this tab isn't permitted" effect did not, which is why `/?tab=agents` (gated on `canWrite`) always bounced to the Dashboard while clicking the sidebar worked (fixed 1.26.0).
 - Weak fallback secrets were a recurring bug class here. Fixed instances:
   - `api/emailer.js` — alert-ack HMAC token signing used to fall back to a
     hardcoded literal if `NEXTAUTH_SECRET` was unset; now **fails loud at

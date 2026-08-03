@@ -168,6 +168,26 @@ async function reconfigureAgent(hubAgentId) {
   return false;
 }
 
+// Actively close a live session for a hub agent id. Called by the hub's revoke
+// fan-out (via the loopback /api/internal/agents/disconnect route) — without this
+// DDIVault only honoured a revoke on the agent's NEXT connect, so a revoked agent
+// kept streaming DHCP/DNS/IPAM data over its existing socket until something
+// happened to drop it. SpanVault has had this since Phase 3; ddi was the KIV half.
+// Returns true if a socket was actually closed.
+function disconnectAgent(hubAgentId, reason) {
+  if (!hubAgentId) return false;
+  let closed = false;
+  for (const [localId, hid] of agentHubId.entries()) {
+    if (hid !== hubAgentId) continue;
+    const ws = connectedAgents.get(localId);
+    if (ws) {
+      try { ws.close(4003, reason || 'Agent revoked'); } catch (_e) { /* ignore */ }
+      closed = true;
+    }
+  }
+  return closed;
+}
+
 // Look up the ddi_servers row for a result, SCOPED to this agent's ownership so
 // an agent can never write to a server it does not own. Returns null if absent.
 async function ownedServer(hubAgentId, serverId) {
@@ -487,4 +507,4 @@ function startWsServer(port) {
   return { wss, connectedAgents };
 }
 
-module.exports = { startWsServer, reconfigureAgent, pushConfigToAgent, connectedAgents };
+module.exports = { startWsServer, reconfigureAgent, pushConfigToAgent, disconnectAgent, connectedAgents };

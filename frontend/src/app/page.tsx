@@ -1723,7 +1723,7 @@ export default function DDIVaultApp() {
   const [collapsed, setCollapsed] = useState(false);
   const [focusScope, setFocusScope] = useState<string | null>(null);
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>('general');
-  const { canManageSystem, canWrite, isViewer, isSiteAdmin } = useRBAC();
+  const { canManageSystem, canWrite, isViewer, isSiteAdmin, ready: rbacReady } = useRBAC();
   const { state: licenseState, loading: licenseLoading } = useLicense();
 
   // Settings is super_admin only; Audit Log is hidden from viewers and site_admins.
@@ -1735,9 +1735,14 @@ export default function DDIVaultApp() {
   }), [canManageSystem, canWrite, isViewer, isSiteAdmin]);
 
   // If the active tab is no longer permitted, fall back to the dashboard.
+  // WAIT for RBAC to resolve first: until the session loads, useRBAC() reports the
+  // 'viewer' default, so capability-gated tabs (agents = canWrite) are missing from
+  // visibleItems and this effect would bounce a legitimate deep link. That is why
+  // /?tab=agents always landed on the dashboard while clicking the sidebar worked.
   useEffect(() => {
+    if (!rbacReady) return;
     if (!visibleItems.some(i => i.id === tab)) setTab('dashboard');
-  }, [visibleItems, tab]);
+  }, [rbacReady, visibleItems, tab]);
 
   useEffect(() => {
     const check = () => fetch('/api/health').then(async r => {

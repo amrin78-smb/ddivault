@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.26.0': [
+    'Revoking an agent in NetVault now disconnects it from DDIVault immediately. Previously DDIVault only refused a revoked agent the next time it reconnected — so an agent that stayed connected kept sending DHCP, DNS and IPAM data after being revoked, potentially indefinitely, since a healthy agent has no reason to reconnect. The revocation is still honoured at connect time as before; this closes the window in between.',
+    'Fixed the Remote Agents page being unreachable by direct link. Opening /?tab=agents (or any bookmark to it) bounced to the Dashboard, because the check that hides tabs your role cannot use ran before your role had finished loading — so it briefly saw everyone as read-only. Clicking the sidebar item always worked; the direct link now does too.',
+  ],
   '1.25.0': [
     'Remote Agents now identifies an agent by the hostname of the server it runs on (for example TH-CYBE-MFA-100) instead of its raw enrollment id (agt_bcfd41317dfdfd3ff7), matching how SpanVault has always displayed the same agent. The agent was already reporting its hostname on every heartbeat -- DDIVault simply discarded it.',
     'The hostname is now stored and shown on the agent card, and an agent still carrying its placeholder enrollment id adopts the hostname as its name on the first heartbeat after this update. Renaming is unaffected: a name you set is never overwritten.',
@@ -529,7 +533,7 @@ const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
 const alertDispatcher = require('./alertDispatcher');
-const { startWsServer, reconfigureAgent } = require('./ws-server'); // Phase 4b agent data plane
+const { startWsServer, reconfigureAgent, disconnectAgent } = require('./ws-server'); // Phase 4b agent data plane
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(cors({ origin: 'http://localhost:3006', exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'] }));
@@ -663,6 +667,35 @@ app.post('/api/internal/ddi-agents/reconfigure', requireSuperAdmin, async (req, 
     res.json({ ok: true, pushed });
   } catch (e) {
     console.error('[API] ddi-agents/reconfigure error:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Hub revoke → actively kick a live agent session (loopback only).
+//
+// Until now DDIVault honoured a hub revoke only at the agent's NEXT connect (the
+// connect-time cross-check against netvault.agents). A revoked agent therefore
+// kept streaming DHCP/DNS/IPAM results over its EXISTING socket until something
+// happened to drop it — which for a healthy agent could be indefinitely. SpanVault
+// has had this active kick since Phase 3; this was the KIV other half.
+//
+// Loopback-gated rather than session-gated: the hub calls this server-to-server
+// with no user session, exactly like SpanVault's /api/internal/agents/disconnect.
+// Registered BEFORE enforceLicense so a revoke still lands on an expired license —
+// refusing to honour a revocation because the licence lapsed would be backwards.
+app.post('/api/internal/ddi-agents/disconnect', (req, res) => {
+  const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  if (ip !== '127.0.0.1' && ip !== '::1') {
+    return res.status(403).json({ error: 'Loopback only' });
+  }
+  try {
+    const hubId = req.body && req.body.hub_agent_id;
+    if (!hubId) return res.status(400).json({ error: 'hub_agent_id required' });
+    const disconnected = disconnectAgent(hubId, 'Agent revoked');
+    if (disconnected) console.log(`[WS] Agent hub=${hubId} kicked by hub revoke`);
+    res.json({ ok: true, disconnected });
+  } catch (e) {
+    console.error('[API] ddi-agents/disconnect error:', e.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

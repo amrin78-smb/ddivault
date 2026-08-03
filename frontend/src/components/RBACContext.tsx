@@ -14,6 +14,12 @@ interface RBACContextType {
   canWrite: boolean;        // admin or super_admin
   canManageSystem: boolean; // super_admin only
   hasRole: (minRole: Role) => boolean;
+  /** False until the session has actually resolved. Until then `role` is the
+   *  'viewer' DEFAULT, not the user's real role — anything that HIDES or RESETS
+   *  UI based on a capability must wait for this, or it acts on the placeholder.
+   *  (A `?tab=agents` deep link was being bounced to the dashboard for exactly
+   *  this reason: the tab is gated on canWrite, which is false while loading.) */
+  ready: boolean;
 }
 
 const ROLE_LEVELS: Record<Role, number> = {
@@ -32,6 +38,7 @@ const RBACContext = createContext<RBACContextType>({
   canWrite: false,
   canManageSystem: false,
   hasRole: () => false,
+  ready: false,
 });
 
 /** Normalize any incoming role string to a known Role (legacy 'user' → viewer). */
@@ -42,7 +49,7 @@ function normalizeRole(raw: unknown): Role {
 }
 
 export function RBACProvider({ children }: { children: ReactNode }) {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const role = normalizeRole((session?.user as any)?.role);
 
   const hasRole = (minRole: Role) =>
@@ -57,6 +64,7 @@ export function RBACProvider({ children }: { children: ReactNode }) {
     canWrite:        hasRole('admin'),
     canManageSystem: role === 'super_admin',
     hasRole,
+    ready: status !== 'loading',
   };
 
   return (
