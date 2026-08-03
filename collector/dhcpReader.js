@@ -49,6 +49,10 @@ const path = require('path');
 const DHCP_LOG_UNC      = process.env.DHCP_LOG_UNC      || '';
 const DHCP_LOG_LOCAL    = process.env.DHCP_LOG_LOCAL    || '';
 
+// Distinct read failures already reported this run — see readDhcpLog(). Without
+// this the reader logs the same line every poll cycle forever.
+const loggedReadFailures = new Set();
+
 // Map event IDs to human labels and severity
 const EVENT_MAP = {
   10:   { type: 'Assign',        severity: 'info' },
@@ -159,10 +163,26 @@ function readDhcpLog(date, maxLines) {
   try {
     content = fs.readFileSync(filePath, { encoding: 'utf8' });
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      console.warn(`[DHCP Reader] Log file not found: ${filePath}`);
-    } else {
-      console.error(`[DHCP Reader] Error reading ${filePath}:`, err.message);
+    // Log each distinct failure ONCE per process, not once per poll. This runs on
+    // a ~50s cadence, so an unreachable or misconfigured share produced an endless
+    // identical stream — 3,593 lines on the production box, which buries every
+    // other collector error and tells the operator nothing new after the first.
+    // Keyed by path+code so a genuinely NEW problem still surfaces immediately.
+    const key = `${filePath}|${err.code || 'ERR'}`;
+    if (!loggedReadFailures.has(key)) {
+      loggedReadFailures.add(key);
+      if (err.code === 'ENOENT') {
+        console.warn(`[DHCP Reader] Log file not found: ${filePath} (further occurrences suppressed)`);
+      } else {
+        // A placeholder path is the single most common cause and is otherwise
+        // reported as an opaque "UNKNOWN: unknown error" from the OS, which sends
+        // people looking for a network fault that doesn't exist.
+        const looksUnset = /\bx\.x\b|<.*>|YOUR-|SERVER_IP/i.test(filePath);
+        const hint = looksUnset
+          ? ' — this path still contains an .env.local.example PLACEHOLDER; set DHCP_LOG_UNC (or DHCP_LOG_LOCAL) to the real DHCP server share, or leave both blank to disable log-based DHCP events'
+          : ' — check the share exists and the DDIVault service account can read it';
+        console.error(`[DHCP Reader] Error reading ${filePath}: ${err.message}${hint} (further occurrences suppressed)`);
+      }
     }
     return [];
   }

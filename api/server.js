@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.26.2': [
+    'The DHCP log reader no longer repeats the same failure on every poll. A path it cannot read was reported roughly once a minute forever — 3,593 identical lines on this server — which buries every other collector message and adds nothing after the first. Each distinct problem is now reported once per run.',
+    'It also explains itself. Windows reports an unreachable share as "UNKNOWN: unknown error", which sends people hunting for a network fault. If the configured path still contains an installer placeholder, the message now says so and names the setting to change.',
+    'IMPORTANT for this installation: DHCP_LOG_UNC is still set to the example value \\\\192.168.x.x\\DHCPLogs, so log-based DHCP event collection has never run here — the DHCP events table is empty. Set it to the real DHCP server share (or leave it and DHCP_LOG_LOCAL blank to disable the feature deliberately). Scopes, leases and reservations are collected separately over WinRM and are unaffected.',
+  ],
   '1.26.1': [
     'Hardened the agent heartbeat so a database column that has not been migrated yet can never make a healthy agent look offline. The hostname added in 1.25.0 was written in the same statement that records the agent as alive, so on any server where the schema step was skipped or failed (it is deliberately non-fatal) the whole statement would fail, the agent would stop being marked as seen, and it would drop to Offline within 90 seconds while still collecting normally. This is the same failure that hit SpanVault today. The liveness update is now its own statement and always runs; the hostname is applied separately and never costs a heartbeat.',
     'Deleting an agent in NetVault now removes it here too. Previously only revoking was passed on, so a deleted agent stayed on the Remote Agents page forever and could never reconnect. Any DHCP/DNS servers assigned to it are released back to central polling, instead of remaining owned by an agent that no longer exists and therefore collected by nobody.',
