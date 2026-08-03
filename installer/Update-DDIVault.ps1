@@ -522,6 +522,13 @@ if (Test-Path $rootEnvPath) {
         if ($ddiAppend.Count -gt 0) {
             $lead = if ($envNow.Length -eq 0 -or $envNow.EndsWith("`n")) { '' } else { "`n" }
             Add-Content -LiteralPath $rootEnvPath -Value ($lead + ($ddiAppend -join "`n")) -NoNewline -Encoding UTF8
+            # ⛔ MUST also update the in-memory copy. STEP 4 below unconditionally
+            # rewrites .env.local from $rootEnvContent (the file is untracked, so the
+            # git steps in between remove it) — leaving this stale silently REVERTED
+            # the append every run. The script still logged "Ensured agent-WS env",
+            # so it looked like it worked while DDIVault's agent ingest never bound
+            # port 3011 and the WS server refused to start on every boot.
+            $rootEnvContent = $envNow + $lead + ($ddiAppend -join "`n")
             Write-OK ("Ensured agent-WS env in .env.local: " + ($ddiAppend -join ', '))
         }
     } catch { Write-Warn "Could not ensure agent-WS env vars in .env.local: $($_.Exception.Message)" }

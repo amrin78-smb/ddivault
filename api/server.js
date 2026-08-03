@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.24.2': [
+    'Fixed the updater silently undoing its own configuration change, which left the remote-agent feature completely non-functional. The updater adds the two settings the agent WebSocket ingest needs (DDI_WS_PORT and DDI_WS_ALLOW_PLAINTEXT) to .env.local, then a later step restores .env.local from a copy taken BEFORE that addition -- so every update wrote the settings and then immediately reverted them, while still reporting success. Without them the ingest refuses to start (by design, since it would otherwise carry decrypted WinRM passwords over an unencrypted connection), so port 3011 never opened and no agent could ever connect. Remote Agents stayed empty with no error shown anywhere.',
+    'The updater now keeps the in-memory copy in step with the file, so the settings survive the restore. Existing installs are corrected on the next update.',
+  ],
   '1.24.1': [
     'Security hardening from the Phase 4b agent bug-sweep. Fixed a cross-tenant IPAM write: an agent could previously submit scan results (and raise "unknown device" alerts) for ANY subnet in the instance. Scan results are now ownership-scoped to the agent\'s own sites and fail closed if a subnet isn\'t one the agent was assigned — matching the DHCP/DNS write path.',
     'The agent WebSocket ingest now refuses to start on a public (non-loopback) bind without TLS unless DDI_WS_ALLOW_PLAINTEXT is set (the installer sets =1 for the trusted-LAN default; use DDI_WS_TLS_CERT/KEY on an untrusted segment) — it also caps message size and rate-limits connections.',
