@@ -1,6 +1,7 @@
 # DDIVault Gotchas — non-obvious behaviours a new session would get wrong
 
 ## Security history (fixed, but the pattern can recur — check for it elsewhere)
+- ⛔ **The agent heartbeat's liveness write must be its OWN statement.** `last_seen_at`/`status`/`version` go first and unconditionally; the hostname adoption (added 1.25.0) runs separately in its own try/catch. Folding them together means an un-migrated `ddi_agents.hostname` throws, the message handler's catch swallows it, `last_seen_at` never advances, and the 90s monitor marks a perfectly healthy agent Offline — with it still collecting. That exact shape cost SpanVault 16,665 dead heartbeats, and the schema step is deliberately NON-FATAL in the updater, so a failed apply is a realistic way to get there (1.26.1).
 - `useRBAC()` exposes `ready` (false until the NextAuth session resolves). Until then `role` is the **'viewer' default**, not the user's real role — so anything that HIDES or RESETS UI on a capability must wait for it. `page.tsx`'s "reset to dashboard if this tab isn't permitted" effect did not, which is why `/?tab=agents` (gated on `canWrite`) always bounced to the Dashboard while clicking the sidebar worked (fixed 1.26.0).
 - Weak fallback secrets were a recurring bug class here. Fixed instances:
   - `api/emailer.js` — alert-ack HMAC token signing used to fall back to a

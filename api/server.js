@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.26.1': [
+    'Hardened the agent heartbeat so a database column that has not been migrated yet can never make a healthy agent look offline. The hostname added in 1.25.0 was written in the same statement that records the agent as alive, so on any server where the schema step was skipped or failed (it is deliberately non-fatal) the whole statement would fail, the agent would stop being marked as seen, and it would drop to Offline within 90 seconds while still collecting normally. This is the same failure that hit SpanVault today. The liveness update is now its own statement and always runs; the hostname is applied separately and never costs a heartbeat.',
+    'Deleting an agent in NetVault now removes it here too. Previously only revoking was passed on, so a deleted agent stayed on the Remote Agents page forever and could never reconnect. Any DHCP/DNS servers assigned to it are released back to central polling, instead of remaining owned by an agent that no longer exists and therefore collected by nobody.',
+  ],
   '1.26.0': [
     'Revoking an agent in NetVault now disconnects it from DDIVault immediately. Previously DDIVault only refused a revoked agent the next time it reconnected — so an agent that stayed connected kept sending DHCP, DNS and IPAM data after being revoked, potentially indefinitely, since a healthy agent has no reason to reconnect. The revocation is still honoured at connect time as before; this closes the window in between.',
     'Fixed the Remote Agents page being unreachable by direct link. Opening /?tab=agents (or any bookmark to it) bounced to the Dashboard, because the check that hides tabs your role cannot use ran before your role had finished loading — so it briefly saw everyone as read-only. Clicking the sidebar item always worked; the direct link now does too.',
@@ -696,6 +700,32 @@ app.post('/api/internal/ddi-agents/disconnect', (req, res) => {
     res.json({ ok: true, disconnected });
   } catch (e) {
     console.error('[API] ddi-agents/disconnect error:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Hub delete → forget this agent entirely (loopback only).
+//
+// The hub's DELETE fans this out so removing an agent there doesn't strand a row
+// here. SpanVault has had the equivalent since 1.86.4; without it, deleting a
+// hub-enrolled agent left DDIVault showing a Remote Agent that no longer exists
+// and could never reconnect. Servers assigned to it are released back to central
+// polling by clearing agent_hub_id — otherwise they'd be owned by a dead agent and
+// collected by nobody (the central collector skips agent-owned servers).
+app.post('/api/internal/ddi-agents/forget', async (req, res) => {
+  const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  if (ip !== '127.0.0.1' && ip !== '::1') {
+    return res.status(403).json({ error: 'Loopback only' });
+  }
+  try {
+    const hubId = req.body && req.body.hub_agent_id;
+    if (!hubId) return res.status(400).json({ error: 'hub_agent_id required' });
+    try { disconnectAgent(hubId, 'Agent deleted'); } catch (_e) { /* ignore */ }
+    await db.query(`UPDATE ddi_servers SET agent_hub_id = NULL WHERE agent_hub_id = $1`, [hubId]);
+    const r = await db.query(`DELETE FROM ddi_agents WHERE hub_agent_id = $1`, [hubId]);
+    res.json({ ok: true, deleted: (r.rowCount || 0) > 0 });
+  } catch (e) {
+    console.error('[API] ddi-agents/forget error:', e.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

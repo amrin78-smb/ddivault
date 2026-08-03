@@ -302,15 +302,32 @@ async function handleAgentMessage(hubAgentId, localId, msg) {
       // time ("could not determine data type of parameter $3"), which silently
       // kills every heartbeat — exactly the bug that made SpanVault flag healthy
       // agents as offline 90s after connecting (spanvault 1.86.1).
+      // ⛔ The liveness fields go in their OWN statement, first and unconditionally.
+      // last_seen_at MUST advance even if the enrichment below fails, or a schema
+      // drift silently marks a healthy agent offline — a missing column throws, the
+      // message handler's catch swallows it, and the 90s monitor does the rest. That
+      // is precisely how SpanVault logged 16,665 dead heartbeats today, and
+      // ddi_agents.hostname only arrived in 1.25.0, so any install whose schema apply
+      // was skipped or FAILED (it is non-fatal in the updater) lacks it.
       await ddi.query(
-        `UPDATE ddi_agents
-            SET last_seen_at=NOW(), status='online', version=$2::text,
-                hostname=COALESCE($3::text, hostname),
-                name=CASE WHEN name=hub_agent_id AND $3::text IS NOT NULL
-                          THEN $3::text ELSE name END
+        `UPDATE ddi_agents SET last_seen_at=NOW(), status='online', version=$2::text
           WHERE id=$1`,
-        [localId, msg.version || null, msg.hostname || null]
+        [localId, msg.version || null]
       );
+      // Hostname adoption is an ENRICHMENT — never worth losing the heartbeat over.
+      if (msg.hostname) {
+        try {
+          await ddi.query(
+            `UPDATE ddi_agents
+                SET hostname=$2::text,
+                    name=CASE WHEN name=hub_agent_id THEN $2::text ELSE name END
+              WHERE id=$1`,
+            [localId, msg.hostname]
+          );
+        } catch (e) {
+          console.error('[WS] hostname adoption skipped (agent stays online):', e.message);
+        }
+      }
       break;
     case 'ddi_result':
       await handleResult(hubAgentId, msg);

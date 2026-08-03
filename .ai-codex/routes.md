@@ -28,6 +28,7 @@ GET /api/system/last-update-status public — reads logs/last-update-status.json
 POST /api/system/update super-admin external — schedules a SYSTEM `schtasks` task running Update-DDIVault.ps1; license-gated; 409 if logs/update.lock (written by the running .ps1) shows a run already in progress
 POST /api/internal/ddi-agents/reconfigure super-admin — Phase 4b; re-pushes ddi_config to a connected remote agent (body `{hub_agent_id}`) after its ddi_servers assignments change. Registered BEFORE enforceLicense (never license-blocked). In-process callers should call `reconfigureAgent(hubId)` from api/ws-server.js directly instead.
 - `POST /api/internal/ddi-agents/disconnect` [loopback] [none] - hub revoke fan-out: actively closes a revoked agent's live WS session (body {hub_agent_id}); registered BEFORE enforceLicense so a lapsed licence cannot block a revocation (1.26.0)
+- `POST /api/internal/ddi-agents/forget` [loopback] [none] - hub DELETE fan-out: releases the agent's ddi_servers back to central polling (agent_hub_id=NULL) then deletes the ddi_agents row; without it a deleted agent's servers stay owned by a dead agent and are collected by nobody (1.26.1)
 
 ## Agent data plane — WebSocket (api/ws-server.js, Phase 4b)
 
