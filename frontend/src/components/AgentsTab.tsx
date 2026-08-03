@@ -15,6 +15,7 @@ interface Agent {
   id: number;
   hub_agent_id: string;
   name: string | null;
+  hostname: string | null;
   status: string | null;
   version: string | null;
   last_seen_at: string | null;
@@ -152,7 +153,7 @@ function AssignModal({ agent, servers, agentNames, canWrite, onClose, onDone }: 
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <div style={{ fontWeight: 700, fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>
-            Assign servers to {agent.name || agent.hub_agent_id}
+            Assign servers to {agent.name || agent.hostname || agent.hub_agent_id}
           </div>
           <button onClick={onClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 'var(--text-xl)', lineHeight: 1, color: 'var(--text-muted)' }}>
@@ -246,12 +247,18 @@ function AgentCard({ a, canWrite, onManage }: {
           background: online ? 'var(--green)' : '#94a3b8',
           boxShadow: online ? '0 0 7px var(--green)' : 'none',
         }} title={online ? 'Online' : 'Offline'} />
-        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{a.name || a.hub_agent_id}</div>
+        <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{a.name || a.hostname || a.hub_agent_id}</div>
         <span className={`badge ${online ? 'badge-green' : 'badge-gray'}`}>{online ? 'Online' : 'Offline'}</span>
         {a.version && <span className="badge badge-blue">v{a.version}</span>}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--text-sm)' }}>
+        {a.hostname && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Hostname</span>
+            <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{a.hostname}</span>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{ color: 'var(--text-muted)', minWidth: 78 }}>Hub agent</span>
           <code className="mono" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>{a.hub_agent_id}</code>
@@ -305,7 +312,7 @@ export default function AgentsTab() {
 
   const agentNames = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const a of agents) m[a.hub_agent_id] = a.name || a.hub_agent_id;
+    for (const a of agents) m[a.hub_agent_id] = a.name || a.hostname || a.hub_agent_id;
     return m;
   }, [agents]);
 

@@ -33,11 +33,15 @@ CREATE TABLE IF NOT EXISTS ddi_agents (
   id            SERIAL PRIMARY KEY,
   hub_agent_id  TEXT UNIQUE NOT NULL,          -- hub's durable agent id ("agt_…")
   name          TEXT,
+  hostname      TEXT,                          -- reported on each heartbeat
   status        TEXT DEFAULT 'online',         -- 'online' | 'offline'
   version       TEXT,
   last_seen_at  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- CREATE TABLE IF NOT EXISTS is a no-op on a server that already has the table, so
+-- the column above never lands on an existing install without this (CLAUDE.md §3).
+ALTER TABLE ddi_agents ADD COLUMN IF NOT EXISTS hostname TEXT;
 
 -- ── DHCP Scopes ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dhcp_scopes (

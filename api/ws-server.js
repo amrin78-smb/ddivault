@@ -269,9 +269,27 @@ async function handleAgentMessage(hubAgentId, localId, msg) {
   if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
     case 'heartbeat':
+      // Adopt the agent's reported hostname so the UI shows "TH-CYBE-MFA-100"
+      // rather than the raw "agt_…" enrollment id (SpanVault does the same). The
+      // JWT carries no hostname — the hub mints it before it has ever seen the
+      // host — so the heartbeat is the first point this is known. The name is
+      // only overwritten while it still equals the placeholder hub id, so a
+      // rename here is never clobbered by a later heartbeat.
+      //
+      // ⛔ The ::text casts are REQUIRED, not decoration: $3 is used as a plain
+      // assignment AND inside a bare `$3 IS NOT NULL` NullTest below. Without
+      // them PostgreSQL cannot infer its type and rejects the statement at PARSE
+      // time ("could not determine data type of parameter $3"), which silently
+      // kills every heartbeat — exactly the bug that made SpanVault flag healthy
+      // agents as offline 90s after connecting (spanvault 1.86.1).
       await ddi.query(
-        `UPDATE ddi_agents SET last_seen_at=NOW(), status='online', version=$2 WHERE id=$1`,
-        [localId, msg.version || null]
+        `UPDATE ddi_agents
+            SET last_seen_at=NOW(), status='online', version=$2::text,
+                hostname=COALESCE($3::text, hostname),
+                name=CASE WHEN name=hub_agent_id AND $3::text IS NOT NULL
+                          THEN $3::text ELSE name END
+          WHERE id=$1`,
+        [localId, msg.version || null, msg.hostname || null]
       );
       break;
     case 'ddi_result':

@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.25.0': [
+    'Remote Agents now identifies an agent by the hostname of the server it runs on (for example TH-CYBE-MFA-100) instead of its raw enrollment id (agt_bcfd41317dfdfd3ff7), matching how SpanVault has always displayed the same agent. The agent was already reporting its hostname on every heartbeat -- DDIVault simply discarded it.',
+    'The hostname is now stored and shown on the agent card, and an agent still carrying its placeholder enrollment id adopts the hostname as its name on the first heartbeat after this update. Renaming is unaffected: a name you set is never overwritten.',
+  ],
   '1.24.2': [
     'Fixed the updater silently undoing its own configuration change, which left the remote-agent feature completely non-functional. The updater adds the two settings the agent WebSocket ingest needs (DDI_WS_PORT and DDI_WS_ALLOW_PLAINTEXT) to .env.local, then a later step restores .env.local from a copy taken BEFORE that addition -- so every update wrote the settings and then immediately reverted them, while still reporting success. Without them the ingest refuses to start (by design, since it would otherwise carry decrypted WinRM passwords over an unencrypted connection), so port 3011 never opened and no agent could ever connect. Remote Agents stayed empty with no error shown anywhere.',
     'The updater now keeps the in-memory copy in step with the file, so the settings survive the restore. Existing installs are corrected on the next update.',
@@ -2607,7 +2611,7 @@ app.get('/api/ddi-agents', requireAuth, attachSiteFilter, async (req, res) => {
     const joinSiteFilter = scoped ? ` AND s.site_id = ANY($1::int[])` : '';
     const params = scoped ? [req.allowedSiteIds] : [];
     const rows = await db.query(
-      `SELECT a.id, a.hub_agent_id, a.name, a.status, a.version,
+      `SELECT a.id, a.hub_agent_id, a.name, a.hostname, a.status, a.version,
               a.last_seen_at, a.created_at,
               COUNT(s.id)::int AS server_count
          FROM ddi_agents a
@@ -2629,7 +2633,7 @@ app.get('/api/ddi-agents/:hubId', attachSiteFilter, async (req, res) => {
   try {
     const hubId = String(req.params.hubId);
     const a = await db.query(
-      `SELECT id, hub_agent_id, name, status, version, last_seen_at, created_at
+      `SELECT id, hub_agent_id, name, hostname, status, version, last_seen_at, created_at
          FROM ddi_agents WHERE hub_agent_id = $1`, [hubId]);
     if (!a.rows.length) return res.status(404).json({ error: 'Agent not found' });
 

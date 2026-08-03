@@ -13,7 +13,7 @@ only within the same file are omitted, except where noted.
 (c) AlertRules  (no props) — default export
 (c) ApiKeysSection  (no props) — named export; file also defines module-scope `CreateModal`, `RevealModal`, `PermBadges` (not exported)
 (s) AuditActor  (no props) — deliberate no-op (returns null); NO `'use client'` directive in this file — the only file in components/ without one. Kept only for a stale `<AuditActor />` import in app/layout.tsx; safe to delete.
-(c) AgentsTab  (no props) — default export (Remote Agents, Phase 4b); file also defines module-scope `AssignModal`, `AgentCard` (not exported) + helpers `isOnline`, `relTime`. Admin+ surface: lists ddi_agents roster (status/last-seen/version/#servers) + a per-agent server multi-select (grouped by site) that assigns/unassigns ddi_servers to the agent via POST /api/ddi-agents/:hubId/servers
+(c) AgentsTab  (no props) — default export (Remote Agents, Phase 4b); file also defines module-scope `AssignModal`, `AgentCard` (not exported) + helpers `isOnline`, `relTime`. Admin+ surface: lists ddi_agents roster (hostname/status/last-seen/version/#servers — title falls back name → hostname → hub id) + a per-agent server multi-select (grouped by site) that assigns/unassigns ddi_servers to the agent via POST /api/ddi-agents/:hubId/servers
 (c) AuditTab  (no props) — default export
 (c) AuthProvider  children
 (c) CapacityForecast  onViewAll, onRowClick — default export
