@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.28.2': [
+    'DHCP event collection no longer loses batches to a time limit it was sitting right on top of. Reading each server\'s audit log takes 28 to 30 seconds here, against a 30-second limit — so it succeeded most cycles and was cut off part-way through the rest, discarding that cycle\'s events. It had failed that way 25 times today alone. The limit for this one read is now two minutes, matching the allowance the comparable DNS reads have always had. Nothing else changes, and a cycle that was already succeeding behaves exactly as before.',
+  ],
   '1.28.1': [
     'Internal tidy-up with no change to how the application behaves. Removed a leftover piece of code that was never actually used and that also referenced the wrong DHCP event number for an address conflict — it was a trap for future work rather than a live fault, since conflict alerting is handled elsewhere and is unaffected.',
     'Repaired the dependency lock file, which was missing two of the eight components the application declares. Day-to-day updates were unaffected, but a clean install from scratch would have failed. The versions used are unchanged — nothing was upgraded or downgraded.',

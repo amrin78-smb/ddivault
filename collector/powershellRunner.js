@@ -51,6 +51,16 @@ const PS_TIMEOUT = parseInt(process.env.PS_TIMEOUT_MS || '30000');
 // DNS zone collection on servers with many zones (100+) takes far longer than a
 // standard DHCP query, so DNS reads use a dedicated, larger timeout (60s default).
 const DNS_PS_TIMEOUT = parseInt(process.env.PS_DNS_TIMEOUT_MS || '60000');
+// The DHCP audit-log tail (getDhcpAuditLog) is the single largest DHCP read — up to
+// DHCP_LOG_TAIL_LINES (2000) lines of CSV pulled over WinRM — and it was left on the
+// 30s PS_TIMEOUT while the comparably-sized DNS reads already had their own 60s.
+// Measured on the live server it takes 28-30s per cycle, i.e. sitting exactly ON the
+// 30s limit, so it tipped over intermittently: 25 killed-mid-output failures in one
+// day, each losing that cycle's events. 120s is deliberate headroom, not a fine-tuned
+// value — this read is bounded by -Tail, so a slow one should be waited out, not
+// abandoned. If this ever times out for real, the log is far bigger than expected or
+// WinRM is genuinely broken; lower DHCP_LOG_TAIL_LINES rather than trimming this.
+const DHCP_LOG_PS_TIMEOUT = parseInt(process.env.PS_DHCP_LOG_TIMEOUT_MS || '120000');
 
 // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
@@ -526,7 +536,7 @@ async function getDhcpAuditLog(serverIp, auth, dayFile, maxLines) {
   const script =
     `$p = Join-Path $env:SystemRoot 'System32\\dhcp\\${safeFile}'; ` +
     `if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Tail ${n} } `;
-  const out = await runPS(serverIp, script, auth, true);
+  const out = await runPS(serverIp, script, auth, true, DHCP_LOG_PS_TIMEOUT);
   return (typeof out === 'string' && out.trim()) ? out : null;
 }
 
