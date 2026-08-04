@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.28.1': [
+    'Internal tidy-up with no change to how the application behaves. Removed a leftover piece of code that was never actually used and that also referenced the wrong DHCP event number for an address conflict — it was a trap for future work rather than a live fault, since conflict alerting is handled elsewhere and is unaffected.',
+    'Repaired the dependency lock file, which was missing two of the eight components the application declares. Day-to-day updates were unaffected, but a clean install from scratch would have failed. The versions used are unchanged — nothing was upgraded or downgraded.',
+  ],
   '1.28.0': [
     'Fixed the cause of the recurring "connection timeout" errors that have been interrupting DNS, DHCP and IPAM collection. The database was never actually the problem: every PowerShell query to a DHCP/DNS server ran in a way that froze the collector completely — up to 60 seconds at a time — so anything else it was in the middle of doing, including talking to its own database, was reported as timing out. Collection is no longer interrupted, and the errors stop.',
     'The same freeze affected the web interface. While a DNS or DHCP change was being applied, the entire application stopped responding to everyone else for the duration. Pages now stay responsive while changes are applied.',

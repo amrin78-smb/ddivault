@@ -73,7 +73,10 @@ const EVENT_MAP = {
   34:   { type: 'DNSQueueLimit',      severity: 'warning' },
   35:   { type: 'DNSFailed',          severity: 'warning' },
   36:   { type: 'PacketDropped',      severity: 'warning' },   // failover standby
-  // ── Windows EVENT LOG ids (not audit-log) — consumed by extractAlertEvents ──
+  // ── Windows EVENT LOG ids (not audit-log) ──
+  // These do NOT appear in DhcpSrvLog-*.log, which is all this reader parses, so
+  // nothing here maps them today — they are kept because collector/writers.js
+  // alerts on 1020 and 2019 if an event source ever supplies them.
   1013: { type: 'ScopeActive',        severity: 'info' },
   1014: { type: 'ScopeInactive',      severity: 'warning' },
   1016: { type: 'ScopeWarning',       severity: 'warning' },
@@ -266,25 +269,28 @@ function readRecentLogs() {
   return [...yesterdayEvents, ...todayEvents];
 }
 
-/**
- * Extract scope-full and scope-warning events from a list of events.
- * Used to fire alerts immediately.
- */
-function extractAlertEvents(events) {
-  return events.filter(e =>
-    e.event_id === 1020 ||   // scope full
-    e.event_id === 1016 ||   // scope 80% warning
-    e.event_id === 2019 ||   // rogue DHCP
-    e.event_id === 34         // conflict
-  );
-}
+// REMOVED: extractAlertEvents(). It was exported but never called by anything, and
+// it was also wrong — it filtered `event_id === 34` under a "conflict" comment, but
+// 34 is DNSQueueLimit; the real address conflict is 13 (AddressInUse). The mislabel
+// predates the EVENT_MAP correction in 1.27.0 and was missed by it.
+//
+// Nothing regressed by deleting it: the alerting it described already happens on the
+// live path — collector/writers.js fires (and de-dupes) scope-full 1020 and rogue-DHCP
+// 2019, scope-utilization warnings come from SCOPE_WARNING_PCT/SCOPE_CRITICAL_PCT
+// rather than log events, and IP-conflict alerting is served by the enabled
+// `ip_conflict` rule in collector/anomalyDetector.js, which derives conflicts from
+// lease data instead of log events.
+//
+// Deleted rather than corrected deliberately: dead code carrying a wrong constant is a
+// trap for whoever wires it up next. If immediate log-event alerting is ever wanted,
+// add the id to writers.js beside the existing 1020/2019 handling — that is the path
+// that actually runs.
 
 module.exports = {
   readDhcpLog,
   readDhcpLogSince,
   parseLines,
   readRecentLogs,
-  extractAlertEvents,
   parseLine,
   logFilePath,
   dayFileName,
