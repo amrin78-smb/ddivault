@@ -343,17 +343,36 @@ async function writeDhcpEvents(db, server, events, ctx) {
   for (const ev of events) {
     if (!ev.event_time) continue;
     try {
-      await db.query(
+      // rowCount tells us whether this event was genuinely NEW (1) or a repeat the
+      // ON CONFLICT swallowed (0). Everything below keys off that, because the tail
+      // is re-read on every poll and in full after any restart, so the same events
+      // arrive many times over.
+      const res = await db.query(
         `INSERT INTO dhcp_events
            (server_id, event_id, event_type, ip_address, hostname, mac_address, description, raw_line, event_time)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
         [serverId, ev.event_id, ev.event_type, ev.ip_address, ev.hostname,
          ev.mac_address, ev.description, ev.raw_line, ev.event_time]
       );
-      inserted++;
+      const isNew = res.rowCount === 1;
+      // Was `inserted++` unconditionally, which counted events ATTEMPTED, not rows
+      // stored — a restart reported "inserted 2012 new events" while 209 rows landed.
+      if (isNew) inserted++;
 
+      // lastTime advances for duplicates too: it is the high-water mark for what we
+      // have SEEN, not what we stored, and it must move past re-read events.
       const t = new Date(ev.event_time);
       if (!lastTime || t > lastTime) lastTime = t;
+
+      // ⛔ Everything from here on must be gated on isNew. lease_history has no
+      // unique constraint and no ON CONFLICT, so writing it for a duplicate event
+      // silently appends another copy. That is not hypothetical: this left 2056
+      // surplus rows out of 5561 on the live server (37%), some lease events stored
+      // 6 times, which skews every per-IP lease history and count built on them.
+      // The 1020/2019 alert checks are gated for the same reason — they re-ran on
+      // every re-read and only avoided duplicate alerts via their own open-alert
+      // lookup, i.e. wasted queries on data already processed.
+      if (!isNew) continue;
 
       if ([10,11,12,20].includes(ev.event_id) && ev.ip_address) {
         const typeMap = { 10:'assign', 11:'renew', 12:'release', 20:'expire' };

@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.28.3': [
+    'Fixed duplicated lease history. Each poll re-reads the recent portion of the DHCP log, and after any restart it re-reads all of it — the events table correctly ignored anything it had already stored, but the per-address lease history did not, and recorded another copy every time. On this server that left 2,056 surplus rows out of 5,561 (37%), with some lease events stored six times over, inflating any per-address history or count built on them. Only genuinely new events are recorded now.',
+    'Existing duplicates are still present and are not removed automatically — cleaning up historical rows is a separate, deliberate step. New collection from this version onward is clean.',
+    'The collector also reported its own work incorrectly: it logged the number of events it examined rather than the number it actually stored, so a restart claimed "2012 new events" when 209 were genuinely new. The count is now what was really stored, which makes the collector log trustworthy for diagnosing collection gaps.',
+  ],
   '1.28.2': [
     'DHCP event collection no longer loses batches to a time limit it was sitting right on top of. Reading each server\'s audit log takes 28 to 30 seconds here, against a 30-second limit — so it succeeded most cycles and was cut off part-way through the rest, discarding that cycle\'s events. It had failed that way 25 times today alone. The limit for this one read is now two minutes, matching the allowance the comparable DNS reads have always had. Nothing else changes, and a cycle that was already succeeding behaves exactly as before.',
   ],
