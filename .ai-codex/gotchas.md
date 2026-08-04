@@ -283,6 +283,22 @@
   reuse `api/csv.js`.
 - Audit writes NEVER throw (`api/middleware/audit.js`) — a failed audit
   write must never break the underlying request/operation being audited.
+- **Report METADATA is deliberately NOT site-scoped; report DATA is.** Saved
+  views (`saved_reports`), run history (`report_run_history`) and schedules
+  (`report_schedules`) are shared across all sites — any authenticated user
+  sees them all (`requireAuth`/`requireWrite`; schedule mutations are
+  `requireSuperAdmin`). The report CONTENT is fully scoped: `api/reports.js`
+  filters every report type by `allowedSiteIds`. Confirmed as intended by the
+  owner 2026-08-04 after being re-raised as a suspected bug for the second
+  time, so it is recorded here to stop the next sweep re-flagging it. The
+  reasoning: no report rows are exposed by the metadata — those tables hold
+  the report type, the filter params, a `row_count`, `generated_by` and a
+  timestamp, so the most a site_admin can infer is that someone ran a report
+  for another site and roughly how large it was. Against that, shared saved
+  views are the feature: a report template defined once is reusable by the
+  whole organisation. If this is ever revisited, scoping run history alone
+  (closing the `row_count` inference vector) while leaving saved views shared
+  is the middle option that was considered.
 
 ## Remote agent data plane (Phase 4b — `api/ws-server.js` + `collector/writers.js`)
 - The DB-write half of the collector lives in `collector/writers.js`
