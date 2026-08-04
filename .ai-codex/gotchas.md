@@ -281,6 +281,7 @@
 - CSV export escaping: a shared CSV escaper closes a formula-injection gap
   (leases + audit exports) — don't bypass it when adding new CSV exports;
   reuse `api/csv.js`.
+- **After an `ON CONFLICT DO NOTHING` insert, everything downstream MUST be gated on `rowCount`.** `collector/writers.js`'s writeDhcpEvents re-reads the DHCP tail on every 5-min poll and IN FULL after any restart, so the same events arrive many times. dhcp_events ignores repeats via ON CONFLICT — but the lease_history write, the 1020/2019 alert checks, and the `inserted++` counter all used to run unconditionally afterwards. lease_history has NO unique constraint and no ON CONFLICT, so every re-read appended another copy: 2056 surplus rows out of 5561 live (37%), some lease events stored 6 times, skewing every per-IP history built on it. Fixed 1.28.3 with `const isNew = res.rowCount === 1` + `if (!isNew) continue`. `lastTime` is deliberately still advanced for duplicates — it is the high-water mark for what was SEEN, not stored. If you add any new side-effect to that loop, put it AFTER the isNew gate. Pre-1.28.3 duplicate rows were left in place (removing production history is a separate decision).
 - Audit writes NEVER throw (`api/middleware/audit.js`) — a failed audit
   write must never break the underlying request/operation being audited.
 - **Report METADATA is deliberately NOT site-scoped; report DATA is.** Saved
