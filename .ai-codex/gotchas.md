@@ -173,6 +173,26 @@
   ALL PowerShell file operations on them.
 - Never use PowerShell heredoc (`@'...'@`) to write Node.js/JSX files — it
   corrupts JSX syntax. Write to a temp file first, then run with node.
+- **EVERY `collector/powershellRunner.js` export is `async` (since 1.28.0) —
+  you MUST `await` it.** A missed `await` does not throw: a Promise is truthy,
+  so `if (!ok) return fail(...)` silently passes and the caller reports success
+  for a write that failed, or stores a Promise where a value belongs. When
+  adding a call site, grep the whole repo (`api/server.js`, `api/v1.js`,
+  `collector/*.js`) — `api/v1.js` receives the module by dependency injection
+  (`const { db, psWrite } = deps`), so a `require('powershellRunner')` grep does
+  NOT find it.
+- Why it is async: it used `execSync`, which blocks the **entire Node event
+  loop** for the whole call (up to `PS_DNS_TIMEOUT`, 60s). Nothing else in the
+  process ran meanwhile — including pg's connection callbacks and its
+  `connectionTimeoutMillis` timer, so a perfectly healthy local database
+  reported `Connection terminated due to connection timeout` / `timeout
+  exceeded when trying to connect` purely because the loop was frozen. This
+  masqueraded for a long time as a DB/pool problem: raising `max` (5->10) and
+  `connectionTimeoutMillis` (5s->10s) never fixed it because the pool was never
+  actually saturated (only ~5 backends existed). The same freeze hit the API
+  server, where one DNS write stalled every other HTTP request. **Never
+  reintroduce `execSync` (or any sync I/O) into a path either long-running
+  service can reach.**
 
 ## Database / schema
 - Schema files MUST run in order: `schema.sql` -> `schema-ipam.sql` ->

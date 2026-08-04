@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.28.0': [
+    'Fixed the cause of the recurring "connection timeout" errors that have been interrupting DNS, DHCP and IPAM collection. The database was never actually the problem: every PowerShell query to a DHCP/DNS server ran in a way that froze the collector completely — up to 60 seconds at a time — so anything else it was in the middle of doing, including talking to its own database, was reported as timing out. Collection is no longer interrupted, and the errors stop.',
+    'The same freeze affected the web interface. While a DNS or DHCP change was being applied, the entire application stopped responding to everyone else for the duration. Pages now stay responsive while changes are applied.',
+    'DNS monitoring is substantially faster. Servers were being checked one after another even though the code asked for them to be checked at the same time; they now genuinely run in parallel.',
+    'Fixed a fault in the public REST API where creating or deleting a DNS record, DNS zone or DHCP reservation always reported success, even when the change had actually failed on the target server. Failures are now reported correctly.',
+    'Large DNS zones and long DHCP logs are no longer truncated when read from a server.',
+  ],
   '1.27.0': [
     'DHCP event collection now works without any file share. It reads each server\'s audit log over the same secure connection already used for scopes, leases and DNS, using that server\'s stored credentials. Previously it needed a separate file share on every DHCP server, plus file permissions for whatever Windows account the collector service happened to run as — which is why it had never collected a single event here. Nothing to set up: it works with the credentials you already have.',
     'Corrected how DHCP events are labelled. Checked against a live 300-line sample, 68% were being filed as "Unknown" and several were labelled wrongly — most seriously, routine DNS update REQUESTS were reported as DNS FAILURES (64 of those 300 lines) while the genuine failures were the ones showing as Unknown. Lease expiry, DNS success/failure, address conflicts and pool exhaustion are now each identified correctly. Events recorded before this update keep their old labels.',
@@ -1231,7 +1238,7 @@ app.post('/api/scopes', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const created = psWrite.createDhcpScope(ip, auth, { name, startRange, endRange, subnetMask, description, leaseDuration, state });
+    const created = await psWrite.createDhcpScope(ip, auth, { name, startRange, endRange, subnetMask, description, leaseDuration, state });
     if (!created) {
       return res.status(500).json({ error: 'Scope creation failed — check WinRM/DHCP role' });
     }
@@ -1244,15 +1251,15 @@ app.post('/api/scopes', requireWrite, async (req, res) => {
     if (dnsServers) {
       try {
         const dnsArray = String(dnsServers).split(',').map(s => s.trim()).filter(Boolean);
-        if (dnsArray.length) psWrite.setDhcpScopeOption(ip, auth, scopeId, 6, dnsArray);
+        if (dnsArray.length) await psWrite.setDhcpScopeOption(ip, auth, scopeId, 6, dnsArray);
       } catch (e) { console.error('[API] scope option DNS error:', e.message); }
     }
     if (gateway) {
-      try { psWrite.setDhcpScopeOption(ip, auth, scopeId, 3, [gateway]); }
+      try { await psWrite.setDhcpScopeOption(ip, auth, scopeId, 3, [gateway]); }
       catch (e) { console.error('[API] scope option gateway error:', e.message); }
     }
     if (domainName) {
-      try { psWrite.setDhcpScopeOption(ip, auth, scopeId, 15, [domainName]); }
+      try { await psWrite.setDhcpScopeOption(ip, auth, scopeId, 15, [domainName]); }
       catch (e) { console.error('[API] scope option domain error:', e.message); }
     }
 
@@ -1286,7 +1293,7 @@ app.put('/api/scopes/:scopeId', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const result = psWrite.editDhcpScope(ip, auth, scopeId, { name, description, leaseDuration, state });
+    const result = await psWrite.editDhcpScope(ip, auth, scopeId, { name, description, leaseDuration, state });
     if (!okCheck(result)) {
       return res.status(500).json({ error: 'Scope update failed — check WinRM/DHCP role' });
     }
@@ -1328,7 +1335,7 @@ app.patch('/api/scopes/:scopeId/state', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const result = psWrite.setScopeState(ip, auth, scopeId, state);
+    const result = await psWrite.setScopeState(ip, auth, scopeId, state);
     if (!okCheck(result)) {
       return res.status(500).json({ error: 'Scope state change failed — check WinRM/DHCP role' });
     }
@@ -1357,7 +1364,7 @@ app.delete('/api/scopes/:scopeId', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const result = psWrite.deleteDhcpScope(ip, auth, scopeId);
+    const result = await psWrite.deleteDhcpScope(ip, auth, scopeId);
     if (!okCheck(result)) {
       return res.status(500).json({ error: 'Scope deletion failed — check WinRM/DHCP role' });
     }
@@ -1386,7 +1393,7 @@ app.get('/api/scopes/:scopeId/options', requireAuth, attachSiteFilter, async (re
     if (!siteAllowed(req, serverData.row.site_id)) return res.status(404).json({ error: 'Scope not found' });
     const { ip, auth } = serverData;
 
-    const opts = psWrite.getDhcpScopeOptions(ip, auth, scopeId);
+    const opts = await psWrite.getDhcpScopeOptions(ip, auth, scopeId);
     res.json({ data: Array.isArray(opts) ? opts : (opts ? [opts] : []) });
   } catch (err) {
     console.error('[API] scope options get error:', err.message);
@@ -1413,7 +1420,7 @@ app.post('/api/scopes/:scopeId/options', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const result = psWrite.setDhcpScopeOption(ip, auth, scopeId, parseInt(optionId), values);
+    const result = await psWrite.setDhcpScopeOption(ip, auth, scopeId, parseInt(optionId), values);
     if (!okCheck(result)) {
       return res.status(500).json({ error: 'Setting scope option failed — check WinRM/DHCP role' });
     }
@@ -1439,7 +1446,7 @@ app.get('/api/scopes/:scopeId/exclusions', requireAuth, attachSiteFilter, async 
     if (!siteAllowed(req, serverData.row.site_id)) return res.status(404).json({ error: 'Scope not found' });
     const { ip, auth } = serverData;
 
-    const ex = psWrite.getDhcpExclusions(ip, auth, scopeId);
+    const ex = await psWrite.getDhcpExclusions(ip, auth, scopeId);
     res.json({ data: Array.isArray(ex) ? ex : (ex ? [ex] : []) });
   } catch (err) {
     console.error('[API] scope exclusions get error:', err.message);
@@ -1463,7 +1470,7 @@ app.post('/api/scopes/:scopeId/exclusions', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
-    const result = psWrite.addDhcpExclusion(ip, auth, scopeId, startRange, endRange);
+    const result = await psWrite.addDhcpExclusion(ip, auth, scopeId, startRange, endRange);
     if (!okCheck(result)) {
       return res.status(500).json({ error: 'Adding exclusion failed — check WinRM/DHCP role' });
     }
@@ -2563,7 +2570,7 @@ app.post('/api/servers', requireWrite, async (req, res) => {
     // Fire and forget — add the new server IP to WinRM TrustedHosts so stored-credential
     // auth can connect. Don't block the response.
     const { addToTrustedHosts } = require('../collector/powershellRunner');
-    setImmediate(() => addToTrustedHosts(ip_address));
+    setImmediate(() => addToTrustedHosts(ip_address).catch(e => console.error('[TrustedHosts] add failed:', e.message)));
 
     res.json({ data: result.rows[0] });
   } catch (err) {
@@ -2642,10 +2649,10 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
     const { ip, auth } = serverData;
 
     // Add to TrustedHosts before testing — ensures the test can succeed for stored creds.
-    psWrite.addToTrustedHosts(ip);
+    await psWrite.addToTrustedHosts(ip);
 
     console.log(`[API] Testing WinRM connection to ${ip} (mode=${auth.auth_mode})...`);
-    const result = psWrite.testWinRM(ip, auth);
+    const result = await psWrite.testWinRM(ip, auth);
 
     // Update test result in DB
     await db.query(
@@ -3211,7 +3218,7 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
       try {
         const sd = await getServerWithAuth(server.id);
         if (!sd) continue;
-        const rawScopes = psWrite.getDhcpScopes(sd.ip, sd.auth);
+        const rawScopes = await psWrite.getDhcpScopes(sd.ip, sd.auth);
         const scopes = (rawScopes || []).map(s => ({
           scopeId: scopeIdStr(s.ScopeId),
           subnetMask: scopeIdStr(s.SubnetMask),
@@ -3219,7 +3226,7 @@ app.post('/api/ipam/sync-from-dhcp', requireWrite, async (req, res) => {
         }));
         const getGateway = async (scopeId) => {
           try {
-            const opts = psWrite.getDhcpScopeOptions(sd.ip, sd.auth, scopeId);
+            const opts = await psWrite.getDhcpScopeOptions(sd.ip, sd.auth, scopeId);
             const arr = Array.isArray(opts) ? opts : (opts ? [opts] : []);
             const o = arr.find(x => Number(x.OptionId) === 3);
             if (!o) return null;
@@ -3447,17 +3454,17 @@ app.post('/api/dns/records', requireWrite, async (req, res) => {
     const ttlSec = parseInt(ttl || '3600');
 
     switch (record_type.toUpperCase()) {
-      case 'A':     ok = psWrite.addDnsARecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
-      case 'AAAA':  ok = psWrite.addDnsAaaaRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
-      case 'CNAME': ok = psWrite.addDnsCNameRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
-      case 'PTR':   ok = psWrite.addDnsPtrRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
-      case 'MX':    ok = psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, parseInt(preference||'10'), ttlSec, auth); break;
-      case 'TXT':   ok = psWrite.addDnsTxtRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'A':     ok = await psWrite.addDnsARecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'AAAA':  ok = await psWrite.addDnsAaaaRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'CNAME': ok = await psWrite.addDnsCNameRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'PTR':   ok = await psWrite.addDnsPtrRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
+      case 'MX':    ok = await psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, parseInt(preference||'10'), ttlSec, auth); break;
+      case 'TXT':   ok = await psWrite.addDnsTxtRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'SRV': {
         // record_data format: "priority weight port target"
         const [priority, weight, port, target] = String(record_data).trim().split(/\s+/);
         if (!target) return res.status(400).json({ error: 'SRV record_data must be "priority weight port target"' });
-        ok = psWrite.addDnsSrvRecord(serverIp, zone_name, hostname, priority, weight, port, target, ttlSec, auth);
+        ok = await psWrite.addDnsSrvRecord(serverIp, zone_name, hostname, priority, weight, port, target, ttlSec, auth);
         break;
       }
       case 'NS':
@@ -3497,7 +3504,7 @@ app.delete('/api/dns/records', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const ok = psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
+    const ok = await psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
     if (!ok) return res.status(500).json({ error: 'PowerShell delete failed — check WinRM permissions' });
 
     // Remove from DB
@@ -3531,8 +3538,8 @@ app.post('/api/dns/zones', requireWrite, async (req, res) => {
     }
 
     const ok = isForwarder
-      ? psWrite.addDnsForwarderZone(serverData.ip, zone_name, forwarderIps, serverData.auth)
-      : psWrite.addDnsZone(serverData.ip, zone_name, zone_type || 'Primary', replication_scope || 'Domain', serverData.auth);
+      ? await psWrite.addDnsForwarderZone(serverData.ip, zone_name, forwarderIps, serverData.auth)
+      : await psWrite.addDnsZone(serverData.ip, zone_name, zone_type || 'Primary', replication_scope || 'Domain', serverData.auth);
     if (!ok) return res.status(500).json({ error: 'Zone creation failed — check WinRM and DNS server role' });
 
     await db.query(
@@ -3568,7 +3575,7 @@ app.delete('/api/dns/zones/:id', requireWrite, async (req, res) => {
       winrm_https: zone.winrm_https || false,
     };
 
-    const ok = psWrite.removeDnsZone(zone.server_ip, zone.zone_name, auth);
+    const ok = await psWrite.removeDnsZone(zone.server_ip, zone.zone_name, auth);
     if (!ok) return res.status(500).json({ error: 'Zone deletion failed on DNS server' });
 
     await db.query('DELETE FROM dns_zones WHERE id=$1', [zone.id]);
@@ -3591,7 +3598,7 @@ app.get('/api/dns/stats/:serverId', attachSiteFilter, async (req, res) => {
     }
     const serverRes = await db.query(`SELECT ip_address::text as ip FROM ddi_servers ${where}`, params);
     if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
-    const stats = psWrite.getDnsServerStats(serverRes.rows[0].ip);
+    const stats = await psWrite.getDnsServerStats(serverRes.rows[0].ip);
     res.json({ data: stats || {} });
   } catch (err) {
     console.error('[API] dns stats error:', err.message);
@@ -3883,7 +3890,7 @@ app.post('/api/dns/forwarders/test', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const r = psWrite.testDnsForwarder(serverData.ip, serverData.auth, forwarder_ip);
+    const r = await psWrite.testDnsForwarder(serverData.ip, serverData.auth, forwarder_ip);
     if (r) {
       await db.query(
         `INSERT INTO dns_forwarder_health (server_id, forwarder_ip, is_reachable, response_time_ms, last_checked)
@@ -3913,7 +3920,7 @@ app.post('/api/dns/scavenging/enable', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const ok = psWrite.setDnsZoneAging(serverData.ip, serverData.auth, zone_name, en);
+    const ok = await psWrite.setDnsZoneAging(serverData.ip, serverData.auth, zone_name, en);
     if (!ok) return res.status(500).json({ error: 'PowerShell command failed — check WinRM and DNS server role' });
 
     await db.query(
@@ -3952,7 +3959,7 @@ app.post('/api/dns/stale-records/cleanup', requireWrite, async (req, res) => {
       }
       if (!serverData) { failed++; continue; }
 
-      const ok = psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
+      const ok = await psWrite.removeDnsRecord(serverData.ip, zone_name, hostname, record_type, record_data, serverData.auth);
       if (!ok) { failed++; continue; }
 
       deleted++;
@@ -3982,7 +3989,7 @@ app.post('/api/dhcp/reservations', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const ok = psWrite.addDhcpReservation(serverData.ip, scope_id, ip_address, mac_address, name || ip_address, serverData.auth);
+    const ok = await psWrite.addDhcpReservation(serverData.ip, scope_id, ip_address, mac_address, name || ip_address, serverData.auth);
     if (!ok) return res.status(500).json({ error: 'DHCP reservation failed — check WinRM and DHCP server role' });
 
     // Update lease record to show it is now reserved
@@ -4017,7 +4024,7 @@ app.delete('/api/dhcp/reservations', requireWrite, async (req, res) => {
     const serverData = await getServerWithAuth(server_id);
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
 
-    const ok = psWrite.removeDhcpReservation(serverData.ip, scope_id, ip_address, serverData.auth);
+    const ok = await psWrite.removeDhcpReservation(serverData.ip, scope_id, ip_address, serverData.auth);
     if (!ok) return res.status(500).json({ error: 'Removal failed on DHCP server' });
 
     await db.query(
@@ -4039,7 +4046,7 @@ app.get('/api/dhcp/reservations/:serverId/:scopeId', requireAuth, attachSiteFilt
     const serverRes = await db.query('SELECT ip_address::text as ip, site_id FROM ddi_servers WHERE id=$1', [parseInt(req.params.serverId)]);
     if (!serverRes.rows.length) return res.status(404).json({ error: 'Server not found' });
     if (!siteAllowed(req, serverRes.rows[0].site_id)) return res.status(404).json({ error: 'Server not found' });
-    const reservations = psWrite.getDhcpReservations(serverRes.rows[0].ip, req.params.scopeId);
+    const reservations = await psWrite.getDhcpReservations(serverRes.rows[0].ip, req.params.scopeId);
     res.json({ data: reservations || [] });
   } catch (err) {
     console.error('[API] dhcp reservations error:', err.message);
@@ -5171,7 +5178,7 @@ async function syncTrustedHosts() {
     const { addToTrustedHosts } = require('../collector/powershellRunner');
     const result = await db.query('SELECT ip_address::text FROM ddi_servers WHERE is_active = TRUE');
     for (const row of result.rows) {
-      if (row.ip_address) addToTrustedHosts(row.ip_address);
+      if (row.ip_address) await addToTrustedHosts(row.ip_address);
     }
     console.log(`[TrustedHosts] Synced ${result.rows.length} server IPs on startup`);
   } catch (err) {

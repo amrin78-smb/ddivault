@@ -206,15 +206,15 @@ async function collectScopeStats(server) {
   const auth = serverAuth(server);
   log(`[Scopes] Polling ${ip} (id=${server.id}, mode=${auth.auth_mode})...`);
 
-  const stats  = ps.getDhcpScopeStats(ip, auth);
-  const scopes = ps.getDhcpScopes(ip, auth);
+  const stats  = await ps.getDhcpScopeStats(ip, auth);
+  const scopes = await ps.getDhcpScopes(ip, auth);
 
   // Resolve gateway (DHCP option 3) on demand — only invoked for NEW subnets.
   // WinRM-backed; the agent-ingest path passes no getGateway (subnets just get
   // no auto gateway), so this resolver stays central-only.
   const getGateway = async (scopeId) => {
     try {
-      const opts = ps.getDhcpScopeOptions(ip, auth, scopeId);
+      const opts = await ps.getDhcpScopeOptions(ip, auth, scopeId);
       const arr = Array.isArray(opts) ? opts : (opts ? [opts] : []);
       const o = arr.find(x => Number(x.OptionId) === 3);
       if (!o) return null;
@@ -232,7 +232,7 @@ async function syncLeases(server) {
   const auth = serverAuth(server);
   log(`[Leases] Syncing from ${ip}...`);
 
-  const leases = ps.getDhcpLeases(ip, auth);
+  const leases = await ps.getDhcpLeases(ip, auth);
   await writers.writeLeases(db, server, leases, { log, warn });
 }
 
@@ -244,7 +244,7 @@ async function syncReservations(server) {
   const ip   = cleanIp(server.ip_address);
   const auth = serverAuth(server);
   try {
-    const reservations = ps.getDhcpReservations(ip, null, auth);
+    const reservations = await ps.getDhcpReservations(ip, null, auth);
     await writers.writeReservations(db, server, reservations, { log, warn });
   } catch (err) {
     console.error(`[Reservations] Error on ${ip}:`, err.message);
@@ -279,7 +279,7 @@ async function tailDhcpLog(server) {
     if (localBase) process.env.DHCP_LOG_LOCAL = localBase;
     events = dhcp.readDhcpLogSince(since);
   } else {
-    const raw = ps.getDhcpAuditLog(ip, serverAuth(server), dhcp.dayFileName(new Date()), DHCP_LOG_TAIL_LINES);
+    const raw = await ps.getDhcpAuditLog(ip, serverAuth(server), dhcp.dayFileName(new Date()), DHCP_LOG_TAIL_LINES);
     if (!raw) return;
     events = dhcp.parseLines(raw);
     // Same high-water filter readDhcpLogSince applies, so both transports behave
@@ -298,7 +298,7 @@ async function syncDns(server) {
   const auth = serverAuth(server);
   log(`[DNS] Syncing zones from ${ip}...`);
 
-  const zones = ps.getDnsZones(ip, auth);
+  const zones = await ps.getDnsZones(ip, auth);
   if (!zones || !zones.length) {
     warn(`[DNS] No zones from ${ip}`);
     return;
@@ -309,7 +309,7 @@ async function syncDns(server) {
   const recordsByZone = {};
   for (const zone of zones) {
     if (!zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary') {
-      const records = ps.getDnsRecords(ip, zone.ZoneName, auth);
+      const records = await ps.getDnsRecords(ip, zone.ZoneName, auth);
       if (records && records.length) recordsByZone[zone.ZoneName] = records;
     }
   }

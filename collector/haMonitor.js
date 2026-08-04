@@ -65,7 +65,7 @@ async function pollFailover(db, ps, server, auth) {
   if (server.role === 'dns') return;
   const ip = cleanIp(server.ip_address);
   let pairs;
-  try { pairs = ps.getDhcpFailover(ip, auth); }
+  try { pairs = await ps.getDhcpFailover(ip, auth); }
   catch (err) { warn(`[Failover] ${ip}: ${err.message}`); return; }
   if (!pairs || !pairs.length) return;
 
@@ -120,7 +120,7 @@ async function pollDnsSoa(db, ps, server, auth) {
   let checked = 0;
   for (const z of zones.rows) {
     let soa;
-    try { soa = ps.getDnsZoneSoa(ip, z.zone_name, auth); } catch { continue; }
+    try { soa = await ps.getDnsZoneSoa(ip, z.zone_name, auth); } catch { continue; }
     if (!soa || soa.Serial == null) continue;
     const serial = parseInt(soa.Serial);
 
@@ -178,7 +178,7 @@ async function pollHealth(db, ps, server, auth) {
   // WinRM reachability
   let winrmOk = true;
   try {
-    const t = ps.testWinRM(ip, auth);
+    const t = await ps.testWinRM(ip, auth);
     winrmOk = !!t.ok;
   } catch { winrmOk = false; }
   if (!winrmOk) score -= 50;
@@ -196,7 +196,7 @@ async function pollHealth(db, ps, server, auth) {
   let queryMs = null, soaInSync = null;
   if (isDns && winrmOk) {
     try {
-      const q = ps.testDnsQuery(ip, server.hostname, auth);
+      const q = await ps.testDnsQuery(ip, server.hostname, auth);
       if (q && q.Ok) { queryMs = parseInt(q.Ms); if (queryMs > 500) score -= 10; }
       else { score -= 20; }
     } catch { /* ignore */ }

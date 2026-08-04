@@ -191,7 +191,7 @@ function createV1Router(deps) {
       if (!server_id || !zone_name) return fail(res, 400, 'VALIDATION_ERROR', 'server_id and zone_name are required');
       const srv = await getServerWithAuth(server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DNS server not found');
-      const okp = psWrite.addDnsZone(srv.ip, zone_name, zone_type || 'Primary', replication_scope || 'Forest', srv.auth);
+      const okp = await psWrite.addDnsZone(srv.ip, zone_name, zone_type || 'Primary', replication_scope || 'Forest', srv.auth);
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Zone creation failed on the DNS server');
       if (req.audit) req.audit({ action: 'create', entity_type: 'dns_zone', entity_name: zone_name, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { zone_name });
@@ -204,7 +204,7 @@ function createV1Router(deps) {
       if (!z.rows.length) return fail(res, 404, 'ZONE_NOT_FOUND', 'Zone not found');
       const srv = await getServerWithAuth(z.rows[0].server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DNS server not found');
-      const okp = psWrite.removeDnsZone(srv.ip, z.rows[0].zone_name, srv.auth);
+      const okp = await psWrite.removeDnsZone(srv.ip, z.rows[0].zone_name, srv.auth);
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Zone deletion failed on the DNS server');
       await db.query('DELETE FROM dns_zones WHERE id=$1', [parseInt(req.params.id)]).catch(() => {});
       if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_zone', entity_name: z.rows[0].zone_name, username: `apikey:${req.apiKey.name}` });
@@ -238,9 +238,9 @@ function createV1Router(deps) {
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DNS server not found');
       let okp = false;
       const t = String(record_type).toUpperCase();
-      if (t === 'A') okp = psWrite.addDnsARecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
-      else if (t === 'CNAME') okp = psWrite.addDnsCNameRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
-      else if (t === 'TXT') okp = psWrite.addDnsTxtRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
+      if (t === 'A') okp = await psWrite.addDnsARecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
+      else if (t === 'CNAME') okp = await psWrite.addDnsCNameRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
+      else if (t === 'TXT') okp = await psWrite.addDnsTxtRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
       else return fail(res, 400, 'UNSUPPORTED_TYPE', `Record type ${t} is not supported via the API`);
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Record creation failed on the DNS server');
       if (req.audit) req.audit({ action: 'create', entity_type: 'dns_record', entity_name: `${hostname} ${t}`, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
@@ -255,7 +255,7 @@ function createV1Router(deps) {
       const rec = r.rows[0];
       const srv = await getServerWithAuth(rec.server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DNS server not found');
-      const okp = psWrite.removeDnsRecord(srv.ip, rec.zone_name, rec.hostname, rec.record_type, rec.record_data, srv.auth);
+      const okp = await psWrite.removeDnsRecord(srv.ip, rec.zone_name, rec.hostname, rec.record_type, rec.record_data, srv.auth);
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Record deletion failed on the DNS server');
       await db.query('DELETE FROM dns_records WHERE id=$1', [parseInt(req.params.id)]).catch(() => {});
       if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_record', entity_name: `${rec.hostname} ${rec.record_type}`, username: `apikey:${req.apiKey.name}` });
@@ -294,7 +294,7 @@ function createV1Router(deps) {
         return fail(res, 400, 'VALIDATION_ERROR', 'server_id, scope_id, ip_address and mac_address are required');
       const srv = await getServerWithAuth(server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DHCP server not found');
-      const okp = psWrite.addDhcpReservation(srv.ip, scope_id, ip_address, mac_address, name || ip_address, srv.auth);
+      const okp = await psWrite.addDhcpReservation(srv.ip, scope_id, ip_address, mac_address, name || ip_address, srv.auth);
       if (!okp) return fail(res, 502, 'DHCP_OP_FAILED', 'Reservation creation failed on the DHCP server');
       if (req.audit) req.audit({ action: 'reserve', entity_type: 'dhcp_reservation', entity_name: ip_address, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { ip_address, mac_address });
@@ -309,7 +309,7 @@ function createV1Router(deps) {
       const lease = r.rows[0];
       const srv = await getServerWithAuth(lease.server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DHCP server not found');
-      const okp = psWrite.removeDhcpReservation(srv.ip, lease.scope_id, lease.ip, srv.auth);
+      const okp = await psWrite.removeDhcpReservation(srv.ip, lease.scope_id, lease.ip, srv.auth);
       if (!okp) return fail(res, 502, 'DHCP_OP_FAILED', 'Reservation removal failed on the DHCP server');
       if (req.audit) req.audit({ action: 'release', entity_type: 'dhcp_reservation', entity_name: lease.ip, username: `apikey:${req.apiKey.name}` });
       ok(res, { id: parseInt(req.params.id) });
