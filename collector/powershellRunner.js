@@ -376,7 +376,17 @@ async function getDnsZoneScavenging(serverIp, auth, zoneName) {
 async function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
   const z = String(zoneName).replace(/'/g, "''");
   const cutoff = staleDays || 90;
-  const script = `$cutoff = (Get-Date).AddDays(-${cutoff}); Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp | ConvertTo-Json -Compress`;
+  // `$r = @(...)` + `ConvertTo-Json -InputObject` is deliberate, NOT a style choice.
+  // Piping an EMPTY pipeline into ConvertTo-Json emits nothing at all, so runPS saw
+  // empty output and returned null — identical to what it returns when the command
+  // genuinely FAILS. The caller could not tell "this zone has no stale records" from
+  // "this zone could not be read", and had to guess. Forcing an array makes an empty
+  // result a real `[]` (live-verified on 172.24.0.44), so null now unambiguously
+  // means failure. A single record also serialises as a 1-element array rather than
+  // a bare object, which the caller already handles.
+  // Caveat unchanged: -ErrorAction SilentlyContinue still swallows a per-zone read
+  // error into an empty result, so an unreadable zone reads as "no stale records".
+  const script = `$cutoff = (Get-Date).AddDays(-${cutoff}); $r = @(Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp); ConvertTo-Json -InputObject $r -Compress`;
   return await runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 

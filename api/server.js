@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.28.4': [
+    'The nightly stale-DNS-record scan no longer reports healthy zones as unread. It could not tell a zone with no stale records apart from a zone it failed to read — both looked identical — so it flagged both the same way. Last night that read "242 zones returned no result" when all 242 simply had nothing stale and not one read had actually failed. Zones now return an explicit empty answer, so the figure means what it says and only ever counts genuine read failures.',
+    'That also fixes what happens when a zone genuinely cannot be read. The summary claimed the previous results were kept, but they were in fact cleared and replaced with nothing — so a zone that could not be reached was reported as having zero stale records rather than as unknown. Its last known results are now genuinely left in place until it can be read again.',
+    'No change to which records count as stale, or to the 450 stale records currently found in _msdcs.thaiunion.co.th.',
+  ],
   '1.28.3': [
     'Fixed duplicated lease history. Each poll re-reads the recent portion of the DHCP log, and after any restart it re-reads all of it — the events table correctly ignored anything it had already stored, but the per-address lease history did not, and recorded another copy every time. On this server that left 2,056 surplus rows out of 5,561 (37%), with some lease events stored six times over, inflating any per-address history or count built on them. Only genuinely new events are recorded now.',
     'Existing duplicates are still present and are not removed automatically — cleaning up historical rows is a separate, deliberate step. New collection from this version onward is clean.',

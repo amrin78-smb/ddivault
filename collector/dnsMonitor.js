@@ -289,16 +289,26 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
       let raw;
       try { raw = await ps.getDnsStaleRecords(ip, auth, z.zone_name, 90); }
       catch (e) { log(`[Stale] ${ip}/${z.zone_name}: ${e.message}`); continue; }
-      // A null result is ambiguous: either the zone genuinely has zero stale records
-      // (ConvertTo-Json of an empty pipeline emits nothing) OR the PowerShell read failed
-      // (runPS already logged the underlying error). We keep the original semantics —
-      // treat it as "no stale records" and refresh the snapshot — but count nulls so a
-      // server-wide PS/WinRM failure shows up in the run summary instead of silently
-      // recording 0 records.
-      if (raw === null || raw === undefined) zonesNullResult++;
-      const records = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
+      // null is now UNAMBIGUOUS: the reader forces an array, so a zone with no stale
+      // records returns `[]` and only a genuine read failure yields null (see
+      // powershellRunner.getDnsStaleRecords). Previously both produced null, which
+      // made this counter meaningless — on the live server it reported "242 zone(s)
+      // returned no result" when every one of those 242 was simply a zone with zero
+      // stale records and not a single PowerShell call had failed.
+      if (raw === null || raw === undefined) {
+        // A failed read tells us NOTHING about this zone, so leave the previous
+        // snapshot alone. Falling through would DELETE it and insert nothing, i.e.
+        // silently report "0 stale records" for a zone we could not read — which is
+        // exactly what the old summary line claimed it was avoiding ("prior snapshot
+        // kept") while the code deleted the rows regardless.
+        zonesNullResult++;
+        continue;
+      }
+      const records = Array.isArray(raw) ? raw : [raw];
 
-      // Fresh snapshot — clear prior stale rows for this zone first.
+      // Fresh snapshot — clear prior stale rows for this zone first. Safe now that a
+      // failed read has already been skipped above: reaching here means the zone was
+      // read successfully and `records` is its true current state (possibly empty).
       try { await db.query(`DELETE FROM dns_stale_records WHERE zone_id=$1`, [z.id]); }
       catch (e) { log(`[Stale] ${ip}/${z.zone_name} clear failed: ${e.message}`); continue; }
 
@@ -320,7 +330,7 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
     }
   }
   log(`detectStaleRecords complete — ${total} stale record(s) recorded across ${zonesChecked} zone(s)` +
-      (zonesNullResult ? `; ${zonesNullResult} zone(s) returned no result (PS read failed/empty — prior snapshot kept)` : ''));
+      (zonesNullResult ? `; ${zonesNullResult} zone(s) COULD NOT BE READ (PowerShell failure — previous snapshot left untouched)` : ''));
 }
 
 module.exports = { runDnsMonitor, detectStaleRecords };
