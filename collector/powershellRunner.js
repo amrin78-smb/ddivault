@@ -466,6 +466,39 @@ function getDhcpFailoverScopeState(serverIp, relationshipName, auth) {
   return Array.isArray(r) ? r : [r];
 }
 
+/**
+ * Tail a DHCP server's audit log over the SAME authenticated WinRM channel every
+ * other collector call uses, and return the raw text.
+ *
+ * This replaces reading the log over SMB. The SMB route needed a file share on
+ * each DHCP server plus filesystem ACLs for whatever identity the collector
+ * service happens to run as (LocalSystem → the machine account) — a second,
+ * entirely separate access path that has never worked on this deployment, while
+ * the WinRM channel beside it works for every other DHCP call. Here the
+ * per-server credential is applied exactly as it is for scopes and leases.
+ *
+ * The path is resolved ON the server from $env:SystemRoot rather than assuming
+ * C:\Windows. `-Tail` bounds the payload: these logs reach a few MB/day and the
+ * caller keeps a per-server high-water mark, so only the recent tail is needed.
+ * returnRaw — the log is CSV text, not JSON.
+ *
+ * @param {string} serverIp
+ * @param {object} auth      - per-server credentials (same shape as every other call)
+ * @param {string} dayFile   - e.g. 'DhcpSrvLog-Mon.log' (caller owns day rotation)
+ * @param {number} maxLines  - tail size
+ * @returns {string|null}    - raw log text, or null if unreadable/absent
+ */
+function getDhcpAuditLog(serverIp, auth, dayFile, maxLines) {
+  const safeFile = String(dayFile || '').replace(/[^A-Za-z0-9._-]/g, ''); // filename only, never a path
+  if (!safeFile) return null;
+  const n = Math.max(1, Math.min(parseInt(maxLines, 10) || 2000, 20000));
+  const script =
+    `$p = Join-Path $env:SystemRoot 'System32\\dhcp\\${safeFile}'; ` +
+    `if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Tail ${n} } `;
+  const out = runPS(serverIp, script, auth, true);
+  return (typeof out === 'string' && out.trim()) ? out : null;
+}
+
 /** SOA serial for a zone (replication-lag detection). */
 function getDnsZoneSoa(serverIp, zoneName, auth) {
   // Single line — cmd.exe truncates -Command strings at newlines.
@@ -495,6 +528,7 @@ module.exports = {
   getDnsZoneSoa,
   testDnsQuery,
   // DHCP read
+  getDhcpAuditLog,
   getDhcpScopeStats,
   getDhcpScopes,
   getDhcpLeases,

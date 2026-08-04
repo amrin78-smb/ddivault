@@ -7,47 +7,28 @@
  * Log format: CSV with header rows starting with "ID,Date,Time,Description,..."
  * Log path: \\SERVER\DHCPLogs\DhcpSrvLog-Mon.log  (or local path)
  *
- * Event IDs reference:
- *   10  = Assign          (new lease)
- *   11  = Renew           (lease renewed)
- *   12  = Release         (client released)
- *   13  = DNS Update (A)
- *   14  = DNS Update (PTR)
- *   15  = NACK            (server refused)
- *   16  = DNS Delete (A)
- *   17  = DNS Delete (PTR)
- *   20  = Expired
- *   21  = Database cleanup
- *   30  = DNS Update failed
- *   31  = DNS Update failed PTR
- *   32  = DNS Update succeeded
- *   33  = PTR Update succeeded
- *   34  = Lease deleted on conflict
- *   35  = DNS Update failed (generic)
- *   36  = Packet dropped (class mismatch)
- *  1000 = Service started
- *  1001 = Service stopped
- *  1002 = Service paused
- *  1003 = Service continued
- *  1004 = Service initialized
- *  1005 = Service already running
- *  1008 = DB backup started
- *  1009 = DB backup done
- *  1010 = DB restore started
- *  1011 = DB restore done
- *  1012 = DHCPv4 log created
- *  1013 = Scope activation
- *  1014 = Scope deactivation
- *  1016 = Scope 80% full (WARNING)
- *  1020 = Scope 100% full (CRITICAL)
- *  2019 = Rogue DHCP server detected (CRITICAL)
+ * Event IDs: see EVENT_MAP below — it is the single source of truth and was
+ * corrected against Microsoft's published table on 2026-08-04. This header used
+ * to carry its own (contradictory, largely wrong) id list; don't reintroduce one.
+ *
+ * TRANSPORT: the log can be read either from a file path (UNC share or local dir,
+ * via readDhcpLog) or pulled over the server's existing WinRM channel and handed
+ * to parseLines(). WinRM is the default because it needs no share, no extra ACL
+ * and no particular service-account identity — see collector.js syncDhcpLogs().
  */
 
 const fs   = require('fs');
 const path = require('path');
 
-const DHCP_LOG_UNC      = process.env.DHCP_LOG_UNC      || '';
-const DHCP_LOG_LOCAL    = process.env.DHCP_LOG_LOCAL    || '';
+// ⛔ Read these from process.env at CALL time, never capture them in a module
+// const. collector.js rewrites DHCP_LOG_UNC per server (substituting the
+// 192.168.x.x token for that server's IP) AFTER this module is required — a
+// captured const silently ignores every one of those rewrites, which is why the
+// override path only ever tried the literal token and never worked on any
+// install. Proven 2026-08-04: env correctly became \\172.24.0.10\DHCPLogs while
+// the reader still used \\192.168.x.x\.
+const dhcpLogUnc   = () => (process.env.DHCP_LOG_UNC   || '').trim();
+const dhcpLogLocal = () => (process.env.DHCP_LOG_LOCAL || '').trim();
 
 // Distinct read failures already reported this run — see readDhcpLog(). Without
 // this the reader logs the same line every poll cycle forever.
@@ -55,21 +36,49 @@ const loggedReadFailures = new Set();
 
 // Map event IDs to human labels and severity
 const EVENT_MAP = {
-  10:   { type: 'Assign',        severity: 'info' },
-  11:   { type: 'Renew',         severity: 'info' },
-  12:   { type: 'Release',       severity: 'info' },
-  13:   { type: 'DNSUpdate',     severity: 'info' },
-  14:   { type: 'DNSUpdate',     severity: 'info' },
-  15:   { type: 'NACK',          severity: 'warning' },
-  16:   { type: 'DNSDelete',     severity: 'info' },
-  20:   { type: 'Expired',       severity: 'info' },
-  30:   { type: 'DNSFailed',     severity: 'warning' },
-  34:   { type: 'Conflict',      severity: 'critical' },
-  1013: { type: 'ScopeActive',   severity: 'info' },
-  1014: { type: 'ScopeInactive', severity: 'warning' },
-  1016: { type: 'ScopeWarning',  severity: 'warning' },
-  1020: { type: 'ScopeFull',     severity: 'critical' },
-  2019: { type: 'RogueDHCP',     severity: 'critical' },
+  // ── Windows DHCP server AUDIT LOG ids (the DhcpSrvLog-<Day>.log files) ──
+  // ⛔ CONTRACT: this map is duplicated in ddivault/collector/dhcpReader.js and
+  // netvault/agent/modules/ddi/dhcplog.js. Central and agent collection write to
+  // the SAME dhcp_events table, so a difference here means the same event is
+  // classified two ways depending on who collected it. Change both together.
+  //
+  // Verified against Microsoft's published id table using a live 300-line sample
+  // (2026-08-04). Several entries were previously WRONG, not merely missing:
+  // id 30 is a DNS update REQUEST but was reported as 'DNSFailed' (64 of 300
+  // lines), while the genuine failures (31/35) fell through to 'Unknown' — so
+  // DNS failures were simultaneously over- and under-counted. 13/14/16/20/34
+  // were mislabelled too, and 68% of the sample parsed as 'Unknown'.
+  0:    { type: 'LogStarted',         severity: 'info' },
+  1:    { type: 'LogStopped',         severity: 'info' },
+  2:    { type: 'LogPaused',          severity: 'warning' },   // low disk space
+  10:   { type: 'Assign',             severity: 'info' },
+  11:   { type: 'Renew',              severity: 'info' },
+  12:   { type: 'Release',            severity: 'info' },
+  13:   { type: 'AddressInUse',       severity: 'warning' },   // conflict seen on the wire
+  14:   { type: 'PoolExhausted',      severity: 'critical' },
+  15:   { type: 'NACK',               severity: 'warning' },   // lease denied
+  16:   { type: 'LeaseDeleted',       severity: 'info' },
+  17:   { type: 'Expired',            severity: 'info' },      // DNS records retained
+  18:   { type: 'Expired',            severity: 'info' },      // DNS records deleted
+  20:   { type: 'BootpAssign',        severity: 'info' },
+  21:   { type: 'BootpAssign',        severity: 'info' },      // dynamic BOOTP
+  22:   { type: 'BootpPoolExhausted', severity: 'critical' },
+  23:   { type: 'BootpDeleted',       severity: 'info' },
+  24:   { type: 'CleanupBegin',       severity: 'info' },
+  25:   { type: 'CleanupStats',       severity: 'info' },
+  30:   { type: 'DNSUpdate',          severity: 'info' },      // request issued
+  31:   { type: 'DNSFailed',          severity: 'warning' },
+  32:   { type: 'DNSUpdateOk',        severity: 'info' },
+  33:   { type: 'PacketDropped',      severity: 'warning' },   // NAP policy
+  34:   { type: 'DNSQueueLimit',      severity: 'warning' },
+  35:   { type: 'DNSFailed',          severity: 'warning' },
+  36:   { type: 'PacketDropped',      severity: 'warning' },   // failover standby
+  // ── Windows EVENT LOG ids (not audit-log) — consumed by extractAlertEvents ──
+  1013: { type: 'ScopeActive',        severity: 'info' },
+  1014: { type: 'ScopeInactive',      severity: 'warning' },
+  1016: { type: 'ScopeWarning',       severity: 'warning' },
+  1020: { type: 'ScopeFull',          severity: 'critical' },
+  2019: { type: 'RogueDHCP',          severity: 'critical' },
 };
 
 /**
@@ -87,14 +96,32 @@ function dayFileName(date) {
  */
 function logFilePath(date) {
   const fileName = dayFileName(date);
-  if (DHCP_LOG_UNC) {
-    return `${DHCP_LOG_UNC}\\${fileName}`;
+  const unc = dhcpLogUnc();
+  if (unc) {
+    return `${unc.replace(/\\+$/, '')}\\${fileName}`;
   }
-  if (DHCP_LOG_LOCAL) {
-    return path.join(DHCP_LOG_LOCAL, fileName);
+  const local = dhcpLogLocal();
+  if (local) {
+    return path.join(local, fileName);
   }
-  // Default Windows DHCP log location (if running on DHCP server)
+  // Default Windows DHCP log location (only correct when running ON the DHCP server)
   return path.join('C:\\Windows\\System32\\dhcp', fileName);
+}
+
+/**
+ * Parse raw log TEXT into events. Transport-agnostic: the same parser serves a
+ * file read and a WinRM `Get-Content` pull, so both routes classify identically.
+ * @param {string} text
+ * @returns {Array<object>}
+ */
+function parseLines(text) {
+  if (!text) return [];
+  const events = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const parsed = parseLine(line.trim());
+    if (parsed) events.push(parsed);
+  }
+  return events;
 }
 
 /**
@@ -174,13 +201,22 @@ function readDhcpLog(date, maxLines) {
       if (err.code === 'ENOENT') {
         console.warn(`[DHCP Reader] Log file not found: ${filePath} (further occurrences suppressed)`);
       } else {
-        // A placeholder path is the single most common cause and is otherwise
-        // reported as an opaque "UNKNOWN: unknown error" from the OS, which sends
-        // people looking for a network fault that doesn't exist.
-        const looksUnset = /\bx\.x\b|<.*>|YOUR-|SERVER_IP/i.test(filePath);
-        const hint = looksUnset
-          ? ' — this path still contains an .env.local.example PLACEHOLDER; set DHCP_LOG_UNC (or DHCP_LOG_LOCAL) to the real DHCP server share, or leave both blank to disable log-based DHCP events'
-          : ' — check the share exists and the DDIVault service account can read it';
+        // Windows reports an unreachable share as an opaque "UNKNOWN: unknown
+        // error", which sends people hunting for a network fault. Say what it
+        // actually means.
+        //
+        // NOTE: an unsubstituted 192.168.x.x here is NOT an operator mistake —
+        // it is a TOKEN collector.js rewrites per server. Seeing it means the
+        // substitution did not reach this reader, which is a code bug, not a
+        // config one. (The previous version of this hint told operators to
+        // hardcode a real IP over the token, which would have broken multi-server
+        // support.) Reaching this path at all is now unusual: the override is
+        // only used when DHCP_LOG_UNC/LOCAL is set — otherwise the log is pulled
+        // over WinRM and never touches SMB.
+        const unsubstituted = /\bx\.x\b/i.test(filePath);
+        const hint = unsubstituted
+          ? ' — the 192.168.x.x token was not substituted for this server; that is an internal bug, not a setting to edit. Clear DHCP_LOG_UNC to fall back to WinRM collection, which needs no share.'
+          : ' — check the share exists and that the account the DDIVault collector service runs as (LocalSystem = this machine account) can read it; clearing DHCP_LOG_UNC falls back to WinRM collection, which needs neither';
         console.error(`[DHCP Reader] Error reading ${filePath}: ${err.message}${hint} (further occurrences suppressed)`);
       }
     }
@@ -246,6 +282,7 @@ function extractAlertEvents(events) {
 module.exports = {
   readDhcpLog,
   readDhcpLogSince,
+  parseLines,
   readRecentLogs,
   extractAlertEvents,
   parseLine,

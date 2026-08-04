@@ -42,7 +42,15 @@ const SCOPE_CRITICAL_PCT       = parseFloat(process.env.SCOPE_CRITICAL_PCT      
 const SCOPE_WARNING_CLEAR_PCT  = parseFloat(process.env.SCOPE_WARNING_CLEAR_PCT  || '75');
 const SCOPE_CRITICAL_CLEAR_PCT = parseFloat(process.env.SCOPE_CRITICAL_CLEAR_PCT || '85');
 
-const INTERVAL_LOG_TAIL    = 60  * 1000;
+// 300s, matching the agent's dhcp_events cadence (agent/modules/ddi/index.js
+// defaults dhcp_events_interval_s to 300) so central and agent collection poll
+// alike. Was 60s, which is far tighter than DHCP event data warrants and now
+// costs a WinRM round trip per server per tick.
+const INTERVAL_LOG_TAIL    = 300 * 1000;
+// Lines pulled per tick. At ~91 bytes/line (measured on a live log) 2000 lines
+// is ~180KB per server per poll, comfortably covering 5 minutes of events on a
+// busy server while bounding the WinRM payload.
+const DHCP_LOG_TAIL_LINES  = 2000;
 const INTERVAL_SCOPE_STATS = 5   * 60 * 1000;
 const INTERVAL_LEASE_SYNC  = 15  * 60 * 1000;
 const INTERVAL_DNS_SYNC    = 60  * 60 * 1000;
@@ -243,18 +251,41 @@ async function syncReservations(server) {
   }
 }
 
+// Tail one server's DHCP audit log.
+//
+// DEFAULT TRANSPORT IS WinRM — the same authenticated channel used for scopes,
+// leases and DNS. It needs no file share on the DHCP server, no filesystem ACLs
+// for the collector's service identity, and no SMB/445. The previous SMB-only
+// route required all three and had never worked on any install here.
+//
+// DHCP_LOG_UNC / DHCP_LOG_LOCAL remain as an explicit OVERRIDE, for sites that
+// already publish the logs on a share (or run the collector on the DHCP server
+// itself). The 192.168.x.x token in DHCP_LOG_UNC is substituted per server, as
+// it always intended to be — that substitution only started working once
+// dhcpReader stopped capturing the env var at module load.
 async function tailDhcpLog(server) {
   if (server.role === 'dns') return;
   const serverId = server.id;
   const ip       = cleanIp(server.ip_address);
+  const since    = lastLogEventTime[serverId] || null;
 
   const uncBase   = (process.env.DHCP_LOG_UNC   || '').trim();
-  const localBase = (process.env.DHCP_LOG_LOCAL  || '').trim();
-  if (uncBase)   process.env.DHCP_LOG_UNC   = uncBase.replace(/192\.168\.x\.x/i, ip);
-  if (localBase) process.env.DHCP_LOG_LOCAL = localBase;
+  const localBase = (process.env.DHCP_LOG_LOCAL || '').trim();
+  const override  = uncBase || localBase;
 
-  const since  = lastLogEventTime[serverId] || null;
-  const events = dhcp.readDhcpLogSince(since);
+  let events;
+  if (override) {
+    if (uncBase)   process.env.DHCP_LOG_UNC   = uncBase.replace(/192\.168\.x\.x/i, ip);
+    if (localBase) process.env.DHCP_LOG_LOCAL = localBase;
+    events = dhcp.readDhcpLogSince(since);
+  } else {
+    const raw = ps.getDhcpAuditLog(ip, serverAuth(server), dhcp.dayFileName(new Date()), DHCP_LOG_TAIL_LINES);
+    if (!raw) return;
+    events = dhcp.parseLines(raw);
+    // Same high-water filter readDhcpLogSince applies, so both transports behave
+    // identically and re-reading the tail never re-inserts.
+    if (since) events = events.filter((e) => e.event_time && new Date(e.event_time) > since);
+  }
   if (!events.length) return;
 
   const { lastTime } = await writers.writeDhcpEvents(db, server, events, { log, warn });

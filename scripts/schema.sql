@@ -731,6 +731,15 @@ ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_forwarders TEXT[];
 -- Plain TEXT, not an FK to ddi_agents.hub_agent_id: a server can be assigned to
 -- an agent that has not connected/provisioned its ddi_agents row yet.
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS agent_hub_id TEXT;
+
+-- Per-server DHCP audit-log location for AGENT collection. The agent's
+-- modules/ddi/dhcplog.js already reads `server.dhcp_log_path` from its pushed
+-- config and falls back to the local C:\Windows\System32\dhcp — correct when the
+-- agent runs ON the DHCP server, wrong (and silent) when it doesn't. The config
+-- push never actually sent this field, so the fallback was the only behaviour
+-- available. NULL keeps that fallback, which is the right default.
+-- Central collection does NOT use this: it reads the log over WinRM.
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dhcp_log_path TEXT;
 CREATE INDEX IF NOT EXISTS idx_ddi_servers_agent_hub ON ddi_servers(agent_hub_id);
 
 -- ── ddi_agents: readonly SELECT (non-secret) ────────────────

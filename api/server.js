@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.27.0': [
+    'DHCP event collection now works without any file share. It reads each server\'s audit log over the same secure connection already used for scopes, leases and DNS, using that server\'s stored credentials. Previously it needed a separate file share on every DHCP server, plus file permissions for whatever Windows account the collector service happened to run as — which is why it had never collected a single event here. Nothing to set up: it works with the credentials you already have.',
+    'Corrected how DHCP events are labelled. Checked against a live 300-line sample, 68% were being filed as "Unknown" and several were labelled wrongly — most seriously, routine DNS update REQUESTS were reported as DNS FAILURES (64 of those 300 lines) while the genuine failures were the ones showing as Unknown. Lease expiry, DNS success/failure, address conflicts and pool exhaustion are now each identified correctly. Events recorded before this update keep their old labels.',
+    'Collection now runs every 5 minutes instead of every minute, matching the remote agent, and reads a bounded slice of the log rather than the whole file.',
+    'If you do publish the logs on a share, that still works and takes priority — and it now correctly targets each server individually, which it never did before.',
+    'Remote agents are now sent the per-server DHCP log location they always expected but were never given, so an agent that is not installed on the DHCP server itself can find the logs.',
+  ],
   '1.26.2': [
     'The DHCP log reader no longer repeats the same failure on every poll. A path it cannot read was reported roughly once a minute forever — 3,593 identical lines on this server — which buries every other collector message and adds nothing after the first. Each distinct problem is now reported once per run.',
     'It also explains itself. Windows reports an unreachable share as "UNKNOWN: unknown error", which sends people hunting for a network fault. If the configured path still contains an installer placeholder, the message now says so and names the setting to change.',

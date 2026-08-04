@@ -117,7 +117,8 @@ async function pushConfigToAgent(ws, hubAgentId) {
   try {
     const srv = await ddi.query(
       `SELECT id, hostname, ip_address::text AS ip_address, role, auth_mode,
-              ps_username, ps_password, winrm_port, winrm_https, site_id
+              ps_username, ps_password, winrm_port, winrm_https, site_id,
+              dhcp_log_path
          FROM ddi_servers
         WHERE agent_hub_id = $1 AND is_active = TRUE ORDER BY id`,
       [hubAgentId]
@@ -132,6 +133,11 @@ async function pushConfigToAgent(ws, hubAgentId) {
       ps_password: r.ps_password ? decrypt(r.ps_password) : null, // DECRYPTED for the agent
       winrm_port:  r.winrm_port || 5985,
       winrm_https: r.winrm_https || false,
+      // The agent's dhcplog.js has always read server.dhcp_log_path, but this
+      // push never sent it — so every agent silently fell back to its own local
+      // C:\Windows\System32\dhcp. Correct for an agent ON the DHCP server, and
+      // silently empty for one anywhere else. NULL preserves that fallback.
+      dhcp_log_path: r.dhcp_log_path || null,
     }));
 
     // IPAM subnets the agent should be able to scan: those in the same site(s)
