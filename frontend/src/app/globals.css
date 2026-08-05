@@ -433,19 +433,24 @@ option {
 .data-table tbody tr.clickable { cursor: pointer; }
 
 /* ── Inline progress bar ───────────────────────────────────── */
-/* intentional: 3px on a 6px-tall track is a half-height cap, tiny RELATIVE to the
-   element — pushing it to var(--radius) (8px) would round the whole bar into a
-   lozenge. Left literal in both corner styles. */
+/* --radius-pill, NOT a literal 3px and NOT --radius. 3px on a 6px-tall track IS the
+   capsule end of a hairline bar, so --radius (8px) would round the whole bar into a
+   lozenge — but leaving it literal opts these two bars out of the square switch,
+   while every OTHER thin progress bar in this app is tokenized to --radius-pill.
+   Most bars would then flatten in square mode and these would stay rounded, which
+   reads as a rendering fault. --radius-pill is safe here: the browser clamps
+   border-radius to half the box, so 999px on a 6px-tall bar renders pixel-identically
+   to 3px in rounded mode, and correctly flattens to 0 when squared. */
 .util-track {
   flex: 1;
   height: 6px;
   background: var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   min-width: 60px;
 }
-/* intentional: matches .util-track's 3px cap on the same 6px-tall bar. */
-.util-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+/* matches .util-track — see the note above it. */
+.util-fill { height: 100%; border-radius: var(--radius-pill); transition: width 0.4s ease; }
 
 /* ── KPI card with status border ───────────────────────────── */
 .kpi-card {

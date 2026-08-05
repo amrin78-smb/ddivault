@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.29.1': [
+    'Follow-up to the corner switch: the two thin utilisation bars shared across the dashboard now square off with everything else. They were previously left rounded, so in square mode most progress bars flattened while those two stayed capsule-shaped — which looked like a fault rather than a choice. They are unchanged in the rounded style.',
+  ],
   '1.29.0': [
     'You can now switch the whole interface between rounded and square corners. The control sits in the top bar next to the dark-mode toggle, applies instantly across every page, and switches back just as easily — neither look is temporary or "the real one".',
     'The choice is remembered per browser and is yours alone: it is not a shared setting, changes nothing for other users, and needs no administrator rights. It is applied before the page draws, so there is no flicker on load.',
