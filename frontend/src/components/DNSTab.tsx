@@ -236,7 +236,7 @@ function TypeBadge({ type, small }: { type: string; small?: boolean }) {
   const color = RECORD_COLORS[type] || '#6b7280';
   return (
     <span style={{
-      display: 'inline-block', padding: small ? '1px 6px' : '2px 8px', borderRadius: 4,
+      display: 'inline-block', padding: small ? '1px 6px' : '2px 8px', borderRadius: 'var(--radius-sm)',
       background: color + '22', color, fontSize: small ? 'var(--text-xs)' : 'var(--text-xs)', fontWeight: 700,
       letterSpacing: '0.02em',
     }}>{type}</span>
@@ -483,11 +483,12 @@ function ServerPill({ server, active, onClick }: {
   const status = dnsServerStatus(server.health_score, server.winrm_test_ok);
   return (
     <button onClick={onClick} style={{
-      padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 'var(--text-sm)',
+      padding: '7px 14px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontSize: 'var(--text-sm)',
       border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
       display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: 'inherit',
     }}>
+      {/* intentional: 50% status dot — squaring it looks broken */}
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: dnsStatusColor(status), flexShrink: 0 }} />
       <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{server.hostname}</span>
       <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>{server.ip_address}</span>
@@ -641,9 +642,10 @@ function ForwarderPill({ ip, status }: { ip: string; status: 'up' | 'down' | 'un
   const col = status === 'up' ? 'var(--green)' : status === 'down' ? 'var(--red)' : 'var(--text-muted)';
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 10,
+      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 'var(--radius-pill)',
       background: col + '18', color: col, fontSize: 'var(--text-xs)', fontWeight: 600, fontFamily: 'var(--font-mono)',
     }}>
+      {/* intentional: 50% status dot — squaring it looks broken */}
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: col }} />
       {ip}
     </span>
@@ -702,6 +704,7 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', padding: '8px 0' }}>No zones hosted on this server.</div>
           ) : myZones.map(z => (
             <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 'var(--text-sm)', borderBottom: '1px solid var(--border-light)' }}>
+              {/* intentional: 50% status dot — squaring it looks broken */}
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
               <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.zone_name}</span>
               <span style={{ color: 'var(--text-muted)' }}>{z.record_count || 0} rec</span>
@@ -911,6 +914,7 @@ function HealthOverviewPanel() {
                   <tr key={i}>
                     <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {/* intentional: 50% status dot — squaring it looks broken */}
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: z.in_sync ? 'var(--green)' : 'var(--red)' }} />
                         {z.zone_name}
                       </span>
@@ -1217,7 +1221,7 @@ function ZonesRecordsPanel() {
       {servers.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSelectedServer(null)} style={{
-            padding: '7px 14px', borderRadius: 22, cursor: 'pointer', fontSize: 'var(--text-sm)', fontWeight: 600,
+            padding: '7px 14px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontSize: 'var(--text-sm)', fontWeight: 600,
             border: `2px solid ${selectedServer === null ? 'var(--primary)' : 'var(--border)'}`,
             background: selectedServer === null ? 'var(--primary-light)' : 'var(--bg-card)',
             color: 'var(--text-primary)', fontFamily: 'inherit',
@@ -1273,7 +1277,7 @@ function ZonesRecordsPanel() {
                   const active = zoneTypeFilter === key;
                   return (
                     <button key={key} onClick={() => setZoneTypeFilter(key)} style={{
-                      padding: '3px 10px', borderRadius: 14, cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600,
+                      padding: '3px 10px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontSize: 'var(--text-xs)', fontWeight: 600,
                       border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                       background: active ? 'var(--primary-light)' : 'var(--bg-card)',
                       color: active ? 'var(--primary)' : 'var(--text-muted)', fontFamily: 'inherit',
@@ -1333,6 +1337,7 @@ function ZonesRecordsPanel() {
               <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {breakdown.map((b, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--text-xs)' }}>
+                    {/* intentional: 2px on an 8x8 legend swatch — --radius-sm (6px) would round it into a circle */}
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: RECORD_COLORS[b.record_type] || '#6b7280' }} />
                     <span style={{ color: 'var(--text-muted)' }}>{b.record_type}</span>
                     <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{b.count}</span>
@@ -1801,7 +1806,7 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                           {multi && (
                             <span style={{ marginLeft: 8, fontFamily: 'inherit', fontSize: 'var(--text-xs)', fontWeight: 600,
                               color: 'var(--text-muted)', background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                              borderRadius: 10, padding: '1px 8px' }}>
+                              borderRadius: 'var(--radius-pill)', padding: '1px 8px' }}>
                               × {g.records.length} server{g.records.length === 1 ? '' : 's'}
                             </span>
                           )}
@@ -1875,6 +1880,7 @@ function DnsManagementConsole({ onBack }: { onBack: () => void }) {
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)',
                         color: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }}>
+                        {/* intentional: 50% status dot — squaring it looks broken */}
                         <span style={{ width: 8, height: 8, borderRadius: '50%',
                           background: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }} />
                         {f.is_reachable ? 'Reachable' : f.is_reachable === false ? 'Unreachable' : 'Unknown'}
@@ -2276,6 +2282,7 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
                     <td style={{ ...cellSm, fontFamily: 'var(--font-mono)' }}>{f.forwarder_ip}</td>
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        {/* intentional: 50% status dot — squaring it looks broken */}
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.is_reachable ? 'var(--green)' : f.is_reachable === false ? 'var(--red)' : 'var(--text-muted)' }} />
                       </span>
                     </td>
@@ -2305,8 +2312,8 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
               {recordRows.map(r => (
                 <div key={r.type} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ width: 44, fontSize: 'var(--text-xs)', fontWeight: 700, color: RECORD_COLORS[r.type] || '#6b7280', flexShrink: 0 }}>{r.type}</span>
-                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
-                    <div style={{ width: `${(r.count / maxRecord) * 100}%`, height: '100%', background: RECORD_COLORS[r.type] || '#6b7280', borderRadius: 5 }} />
+                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
+                    <div style={{ width: `${(r.count / maxRecord) * 100}%`, height: '100%', background: RECORD_COLORS[r.type] || '#6b7280', borderRadius: 'var(--radius-pill)' }} />
                   </div>
                   <span style={{ width: 54, textAlign: 'right', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{r.count.toLocaleString()}</span>
                   <span style={{ width: 40, textAlign: 'right', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flexShrink: 0 }}>{((r.count / recordTotal) * 100).toFixed(1)}%</span>
@@ -2417,8 +2424,8 @@ function InsightsPanel({ onNavigate, onGotoHealth }: { onNavigate?: (tab: 'event
               {topZones.map(z => (
                 <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ width: 110, fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={z.zone_name}>{z.zone_name}</span>
-                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 5, overflow: 'hidden' }}>
-                    <div style={{ width: `${((z.record_count || 0) / maxZoneCount) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 5 }} />
+                  <div style={{ flex: 1, height: 9, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
+                    <div style={{ width: `${((z.record_count || 0) / maxZoneCount) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 'var(--radius-pill)' }} />
                   </div>
                   <span style={{ width: 48, textAlign: 'right', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{(z.record_count || 0).toLocaleString()}</span>
                 </div>

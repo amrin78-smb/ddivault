@@ -59,7 +59,7 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', width: 64, flexShrink: 0 }}>{label}</div>
-      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
         <div style={{ width: `${Math.min(100, Math.max(0, v ?? 0))}%`, height: '100%', background: color }} />
       </div>
       <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color, width: 30, textAlign: 'right' }}>{v != null ? Math.round(v) : '—'}</div>
@@ -115,7 +115,7 @@ function SiteTile({ site, expanded, onToggle, onNavigate }: {
           </button>
         </div>
       </div>
-      <div style={{ marginTop: 8, height: 5, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ marginTop: 8, height: 5, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
         <div style={{ width: `${Math.min(100, Math.max(0, overall ?? 0))}%`, height: '100%', background: color }} />
       </div>
       {expanded && (

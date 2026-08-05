@@ -183,7 +183,7 @@ function DeviceSlideOver({ category, deviceType, count, onClose }: DeviceSlideOv
             onClick={close}
             aria-label="Close"
             style={{
-              background: 'transparent', border: '1px solid var(--border)', borderRadius: 8,
+              background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
               width: 32, height: 32, cursor: 'pointer', fontSize: 'var(--text-lg)', lineHeight: 1,
               color: 'var(--text-muted)', flexShrink: 0,
             }}
@@ -306,15 +306,15 @@ export default function DeviceDonut() {
               onMouseLeave={() => setHovered(null)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-                padding: '4px 0', borderRadius: 6,
+                padding: '4px 0', borderRadius: 'var(--radius-sm)',
                 background: hovered === s.category ? 'var(--bg-primary)' : 'transparent',
               }}
             >
               <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', width: 84, flexShrink: 0 }}>{s.category}</span>
-              <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
                 <div style={{
                   width: `${maxPct > 0 ? (s.pct / maxPct) * 100 : 0}%`,
-                  height: '100%', background: s.color, borderRadius: 4,
+                  height: '100%', background: s.color, borderRadius: 'var(--radius-pill)',
                 }} />
               </div>
               <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-primary)', width: 48, textAlign: 'right', flexShrink: 0 }}>{s.count.toLocaleString()}</span>

@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.29.0': [
+    'You can now switch the whole interface between rounded and square corners. The control sits in the top bar next to the dark-mode toggle, applies instantly across every page, and switches back just as easily — neither look is temporary or "the real one".',
+    'The choice is remembered per browser and is yours alone: it is not a shared setting, changes nothing for other users, and needs no administrator rights. It is applied before the page draws, so there is no flicker on load.',
+    'Elements that are meant to be round stay round — status dots, avatars and the small colour swatches in chart legends are deliberately unaffected, since squaring those reads as a fault rather than a style.',
+  ],
   '1.28.4': [
     'The nightly stale-DNS-record scan no longer reports healthy zones as unread. It could not tell a zone with no stale records apart from a zone it failed to read — both looked identical — so it flagged both the same way. Last night that read "242 zones returned no result" when all 242 simply had nothing stale and not one read had actually failed. Zones now return an explicit empty answer, so the figure means what it says and only ever counts genuine read failures.',
     'That also fixes what happens when a zone genuinely cannot be read. The summary claimed the previous results were kept, but they were in fact cleared and replaced with nothing — so a zone that could not be reached was reported as having zero stale records rather than as unknown. Its last known results are now genuinely left in place until it can be read again.',

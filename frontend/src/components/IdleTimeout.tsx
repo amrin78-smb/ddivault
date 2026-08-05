@@ -29,7 +29,7 @@ function WarningModal(props: WarningModalProps) {
       <div
         style={{
           background: 'var(--bg-card)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius)',
           boxShadow: 'var(--shadow-md)',
           padding: 28,
           maxWidth: 420,
@@ -67,7 +67,7 @@ function WarningModal(props: WarningModalProps) {
             style={{
               flex: 1,
               padding: '11px 16px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius)',
               border: 'none',
               background: 'var(--primary)',
               color: '#fff',
@@ -83,7 +83,7 @@ function WarningModal(props: WarningModalProps) {
             style={{
               flex: 1,
               padding: '11px 16px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius)',
               border: '1px solid var(--border, #e2e8f0)',
               background: 'var(--bg-card)',
               color: 'var(--text-secondary)',

@@ -215,7 +215,7 @@ export default function ActivityFeed(props: Props) {
                       {a.acknowledged && (
                         <span style={{
                           marginLeft: 6, fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-muted)',
-                          border: '1px solid var(--border)', borderRadius: 4, padding: '0 4px',
+                          border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0 4px',
                           verticalAlign: 'middle',
                         }}>ACK</span>
                       )}

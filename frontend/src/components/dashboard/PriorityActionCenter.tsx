@@ -371,7 +371,7 @@ function Row({ item }: { item: ActionItem }) {
       {/* source tag chip */}
       <span style={{
         fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-primary)',
-        border: '1px solid var(--border)', borderRadius: 4, padding: '1px 7px',
+        border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1px 7px',
         flexShrink: 0, fontWeight: 600,
       }}>{item.source}</span>
 

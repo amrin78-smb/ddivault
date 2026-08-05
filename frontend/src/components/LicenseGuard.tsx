@@ -171,7 +171,7 @@ export function LicenseDisabledScreen() {
       </p>
       <a
         href={`${hubUrl}/settings/license`}
-        style={{ background: 'var(--primary)', color: '#fff', padding: '12px 28px', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 'var(--text-md)', marginTop: 8 }}
+        style={{ background: 'var(--primary)', color: '#fff', padding: '12px 28px', borderRadius: 'var(--radius)', textDecoration: 'none', fontWeight: 600, fontSize: 'var(--text-md)', marginTop: 8 }}
       >
         {unlicensed ? 'Manage License at NocVault Hub →' : 'Renew License at NocVault Hub →'}
       </a>

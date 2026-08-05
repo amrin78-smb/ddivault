@@ -66,7 +66,7 @@ export function IpamKpiTiles({
                   flex: 1,
                   height: 5,
                   background: 'var(--border)',
-                  borderRadius: 3,
+                  borderRadius: 'var(--radius-pill)',
                   overflow: 'hidden',
                 }}
               >
@@ -75,7 +75,7 @@ export function IpamKpiTiles({
                     width: `${Math.min(100, tile.pct)}%`,
                     height: '100%',
                     background: tile.color,
-                    borderRadius: 3,
+                    borderRadius: 'var(--radius-pill)',
                   }}
                 />
               </div>

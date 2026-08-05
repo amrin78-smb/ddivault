@@ -72,8 +72,8 @@ export function IpamTopSubnets({ subnets, onViewAll }: IpamTopSubnetsProps) {
             >
               {s.label}
             </div>
-            <div style={{ flex: 1, height: 7, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 70 }}>
-              <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: pctColor(s.pct), borderRadius: 4 }} />
+            <div style={{ flex: 1, height: 7, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden', minWidth: 70 }}>
+              <div style={{ width: `${Math.min(100, s.pct)}%`, height: '100%', background: pctColor(s.pct), borderRadius: 'var(--radius-pill)' }} />
             </div>
             <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: pctColor(s.pct), minWidth: 46, textAlign: 'right' }}>
               {s.pct.toFixed(1)}%

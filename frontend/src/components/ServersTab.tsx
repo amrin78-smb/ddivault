@@ -337,7 +337,7 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
           boxShadow: ok === true ? `0 0 7px ${dotColor(ok)}` : 'none',
         }} title={ok === true ? 'WinRM OK' : ok === false ? 'WinRM failed' : 'Not tested'} />
         <div style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{s.hostname || s.ip_address}</div>
-        <code className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-primary)', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)' }}>
+        <code className="mono" style={{ color: 'var(--text-secondary)', background: 'var(--bg-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
           {s.ip_address}
         </code>
         <span className={`badge ${s.role === 'both' ? 'badge-blue' : 'badge-gray'}`}>{s.role}</span>

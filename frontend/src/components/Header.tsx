@@ -6,6 +6,7 @@ import { signOut, useSession } from 'next-auth/react';
 import { useRBAC } from '@/components/RBACContext';
 import { getHubUrl } from '@/lib/hubUrl';
 import { severityColor } from '@/components/palette';
+import CornersToggle from '@/components/CornersToggle';
 
 function DDIVaultLogo({ className }: { className?: string }) {
   return (
@@ -148,9 +149,10 @@ export function Header(props: HeaderProps) {
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '5px 12px',
         background: collectorOnline ? 'rgba(22,163,74,0.15)' : 'rgba(220,38,38,0.15)',
-        borderRadius: 20,
+        borderRadius: 'var(--radius-pill)',
         border: `1px solid ${collectorOnline ? 'rgba(22,163,74,0.3)' : 'rgba(220,38,38,0.3)'}`,
       }}>
+        {/* intentional: 50% is a true circle (status dot) — never squared off. */}
         <div style={{
           width: 7, height: 7, borderRadius: '50%',
           background: collectorOnline ? '#16a34a' : '#dc2626',
@@ -170,7 +172,7 @@ export function Header(props: HeaderProps) {
           style={{
             width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: notifOpen ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, cursor: 'pointer',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius)', cursor: 'pointer',
             color: 'rgba(255,255,255,0.7)', position: 'relative', transition: 'background 0.15s',
           }}
           onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
@@ -182,7 +184,7 @@ export function Header(props: HeaderProps) {
           {alertTotal > 0 && (
             <span style={{
               position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, padding: '0 4px',
-              background: 'var(--primary)', color: '#fff', borderRadius: 9, fontSize: 'var(--text-xs)', fontWeight: 700,
+              background: 'var(--primary)', color: '#fff', borderRadius: 'var(--radius-pill)', fontSize: 'var(--text-xs)', fontWeight: 700,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: '2px solid #1a2744', boxShadow: '0 0 0 1px rgba(200,16,46,0.4)',
             }}>
@@ -194,7 +196,7 @@ export function Header(props: HeaderProps) {
         {notifOpen && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 340,
-            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6,
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
             boxShadow: 'var(--shadow-md)', overflow: 'hidden', zIndex: 999, animation: 'fadeIn 0.15s ease',
           }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -214,6 +216,7 @@ export function Header(props: HeaderProps) {
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-subtle)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
+                    {/* intentional: 50% is a true circle (severity dot) — never squared off. */}
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: severityColor(a.severity), marginTop: 5, flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', lineHeight: 1.4 }}>{a.message}</div>
@@ -237,6 +240,12 @@ export function Header(props: HeaderProps) {
         )}
       </div>
 
+      {/* Corner style toggle — deliberately here, next to the theme toggle, and
+          NOT in Settings: the Settings tab is gated behind `canManageSystem`, so
+          a per-browser display preference placed there would be unreachable for
+          every non-admin user. */}
+      <CornersToggle />
+
       {/* Dark mode toggle */}
       <button
         onClick={toggle}
@@ -246,7 +255,7 @@ export function Header(props: HeaderProps) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(255,255,255,0.06)',
           border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius)',
           cursor: 'pointer',
           transition: 'background 0.15s',
           color: 'rgba(255,255,255,0.7)',
@@ -265,7 +274,7 @@ export function Header(props: HeaderProps) {
             display: 'flex', alignItems: 'center', gap: 10,
             background: dropdownOpen ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
             border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 10,
+            borderRadius: 'var(--radius)',
             padding: '6px 12px 6px 6px',
             cursor: 'pointer',
             transition: 'background 0.15s',
@@ -273,7 +282,7 @@ export function Header(props: HeaderProps) {
           onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
           onMouseLeave={e => { if (!dropdownOpen) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
         >
-          {/* Avatar */}
+          {/* Avatar — intentional: 50% is a true circle; a squared avatar is a bug, not a style. */}
           <div style={{
             width: 34, height: 34, borderRadius: '50%',
             background: 'var(--primary)',
@@ -309,7 +318,7 @@ export function Header(props: HeaderProps) {
             position: 'absolute', top: 'calc(100% + 8px)', right: 0,
             background: 'var(--bg-card)',
             border: '1px solid var(--border)',
-            borderRadius: 6,
+            borderRadius: 'var(--radius-sm)',
             boxShadow: 'var(--shadow-md)',
             minWidth: 220,
             overflow: 'hidden',
@@ -325,7 +334,7 @@ export function Header(props: HeaderProps) {
                   return (
                     <span style={{
                       padding: '2px 8px',
-                      borderRadius: 6,
+                      borderRadius: 'var(--radius-sm)',
                       fontSize: 'var(--text-xs)',
                       fontWeight: 600,
                       color: meta.color,

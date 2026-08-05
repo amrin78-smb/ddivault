@@ -204,7 +204,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
             {[0, 1, 2].map((i) => (
               <div key={i} style={{
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderRadius: 10, padding: 12,
+                borderRadius: 'var(--radius)', padding: 12,
               }}>
                 <Skeleton height={16} width="60%" />
                 <div style={{ height: 8 }} />
@@ -294,7 +294,7 @@ export default function InfraRedundancy({ timeRange = '24h', refreshNonce = 0, o
               onClick={() => onNavigate?.('infra')}
               style={{
                 background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                borderLeft: `4px solid ${color}`, borderRadius: 10, padding: 12,
+                borderLeft: `4px solid ${color}`, borderRadius: 'var(--radius)', padding: 12,
                 cursor: 'pointer',
               }}
             >

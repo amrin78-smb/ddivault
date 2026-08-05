@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             background: '#1a2744',
             color: '#fff',
             padding: '10px 16px',
-            borderRadius: 8,
+            borderRadius: 'var(--radius)',
             borderLeft: `4px solid ${colors[t.type]}`,
             fontSize: 'var(--text-base)',
             maxWidth: 340,

@@ -8,6 +8,7 @@ import { FetchInterceptor } from '@/components/FetchInterceptor';
 import { IdleTimeout } from '@/components/IdleTimeout';
 import { AuditActor } from '@/components/AuditActor';
 import { LicenseProvider, LicenseGate } from '@/components/LicenseGuard';
+import { CORNERS_INIT_SCRIPT } from '@/lib/corners';
 
 export const metadata: Metadata = {
   title: 'DDIVault — DNS · DHCP · IPAM',
@@ -17,6 +18,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* No-flash corner style: sets data-corners on <html> synchronously, before
+            first paint, so a square-corner user never sees a rounded frame flash.
+            Must stay a blocking inline <script> in <head> — moving it into a
+            useEffect (as the theme currently does) reintroduces the flash. */}
+        <script dangerouslySetInnerHTML={{ __html: CORNERS_INIT_SCRIPT }} />
+      </head>
       <body>
         <AuthProvider>
           <RBACProvider>

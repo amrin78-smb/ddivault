@@ -135,7 +135,7 @@ export default function CommandBar({
         {/* MIDDLE — collector heartbeat chip */}
         <span style={{
           display: 'inline-flex', alignItems: 'center', gap: 7,
-          padding: '4px 10px', borderRadius: 999,
+          padding: '4px 10px', borderRadius: 'var(--radius-pill)',
           background: collectorState.color + '18', fontSize: 'var(--text-sm)',
           color: 'var(--text-primary)', fontWeight: 600,
         }}>

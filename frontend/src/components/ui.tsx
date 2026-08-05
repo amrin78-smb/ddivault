@@ -72,7 +72,7 @@ export function EmptyState({ icon, title, message, actionLabel, onAction }: {
     }}>
       {icon && (
         <div style={{
-          width: 56, height: 56, borderRadius: 14, marginBottom: 16,
+          width: 56, height: 56, borderRadius: 'var(--radius)', marginBottom: 16,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-muted)',
         }}>

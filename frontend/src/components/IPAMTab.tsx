@@ -183,7 +183,7 @@ function ScanProgressBar({ job }: { job: any }) {
         <span style={{ fontWeight: 600 }}>🔍 Scanning {cleanNetwork(job.network)}/{job.prefix_length}{job.name ? ` — ${job.name}` : ''}</span>
         <span style={{ color: 'var(--text-muted)' }}>{pct}%</span>
       </div>
-      <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ height: 8, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
         <div style={{
           width: `${pct}%`, height: '100%', background: 'var(--primary)',
           transition: 'width 0.4s ease', animation: 'pulse 1.5s ease-in-out infinite',
@@ -754,7 +754,7 @@ function SubnetDetail({ subnet, sites, onClose }: { subnet: Subnet; sites: Site[
           <div style={{ flex: 1 }} />
           {Object.entries(counts).map(([s, n]) => (
             <div key={s} style={{
-              padding: '3px 10px', borderRadius: 12, fontSize: 'var(--text-xs)', fontWeight: 600,
+              padding: '3px 10px', borderRadius: 'var(--radius-pill)', fontSize: 'var(--text-xs)', fontWeight: 600,
               background: STATUS_TINT[s] || 'rgba(255,255,255,0.08)',
               border: `1px solid ${STATUS_COLOR[s] || 'var(--text-muted)'}55`,
               color: '#fff',
@@ -1413,7 +1413,7 @@ function TreeView({
                         value={prefix}
                         onChange={e => setPrefixSel(p => ({ ...p, [sn.id]: parseInt(e.target.value) }))}
                         title="Prefix for next free subnet"
-                        style={{ fontSize: 'var(--text-xs)', padding: '3px 5px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                        style={{ fontSize: 'var(--text-xs)', padding: '3px 5px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' }}
                       >
                         {PREFIX_OPTIONS.map(p => <option key={p} value={p}>/{p}</option>)}
                       </select>

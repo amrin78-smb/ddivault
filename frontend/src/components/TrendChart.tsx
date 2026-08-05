@@ -134,6 +134,7 @@ export function TrendChart({ chart, height }: { chart: ChartSpec; height?: numbe
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 6 }}>
           {series.map((s, i) => (
             <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+              {/* intentional: 2px is small relative to this 10x10 legend swatch — var(--radius-sm) (6px) would render it as a circle */}
               <span style={{ width: 10, height: 10, borderRadius: 2, background: colorFor(s, i), display: 'inline-block' }} />
               {s.label}
             </span>

@@ -64,7 +64,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
     <div style={{ flex: 1, minWidth: 200 }}>
       <div style={{ ...MUTED, fontWeight: 600, marginBottom: 4 }}>{label}</div>
       <pre style={{
-        margin: 0, fontSize: 'var(--text-xs)', lineHeight: 1.5, padding: 10, borderRadius: 8, overflow: 'auto', maxHeight: 200,
+        margin: 0, fontSize: 'var(--text-xs)', lineHeight: 1.5, padding: 10, borderRadius: 'var(--radius)', overflow: 'auto', maxHeight: 200,
         background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
         fontFamily: 'var(--font-mono)',
       }}>{JSON.stringify(value, null, 2)}</pre>

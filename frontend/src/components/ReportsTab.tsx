@@ -544,7 +544,7 @@ export default function ReportsTab() {
                         {scopeSel.size === 0 ? 'All scopes' : `${scopeSel.size} scope${scopeSel.size > 1 ? 's' : ''} selected`} ▾
                       </button>
                       {scopeMenuOpen && (
-                        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
                           <input
                             className="input"
                             placeholder="Search scopes…"
@@ -570,7 +570,7 @@ export default function ReportsTab() {
                             {menuScopes.length === 0 ? (
                               <div style={{ ...MUTED, padding: '8px' }}>No scopes{scopeOptions.length === 0 ? ' loaded' : ' match'}.</div>
                             ) : menuScopes.map(s => (
-                              <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                              <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 'var(--radius-sm)' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                                 <input type="checkbox" checked={scopeSel.has(s.id)} onChange={() => toggleScope(s.id)} />
@@ -599,9 +599,9 @@ export default function ReportsTab() {
                             <div style={{ position: 'relative' }}>
                               <button className="btn" onClick={() => setColMenuOpen(o => !o)}>Columns ▾</button>
                               {colMenuOpen && (
-                                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
+                                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-sm)', padding: 8, minWidth: 200, maxHeight: 320, overflow: 'auto' }}>
                                   {(preview.columns ?? []).map(c => (
-                                    <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 6 }}
+                                    <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 'var(--text-sm)', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: 'var(--radius-sm)' }}
                                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-subtle)'; }}
                                       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                                       <input type="checkbox" checked={!hiddenCols.has(c.key)} onChange={() => toggleCol(c.key)} />
@@ -620,7 +620,7 @@ export default function ReportsTab() {
                     {preview?.summary && preview.summary.length > 0 && (
                       <div style={{ display: 'flex', gap: 12, padding: '14px 18px', flexWrap: 'wrap', borderBottom: '1px solid var(--border-light)' }}>
                         {preview.summary.map((s, i) => (
-                          <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', minWidth: 120 }}>
+                          <div key={i} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 16px', minWidth: 120 }}>
                             <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: s.color || 'var(--text-primary)', lineHeight: 1 }}>{s.value}</div>
                             <div style={{ ...MUTED, marginTop: 4 }}>{s.label}</div>
                           </div>
@@ -718,7 +718,7 @@ export default function ReportsTab() {
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {REPORTS.map(r => (
-                    <label key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', background: packSel.has(r.key) ? 'var(--surface-subtle)' : 'var(--bg-card)' }}>
+                    <label key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px', background: packSel.has(r.key) ? 'var(--surface-subtle)' : 'var(--bg-card)' }}>
                       <input type="checkbox" checked={packSel.has(r.key)} onChange={() => togglePack(r.key)} />
                       {r.title}
                     </label>

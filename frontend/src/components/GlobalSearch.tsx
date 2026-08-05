@@ -108,7 +108,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
             padding: '8px 40px 8px 36px',
             background: 'rgba(255,255,255,0.08)',
             border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 6,
+            borderRadius: 'var(--radius-sm)',
             color: '#fff',
             fontSize: 'var(--text-base)',
             outline: 'none',
@@ -133,7 +133,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
         {!query && (
           <kbd style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
             background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 4, padding: '1px 6px', fontSize: 'var(--text-xs)', color: 'rgba(255,255,255,0.3)' }}>
+            borderRadius: 'var(--radius-sm)', padding: '1px 6px', fontSize: 'var(--text-xs)', color: 'rgba(255,255,255,0.3)' }}>
             /
           </kbd>
         )}
@@ -144,7 +144,7 @@ export default function GlobalSearch({ onNavigate }: { onNavigate?: (tab: any) =
         <div style={{
           position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
           background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 6, boxShadow: 'var(--shadow-md)',
+          borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
           zIndex: 9999, overflow: 'hidden', maxHeight: 420, overflowY: 'auto',
         }}>
           {loading && (

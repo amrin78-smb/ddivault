@@ -163,7 +163,7 @@ export function ReportDrillDrawer({
                         style={{
                           background: 'var(--bg-primary)',
                           border: '1px solid var(--border)',
-                          borderRadius: 10,
+                          borderRadius: 'var(--radius)',
                           padding: '10px 14px',
                           minWidth: 0,
                           gridColumn: isLong ? 'span 2' : undefined,

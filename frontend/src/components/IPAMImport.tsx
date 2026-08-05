@@ -128,7 +128,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             {/* Template download */}
             <div style={{
               background: 'var(--tint-info)', border: '1px solid var(--tint-info)',
-              borderRadius: 10, padding: '14px 18px', marginBottom: 20,
+              borderRadius: 'var(--radius)', padding: '14px 18px', marginBottom: 20,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <div>
@@ -139,7 +139,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
               </div>
               <button onClick={downloadTemplate} style={{
                 padding: '8px 16px', background: '#2563eb', color: '#fff',
-                border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 500,
+                border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 500,
                 whiteSpace: 'nowrap',
               }}>
                 ⬇ Download Template
@@ -164,10 +164,10 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
                   { col: 'location', req: false, desc: 'Physical location' },
                   { col: 'supernet', req: false, desc: 'Parent supernet (e.g. 10.0.0.0/8)' },
                 ].map(f => (
-                  <div key={f.col} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 6 }}>
+                  <div key={f.col} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 10px', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)' }}>
                     <code style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: f.req ? 'var(--primary)' : '#2563eb', whiteSpace: 'nowrap', minWidth: 100 }}>{f.col}</code>
                     <div>
-                      <span style={{ fontSize: 'var(--text-xs)', background: f.req ? 'var(--tint-danger)' : 'var(--tint-info)', color: f.req ? 'var(--tint-danger-fg)' : 'var(--tint-info-fg)', padding: '1px 6px', borderRadius: 10, fontWeight: 600, marginRight: 6 }}>
+                      <span style={{ fontSize: 'var(--text-xs)', background: f.req ? 'var(--tint-danger)' : 'var(--tint-info)', color: f.req ? 'var(--tint-danger-fg)' : 'var(--tint-info-fg)', padding: '1px 6px', borderRadius: 'var(--radius-pill)', fontWeight: 600, marginRight: 6 }}>
                         {f.req ? 'REQUIRED' : 'optional'}
                       </span>
                       <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{f.desc}</span>
@@ -183,7 +183,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
               onDrop={handleDrop}
               onClick={() => fileRef.current?.click()}
               style={{
-                border: '2px dashed var(--border)', borderRadius: 12,
+                border: '2px dashed var(--border)', borderRadius: 'var(--radius)',
                 padding: '40px 24px', textAlign: 'center', cursor: 'pointer',
                 transition: 'border-color 0.15s, background 0.15s',
               }}
@@ -214,7 +214,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             {/* Validation summary */}
             <div style={{
               background: 'var(--tint-success)', border: '1px solid var(--tint-success)',
-              borderRadius: 10, padding: '12px 16px', marginBottom: 16,
+              borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 16,
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
               <span style={{ fontSize: 'var(--text-lg)' }}>✓</span>
@@ -225,7 +225,7 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             </div>
 
             {/* Preview table */}
-            <div style={{ overflow: 'auto', maxHeight: '45vh', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 20 }}>
+            <div style={{ overflow: 'auto', maxHeight: '45vh', border: '1px solid var(--border)', borderRadius: 'var(--radius)', marginBottom: 20 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--text-sm)' }}>
                 <thead>
                   <tr>
@@ -253,10 +253,10 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             </div>
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setStep('upload')} style={{ padding: '9px 18px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 'var(--text-base)' }}>
+              <button onClick={() => setStep('upload')} style={{ padding: '9px 18px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 'var(--text-base)' }}>
                 ← Back
               </button>
-              <button onClick={runImport} disabled={loading} style={{ padding: '9px 20px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600, opacity: loading ? 0.7 : 1 }}>
+              <button onClick={runImport} disabled={loading} style={{ padding: '9px 20px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600, opacity: loading ? 0.7 : 1 }}>
                 {loading ? 'Importing...' : `✓ Import ${rows.length} Subnets`}
               </button>
             </div>
@@ -269,24 +269,24 @@ export default function IPAMImport({ onDone }: { onDone: () => void }) {
             <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
             <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Import Complete</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 20 }}>
-              <div style={{ padding: '12px 24px', background: 'var(--tint-success)', border: '1px solid var(--tint-success)', borderRadius: 10 }}>
+              <div style={{ padding: '12px 24px', background: 'var(--tint-success)', border: '1px solid var(--tint-success)', borderRadius: 'var(--radius)' }}>
                 <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--tint-success-fg)' }}>{result.imported}</div>
                 <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-success-fg)', fontWeight: 600 }}>Subnets Imported</div>
               </div>
               {result.skipped > 0 && (
-                <div style={{ padding: '12px 24px', background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 10 }}>
+                <div style={{ padding: '12px 24px', background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 'var(--radius)' }}>
                   <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 800, color: 'var(--tint-warn-fg)' }}>{result.skipped}</div>
                   <div style={{ fontSize: 'var(--text-sm)', color: 'var(--tint-warn-fg)', fontWeight: 600 }}>Skipped</div>
                 </div>
               )}
             </div>
             {result.errors.length > 0 && (
-              <div style={{ background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 8, padding: 12, marginBottom: 16, textAlign: 'left' }}>
+              <div style={{ background: 'var(--tint-warn)', border: '1px solid var(--tint-warn)', borderRadius: 'var(--radius)', padding: 12, marginBottom: 16, textAlign: 'left' }}>
                 <div style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--tint-warn-fg)', marginBottom: 6 }}>Warnings:</div>
                 {result.errors.slice(0, 5).map((e, i) => <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--tint-warn-fg)' }}>{e}</div>)}
               </div>
             )}
-            <button onClick={onDone} style={{ padding: '10px 28px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600 }}>
+            <button onClick={onDone} style={{ padding: '10px 28px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 'var(--text-base)', fontWeight: 600 }}>
               Done
             </button>
           </div>

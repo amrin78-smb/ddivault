@@ -124,8 +124,8 @@ export default function SecurityOverview({ onViewAll, onTypeClick }: { onViewAll
                   >
                     <span className={`badge ${severityBadge(t.severity)}`}>{t.severity || 'unknown'}</span>
                     <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{t.anomaly_type}</span>
-                    <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', minWidth: 24 }}>
-                      <div style={{ width: `${((Number(t.count) || 0) / maxCount) * 100}%`, height: '100%', background: severityColor(t.severity), borderRadius: 4 }} />
+                    <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 'var(--radius-pill)', overflow: 'hidden', minWidth: 24 }}>
+                      <div style={{ width: `${((Number(t.count) || 0) / maxCount) * 100}%`, height: '100%', background: severityColor(t.severity), borderRadius: 'var(--radius-pill)' }} />
                     </div>
                     <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>{Number(t.count) || 0}</span>
                     {onTypeClick && <span style={{ fontSize: 'var(--text-base)', color: 'var(--text-muted)', fontWeight: 700, lineHeight: 1 }}>›</span>}

@@ -80,3 +80,5 @@ settingsFormStyles.ts
   FIELD_GROW — flex:'1 1 220px', field grows to fill remaining row space
   FIELD_FIXED — flex:'0 0 auto', field sizes to content
   FIELD_FULL — flexBasis:'100%', forces a full-row line break in a flex-wrap row
+
+(lib) frontend/src/lib/corners.ts — rounded/square corner switch. getCorners/applyCorners/toggleCorners/CORNERS_INIT_SCRIPT. Key ddivault-corners, event ddivault:corners, attribute data-corners="square" on <html> (rounded = ABSENCE of the attribute, there is no [data-corners="rounded"] rule). Works by overriding --radius/--radius-sm/--radius-pill only, so ANY hardcoded numeric borderRadius opts that component out SILENTLY — always use the token.

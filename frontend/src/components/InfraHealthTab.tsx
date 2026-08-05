@@ -109,7 +109,7 @@ export default function InfraHealthTab() {
                   { l: 'Zones', v: s.zone_count },
                   { l: 'DNS Records', v: s.record_count },
                 ].map(m => (
-                  <div key={m.l} style={{ background: 'var(--bg-primary)', borderRadius: 8, padding: '8px 10px' }}>
+                  <div key={m.l} style={{ background: 'var(--bg-primary)', borderRadius: 'var(--radius)', padding: '8px 10px' }}>
                     <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--text-primary)' }}>{m.v}</div>
                     <div style={MUTED}>{m.l}</div>
                   </div>

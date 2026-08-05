@@ -226,7 +226,7 @@ function Sparkline({ data, color, width = 220, height = 44 }: {
         <div style={{
           position: 'absolute', left: `${(hi! / (data.length - 1)) * 100}%`, top: -2,
           transform: 'translate(-50%, -100%)', background: 'var(--navy)', color: '#fff',
-          padding: '2px 7px', borderRadius: 6, fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
+          padding: '2px 7px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
           pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           {fmtDate(hp.recorded_at)}{hp.recorded_at ? ' · ' : ''}{Number(hp.percent_used).toFixed(1)}%
@@ -276,7 +276,8 @@ function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; val
             <div key={d.label}
               onMouseEnter={() => idx >= 0 && setHi(idx)} onMouseLeave={() => setHi(null)}
               onClick={() => clickable && onSegmentClick?.(d.label)}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', cursor: clickable ? 'pointer' : 'default', borderRadius: 6, padding: '1px 4px', background: hi != null && segs[hi]?.label === d.label ? 'var(--bg-primary)' : 'transparent' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--text-sm)', cursor: clickable ? 'pointer' : 'default', borderRadius: 'var(--radius-sm)', padding: '1px 4px', background: hi != null && segs[hi]?.label === d.label ? 'var(--bg-primary)' : 'transparent' }}>
+              {/* intentional: 3px on a 10x10 legend swatch — --radius-sm (6px) would round it into a circle */}
               <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
               <span style={{ color: 'var(--text-secondary)', minWidth: 76 }}>{d.label}</span>
               <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{d.value}</span>
@@ -287,10 +288,11 @@ function Donut({ data, dim = 110, onSegmentClick }: { data: { label: string; val
       {tip && (
         <div style={{
           position: 'absolute', left: dim / 2, top: dim / 2, transform: 'translate(-50%, -50%)',
-          background: 'var(--navy)', color: '#fff', padding: '5px 9px', borderRadius: 8, fontSize: 'var(--text-xs)',
+          background: 'var(--navy)', color: '#fff', padding: '5px 9px', borderRadius: 'var(--radius)', fontSize: 'var(--text-xs)',
           whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', fontWeight: 700 }}>
+            {/* intentional: 50% status dot — squaring it looks broken */}
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: tip.color }} />{tip.label}
           </div>
           <div style={{ opacity: 0.85, marginTop: 1 }}>{tip.value} addresses · {((tip.value / total) * 100).toFixed(1)}%</div>
@@ -338,7 +340,7 @@ function LineChart({ points, color = 'var(--blue)', height = 120, labels }: { po
         <div style={{
           position: 'absolute', left: `${(hi / (points.length - 1)) * 100}%`, top: 2,
           transform: 'translate(-50%, 0)', background: 'var(--navy)', color: '#fff',
-          padding: '3px 8px', borderRadius: 6, fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
+          padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--text-xs)', fontWeight: 600, whiteSpace: 'nowrap',
           pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 5,
         }}>
           {labels?.[hi] ? `${fmtLabel(labels[hi])} · ` : ''}{points[hi].toLocaleString()} leases
@@ -361,7 +363,7 @@ function AttentionRow({ s, onClick }: { s: any; onClick: () => void }) {
         {tip && (
           <div style={{
             position: 'fixed', left: Math.min(tip.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 230), top: tip.y + 14,
-            width: 210, background: 'var(--navy)', color: '#fff', padding: '8px 10px', borderRadius: 8,
+            width: 210, background: 'var(--navy)', color: '#fff', padding: '8px 10px', borderRadius: 'var(--radius)',
             fontSize: 'var(--text-xs)', lineHeight: 1.5, pointerEvents: 'none', boxShadow: 'var(--shadow-md)', zIndex: 100,
           }}>
             <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{s.scope_id}</div>
@@ -422,6 +424,7 @@ function DnsHealthCard({ data, onClick }: { data?: DnsHealth; onClick: () => voi
         <div style={rowStyle}>
           <span style={{ color: 'var(--text-secondary)' }}>Replication Issues</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: data ? issueColor : 'var(--text-muted)' }}>
+            {/* intentional: 50% status dot — squaring it looks broken */}
             {data && issues > 0 && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red)', boxShadow: '0 0 0 3px rgba(200,16,46,0.18)' }} />}
             {data ? issues : '—'}
           </span>
@@ -447,7 +450,7 @@ function UpdatedNotice() {
   return (
     <div onClick={() => setShow(false)} style={{
       display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-      borderRadius: 8, fontSize: 'var(--text-md)', fontWeight: 600, cursor: 'pointer',
+      borderRadius: 'var(--radius)', fontSize: 'var(--text-md)', fontWeight: 600, cursor: 'pointer',
       color: '#166534', background: 'rgba(22,163,74,0.10)', border: '1px solid rgba(22,163,74,0.30)',
     }}>
       <span aria-hidden>✓</span>
@@ -665,7 +668,7 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
                 const color = pctColor(latest);
                 return (
                   <div key={sh.scope_id} onClick={() => onFocusScope(sh.scope_id)}
-                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
+                    style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 10, cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
                     onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 0 0 2px ${color}55, var(--shadow-md)`; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                     onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = 'none'; }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
@@ -1086,7 +1089,7 @@ const RELOAD_COUNTDOWN_SECONDS = 15;
 function UpdateConfirmModal({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
   return (
     <div className="modal-overlay" onMouseDown={onCancel}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-md)', padding: 24, width: 460, maxWidth: '92%' }} onMouseDown={e => e.stopPropagation()}>
         <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, marginBottom: 8 }}>Start Update?</div>
         <p style={{ fontSize: 'var(--text-base)', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
           Services will restart and you&apos;ll lose connection for 30&ndash;60 seconds. The page reloads automatically when the update completes.
@@ -1245,7 +1248,7 @@ function UpdatingOverlay() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(15,23,42,0.78)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-md)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-md)', padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
         {isSpinning && (
           <div style={{ fontSize: 44, lineHeight: 1, display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</div>
         )}
@@ -1388,7 +1391,7 @@ function SystemUpdates() {
               </div>
               <ul style={{
                 margin: 0, padding: 0, listStyle: 'none',
-                border: '1px solid var(--border)', borderRadius: 8,
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)',
                 background: 'var(--bg-primary)',
                 fontSize: 'var(--text-base)', lineHeight: 1.5,
               }}>
@@ -1459,6 +1462,7 @@ function SettingsPill({ label, active, onClick, badge }: { label: string; active
       {label}
       {badge && (
         <span title="Update available" style={{
+          // intentional: 50% notification dot — squaring it looks broken
           display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
           background: '#dc2626', marginLeft: 6, verticalAlign: 'middle',
         }} />
@@ -1576,7 +1580,7 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
   // to the top of this page's own scroll region (see "Independently-scrolling
   // content region" below) since the header/tab bar live outside that scroller.
   const settingsRow: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 16, alignItems: 'start' };
-  const infoCard: React.CSSProperties = { background: 'var(--tint-info)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 18px', position: 'sticky', top: 0 };
+  const infoCard: React.CSSProperties = { background: 'var(--tint-info)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px 18px', position: 'sticky', top: 0 };
   const infoCardTitle: React.CSSProperties = { margin: '0 0 12px', fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--tint-info-fg)' };
   const infoCardDt: React.CSSProperties = { fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--text-primary)', marginTop: 12 };
   const infoCardDd: React.CSSProperties = { margin: '3px 0 0', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.5 };
@@ -1843,7 +1847,7 @@ export default function DDIVaultApp() {
                   justifyContent: collapsed ? 'center' : 'flex-start',
                   padding: collapsed ? '11px 0' : '11px 20px',
                   margin: '1px 10px', background: active ? 'rgba(200,16,46,0.15)' : 'transparent',
-                  border: 'none', borderRadius: 10,
+                  border: 'none', borderRadius: 'var(--radius)',
                   color: active ? '#fff' : 'rgba(255,255,255,0.5)', cursor: 'pointer',
                   fontSize: 'var(--text-md)', fontWeight: active ? 600 : 400, textAlign: 'left',
                   width: 'calc(100% - 20px)', transition: 'all 0.15s', position: 'relative',
@@ -1851,9 +1855,10 @@ export default function DDIVaultApp() {
                 onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
                 onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; } }}
               >
+                {/* intentional: 3px decorative active-nav accent sliver, not a surface */}
                 {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 3, height: 20, background: 'var(--primary)', borderRadius: '0 3px 3px 0' }} />}
                 <span style={{
-                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  width: 28, height: 28, borderRadius: 'var(--radius)', flexShrink: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
                   background: active ? (ROUTE_CHIP[item.id]?.bg || 'rgba(255,255,255,0.07)') : 'rgba(255,255,255,0.07)',
                   color: active ? (ROUTE_CHIP[item.id]?.color || 'rgba(255,255,255,0.45)') : 'rgba(255,255,255,0.45)',
@@ -1872,7 +1877,7 @@ export default function DDIVaultApp() {
             style={{
               display: 'flex', alignItems: 'center', gap: 10, justifyContent: collapsed ? 'center' : 'flex-start',
               margin: '4px 10px', padding: collapsed ? '10px 0' : '10px 20px', width: 'calc(100% - 20px)',
-              background: 'transparent', border: 'none', borderRadius: 10, cursor: 'pointer',
+              background: 'transparent', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer',
               color: 'rgba(255,255,255,0.4)', fontSize: 'var(--text-sm)', transition: 'all 0.15s',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#fff'; }}
