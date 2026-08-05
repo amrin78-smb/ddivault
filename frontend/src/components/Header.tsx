@@ -240,12 +240,6 @@ export function Header(props: HeaderProps) {
         )}
       </div>
 
-      {/* Corner style toggle — deliberately here, next to the theme toggle, and
-          NOT in Settings: the Settings tab is gated behind `canManageSystem`, so
-          a per-browser display preference placed there would be unreachable for
-          every non-admin user. */}
-      <CornersToggle />
-
       {/* Dark mode toggle */}
       <button
         onClick={toggle}
@@ -397,6 +391,14 @@ export function Header(props: HeaderProps) {
                 </svg>
                 {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
               </button>
+
+              {/* Corner style — deliberately in this avatar dropdown (next to the
+                  other per-user display preferences) and NOT in Settings: the
+                  Settings tab is gated behind `canManageSystem`, so a per-browser
+                  display preference placed there would be unreachable for every
+                  non-admin user. It also declutters the navy top bar, where a
+                  segmented control read as chrome rather than a preference. */}
+              <CornersToggle />
 
               <div style={{ height: 1, background: 'var(--border-light)', margin: '4px 0' }} />
 

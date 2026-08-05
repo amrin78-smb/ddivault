@@ -120,4 +120,4 @@ Not counted as a violation.
   functions / hooks, not components — excluded from the count above.)
 - Violations: **0**.
 
-(c) CornersToggle — Rounded/Square segmented control, rendered in Header.tsx beside the dark-mode toggle. Deliberately NOT in Settings: that tab is gated behind canManageSystem, and this is a per-browser preference every role must be able to set. Reads its value in useEffect (never at render — the <html> attribute does not exist during SSR, so reading at render is a hydration mismatch).
+(c) CornersToggle — Rounded/Square segmented ROW rendered inside the avatar dropdown in Header.tsx (moved out of the top bar in 1.29.2 — it looked wrong there). Deliberately NOT in Settings: that tab is gated behind canManageSystem, and this is a per-browser preference every role must be able to set. Reads its value in useEffect (never at render — the <html> attribute does not exist during SSR, so reading at render is a hydration mismatch).

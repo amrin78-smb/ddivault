@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.29.2': [
+    'Moved the rounded/square corners control out of the top bar and into the avatar menu, where it sits alongside the other personal settings. It was cluttering the top bar and looked out of place there. It works exactly as before and is still available to everyone, regardless of role.',
+  ],
   '1.29.1': [
     'Follow-up to the corner switch: the two thin utilisation bars shared across the dashboard now square off with everything else. They were previously left rounded, so in square mode most progress bars flattened while those two stayed capsule-shaped — which looked like a fault rather than a choice. They are unchanged in the rounded style.',
   ],
