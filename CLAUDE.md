@@ -1036,8 +1036,11 @@ outside, so verify via the frontend port:
   dead at once, which is the tell.
 - Deploy by running this app's own `installer/Update-DDIVault.ps1` over WinRM
   `Invoke-Command`, never by hand-editing the server. Pass
-  `-InstallDir C:\Apps\DDIVault\app` — the install root is the `app` **subfolder**
-  (`C:\Apps\DDIVault` itself holds only `app`/`logs`/`nssm`) — and OMIT `-ServerIp`
+  `-InstallDir C:\Apps\ddivault` — **lowercase, and NO `app` subfolder**: the repo
+  root IS the install root here. The suite is NOT uniform on this — NetVault and
+  SpanVault live at `C:\Apps\<App>\app`, while ddivault and logvault do not.
+  Verified on the server 2026-08-06 after assuming otherwise cost a failed
+  LogVault deploy — and OMIT `-ServerIp`
   on a routine update; it's for first install only and the script preserves the
   existing `.env.local`. Run it backgrounded: an npm install + build outlasts a
   foreground tool timeout, and timing out mid-deploy tears down the WinRM session.
