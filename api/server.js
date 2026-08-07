@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.30.0': [
+    'The connection remote collection agents use to send data is now encrypted. This link carries decrypted server passwords, so it previously had to be trusted to the network it ran on; the server now presents a certificate created during installation and the agent verifies it against a known fingerprint, refusing a substituted server before any credentials are sent.',
+    'The setting that allowed this connection to run unencrypted is removed on any installation where the certificate was created successfully, so it cannot quietly be left switched off. If a certificate cannot be created the previous behaviour is kept rather than leaving the agent unable to connect.',
+  ],
   '1.29.3': [
     'Fixed copying an API key. The Copy button did nothing on this server: browsers only expose the clipboard to pages served over HTTPS, and neither the success nor the failure message was shown because the attempt failed before either could run. It now copies reliably and reports the result.',
   ],

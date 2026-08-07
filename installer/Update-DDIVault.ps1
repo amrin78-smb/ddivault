@@ -506,19 +506,22 @@ if (Test-Path $frontendEnvPath) {
 }
 $envBackupForRollback = @{ Root = $rootEnvContent; Frontend = $frontendEnvContent }
 
-# Phase 4b: ensure the agent-WS env vars exist in .env.local. Existing installs PRESERVE
+# Phase 4b: ensure the agent-WS port var exists in .env.local. Existing installs PRESERVE
 # .env.local (backed up above), so vars added in a release won't be there. Idempotent-append
-# them (api/server.js dotenv-loads .env.local, so append + the STEP 7 service restart is
-# enough). DDI_WS_ALLOW_PLAINTEXT=1 is REQUIRED for the WS ingest to bind non-loopback
-# without TLS (the trusted-LAN suite default) - without it the ingest refuses to start (the
-# API stays up, but agents can't connect). Runs AFTER the backup, so a rollback still
-# restores the pre-append env with the old code.
+# it (api/server.js dotenv-loads .env.local, so append + the STEP 7 service restart is
+# enough). Runs AFTER the backup, so a rollback still restores the pre-append env with the
+# old code.
+#
+# NOTE: DDI_WS_ALLOW_PLAINTEXT is deliberately NOT appended here any more. It used to be,
+# because the ingest refuses to bind a non-loopback interface without TLS - but the ingest
+# now GETS TLS: STEP 4b below mints a self-signed certificate, points DDI_WS_TLS_CERT/KEY
+# at it, and strips the cleartext opt-out. Re-adding it here would silently keep the guard
+# in api/ws-server.js defeated. STEP 4b re-adds it ONLY if the certificate cannot be made.
 if (Test-Path $rootEnvPath) {
     try {
         $envNow = Get-Content -LiteralPath $rootEnvPath -Raw
         $ddiAppend = @()
         if ($envNow -notmatch '(?m)^DDI_WS_PORT=')           { $ddiAppend += 'DDI_WS_PORT=3011' }
-        if ($envNow -notmatch '(?m)^DDI_WS_ALLOW_PLAINTEXT=') { $ddiAppend += 'DDI_WS_ALLOW_PLAINTEXT=1' }
         if ($ddiAppend.Count -gt 0) {
             $lead = if ($envNow.Length -eq 0 -or $envNow.EndsWith("`n")) { '' } else { "`n" }
             Add-Content -LiteralPath $rootEnvPath -Value ($lead + ($ddiAppend -join "`n")) -NoNewline -Encoding UTF8
@@ -687,6 +690,285 @@ if ($ServerIp -and (Test-Path $rootEnvPath)) {
     }
     if (Test-Path $frontendEnvPath) {
         Copy-Item -LiteralPath $rootEnvPath -Destination $frontendEnvPath -Force
+    }
+}
+
+# ================================================================
+# STEP 4b - Agent WebSocket TLS (wss://)
+# ================================================================
+# api/ws-server.js terminates wss:// on DDI_WS_PORT (3011) when DDI_WS_TLS_CERT +
+# DDI_WS_TLS_KEY point at a readable PEM pair. Without them it REFUSES to start on
+# a non-loopback bind unless DDI_WS_ALLOW_PLAINTEXT=1 - and that opt-out is exactly
+# what has to go once TLS exists, because the ddi_config frame carries DECRYPTED
+# WinRM passwords. The certificate is SELF-SIGNED and minted here: an operator must
+# never have to obtain or deploy one. The agent pins it by SHA-256 fingerprint, so
+# the pair is generated ONCE and NEVER regenerated - a new key silently breaks every
+# already-pinned agent in the fleet.
+#
+# Runs AFTER STEP 4's restore (which rewrites .env.local wholesale from the in-memory
+# backup) so the edits below cannot be silently reverted the way the Phase 4b append
+# once was. Entirely best-effort: any failure re-arms the plaintext opt-out and leaves
+# the install exactly as it was, rather than aborting the update.
+$WsTlsCertDir = 'C:\ProgramData\NocVault\certs'
+$DDIWsTls = $null
+
+# openssl.exe mints the pair because Node's https.createServer needs a PEM cert +
+# PEM key, and New-SelfSignedCertificate on Windows PowerShell 5.1 can only export
+# PFX (.NET Framework has no PKCS#8 private-key export). Git for Windows is a hard
+# dependency of the suite and bundles OpenSSL 3.x, so it is present.
+function Get-WsTlsOpenSsl {
+    $paths = @(
+        "$env:ProgramFiles\Git\usr\bin\openssl.exe",
+        "$env:ProgramFiles\Git\mingw64\bin\openssl.exe",
+        "${env:ProgramFiles(x86)}\Git\usr\bin\openssl.exe",
+        "C:\Program Files\PostgreSQL\16\bin\openssl.exe"
+    )
+    foreach ($p in $paths) { if ($p -and (Test-Path -LiteralPath $p)) { return $p } }
+    # PATH lookup last, via Get-Command - '& openssl' would THROW on a machine
+    # that genuinely lacks it (PowerShell command resolution fails before any
+    # process exists to redirect stderr from).
+    try { $c = Get-Command openssl.exe -ErrorAction SilentlyContinue; if ($c) { return $c.Source } } catch {}
+    return $null
+}
+
+# SHA-256 over the certificate DER. Byte-identical to Node's
+# tls.getPeerCertificate().fingerprint256, which is what the agent pins on.
+function Get-WsTlsFingerprint([string]$certPath) {
+    try {
+        $pem = Get-Content -LiteralPath $certPath -Raw
+        $b64 = ($pem -replace '-----BEGIN CERTIFICATE-----','' -replace '-----END CERTIFICATE-----','') -replace '\s',''
+        $der = [Convert]::FromBase64String($b64)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        return (($sha.ComputeHash($der) | ForEach-Object { $_.ToString('X2') }) -join ':')
+    } catch { return $null }
+}
+
+# Generate (once) the wss:// cert+key for one app. IDEMPOTENT: if both files
+# already exist it re-reads them and returns the SAME fingerprint. NEVER throws.
+function New-WsTlsCert([string]$app, [string]$serverIp, [int]$years = 5) {
+    $dir = 'C:\ProgramData\NocVault\certs'
+    $res = [pscustomobject]@{
+        App         = $app
+        Cert        = (Join-Path $dir "$app-ws.crt")
+        Key         = (Join-Path $dir "$app-ws.key")
+        Fingerprint = $null
+        NotAfter    = $null
+        Created     = $false
+        Ok          = $false
+        Warning     = $null
+        Error       = $null
+    }
+    try {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        if (-not ((Test-Path -LiteralPath $res.Cert) -and (Test-Path -LiteralPath $res.Key))) {
+            $ssl = Get-WsTlsOpenSsl
+            if (-not $ssl) {
+                $res.Error = 'openssl.exe not found (looked in Git for Windows, PostgreSQL and PATH)'
+                return $res
+            }
+            # A config FILE is used rather than -subj/-addext: no leading-slash
+            # argument that an MSYS-linked openssl could path-mangle, and no
+            # dependency on OpenSSL >= 1.1.1 for -addext. The SAN MUST carry the
+            # server IP - agents dial by IP, and an IP absent from the SAN fails
+            # certificate verification outright no matter what the CN says.
+            $cfg = Join-Path $env:TEMP ("nocvault-{0}-ws-{1}.cnf" -f $app, ([guid]::NewGuid().ToString('N')))
+            $cfgText = @"
+[ req ]
+default_bits       = 2048
+default_md         = sha256
+prompt             = no
+distinguished_name = nv_dn
+x509_extensions    = nv_ext
+
+[ nv_dn ]
+CN = $serverIp
+O  = NocVault
+
+[ nv_ext ]
+basicConstraints = critical,CA:FALSE
+keyUsage         = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName   = @nv_alt
+
+[ nv_alt ]
+IP.1  = $serverIp
+IP.2  = 127.0.0.1
+DNS.1 = $env:COMPUTERNAME
+DNS.2 = localhost
+"@
+            [System.IO.File]::WriteAllText($cfg, $cfgText, (New-Object System.Text.UTF8Encoding($false)))
+            $days = ($years * 365) + 2
+            # openssl streams key-generation progress dots to STDERR. Under a host
+            # that merges stderr into PowerShell's error stream (WinRM does) that
+            # reads as a failure even on exit 0, so relax ErrorActionPreference for
+            # the call and judge success on the files it produced instead.
+            $prevEA = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & $ssl req -x509 -new -newkey rsa:2048 -nodes -sha256 -days $days -config $cfg -keyout $res.Key -out $res.Cert
+            } finally {
+                $ErrorActionPreference = $prevEA
+                Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
+            }
+            if (-not ((Test-Path -LiteralPath $res.Cert) -and (Test-Path -LiteralPath $res.Key))) {
+                $res.Error = "openssl did not produce $($res.Cert)"
+                return $res
+            }
+            $res.Created = $true
+            # The key is an unencrypted private key on disk - restrict it to
+            # SYSTEM (the NSSM service account) and Administrators.
+            try { & icacls.exe $res.Key /inheritance:r /grant '*S-1-5-18:(R)' /grant '*S-1-5-32-544:(F)' | Out-Null } catch {}
+        }
+        $res.Fingerprint = Get-WsTlsFingerprint $res.Cert
+        try {
+            $pem = Get-Content -LiteralPath $res.Cert -Raw
+            $b64 = ($pem -replace '-----BEGIN CERTIFICATE-----','' -replace '-----END CERTIFICATE-----','') -replace '\s',''
+            $x   = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(,[Convert]::FromBase64String($b64))
+            $res.NotAfter = $x.NotAfter
+            $san = (($x.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' } | ForEach-Object { $_.Format($false) }) -join ' ')
+            if ($serverIp -and $san -and ($san -notmatch [regex]::Escape($serverIp))) {
+                $res.Warning = "existing certificate SAN does not cover $serverIp - agents dialling that IP will reject it"
+            }
+        } catch {}
+        $res.Ok = [bool]$res.Fingerprint
+    } catch {
+        $res.Error = $_.Exception.Message
+    }
+    return $res
+}
+
+# Idempotently set/remove KEY=VALUE lines in a .env file. Returns $true if the
+# file changed. An absent file is left alone (nothing to wire up).
+function Set-EnvFileVars([string]$path, [hashtable]$set, [string[]]$remove) {
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    $text = Get-Content -LiteralPath $path -Raw
+    if ($null -eq $text) { $text = '' }
+    $orig = $text
+    foreach ($k in @($remove)) {
+        if (-not $k) { continue }
+        $text = [regex]::Replace($text, "(?m)^[ \t]*$([regex]::Escape($k))[ \t]*=.*\r?\n?", '')
+    }
+    foreach ($k in @($set.Keys)) {
+        # '$' is the only character special to a .NET replacement string; paths
+        # never contain one, but escape it so a value can never inject a capture.
+        $line = ("$k=" + $set[$k]).Replace('$', '$$')
+        if ($text -match "(?m)^[ \t]*$([regex]::Escape($k))[ \t]*=") {
+            $text = [regex]::Replace($text, "(?m)^[ \t]*$([regex]::Escape($k))[ \t]*=.*$", $line)
+        } else {
+            if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += "`n" }
+            $text += ("$k=" + $set[$k] + "`n")
+        }
+    }
+    if ($text -ne $orig) {
+        [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+        return $true
+    }
+    return $false
+}
+
+# Locate the nssm.exe that manages a service, from its own registry ImagePath.
+# More reliable than guessing install paths, since the suite installer and a
+# standalone install put NSSM in different places.
+function Get-NssmForService([string]$service) {
+    try {
+        $img = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$service" -Name ImagePath -ErrorAction Stop).ImagePath
+        if ($img) {
+            $exe = ($img -replace '^"([^"]+)".*$', '$1').Trim()
+            if ($exe -match 'nssm' -and (Test-Path -LiteralPath $exe)) { return $exe }
+        }
+    } catch {}
+    foreach ($p in @("C:\Apps\NetVault\nssm\nssm-2.24\win64\nssm.exe",
+                     "$InstallDir\nssm\nssm-2.24\win64\nssm.exe")) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
+# Merge KEY=VALUE pairs into a service's NSSM AppEnvironmentExtra, PRESERVING
+# everything already there (that block holds DB passwords this script never sees).
+# Bails out without writing if the read-back does not look like a real env block,
+# so a bad/unreadable read can never blank a working service's environment.
+function Set-NssmEnvVars([string]$nssmExe, [string]$service, [hashtable]$set, [string[]]$remove) {
+    if (-not $nssmExe -or -not (Test-Path -LiteralPath $nssmExe)) { return $false }
+    $raw = ''
+    $prevEA = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $raw = (& $nssmExe get $service AppEnvironmentExtra | Out-String) }
+    catch { $raw = '' }
+    finally { $ErrorActionPreference = $prevEA }
+    # nssm writes its output as UTF-16; strip the NULs that survive the capture.
+    $raw = $raw -replace "`0", ''
+    $lines = @($raw -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' })
+    if ($lines.Count -lt 3) { return $false }
+    $keep = @()
+    foreach ($l in $lines) {
+        $name = ($l -split '=', 2)[0]
+        if (@($remove) -contains $name) { continue }
+        if ($set.ContainsKey($name))    { continue }
+        $keep += $l
+    }
+    foreach ($k in @($set.Keys)) { $keep += ("$k=" + $set[$k]) }
+    $prevEA = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $nssmExe set $service AppEnvironmentExtra ($keep -join "`n") | Out-Null }
+    catch { return $false }
+    finally { $ErrorActionPreference = $prevEA }
+    return $true
+}
+
+Write-Step "Configuring agent WebSocket TLS (wss://)..."
+# The IP the certificate must be valid for: whatever is actually configured in
+# .env.local (routine updates omit -ServerIp), falling back to the parameter.
+$wsIp = $null
+if (Test-Path $rootEnvPath) {
+    $m = Select-String -Path $rootEnvPath -Pattern '^\s*SERVER_IP\s*=\s*(.+?)\s*$' | Select-Object -First 1
+    if ($m) { $wsIp = $m.Matches[0].Groups[1].Value }
+}
+if (-not $wsIp) { $wsIp = $ServerIp }
+if (-not $wsIp -or $wsIp -eq 'your_server_ip') {
+    Write-Warn "No SERVER_IP resolved - skipping agent WS TLS setup (port 3011 keeps its plaintext opt-in)"
+    if (Test-Path $rootEnvPath) {
+        $null = Set-EnvFileVars $rootEnvPath @{ DDI_WS_ALLOW_PLAINTEXT = '1' } @()
+    }
+} else {
+    $DDIWsTls = New-WsTlsCert 'ddivault' $wsIp 5
+    $ddiNssm  = Get-NssmForService 'DDIVault-API'
+    if ($DDIWsTls.Ok) {
+        if ($DDIWsTls.Created) { Write-OK "Created self-signed agent WS certificate (expires $($DDIWsTls.NotAfter.ToString('yyyy-MM-dd')))" }
+        else                   { Write-OK "Reused existing agent WS certificate - NOT regenerated, agent pins stay valid (expires $($DDIWsTls.NotAfter.ToString('yyyy-MM-dd')))" }
+        if ($DDIWsTls.Warning) { Write-Warn "Agent WS certificate: $($DDIWsTls.Warning)" }
+
+        $wsVars = @{ DDI_WS_TLS_CERT = $DDIWsTls.Cert; DDI_WS_TLS_KEY = $DDIWsTls.Key }
+        # 1. .env.local (api/server.js dotenv-loads it).
+        if (Set-EnvFileVars $rootEnvPath $wsVars @('DDI_WS_ALLOW_PLAINTEXT')) {
+            Write-OK "Set DDI_WS_TLS_CERT / DDI_WS_TLS_KEY in .env.local"
+        } else {
+            Write-OK "DDI_WS_TLS_CERT / DDI_WS_TLS_KEY already set in .env.local - unchanged"
+        }
+        if (Test-Path $frontendEnvPath) { Copy-Item -LiteralPath $rootEnvPath -Destination $frontendEnvPath -Force }
+        # 2. The NSSM service environment. This MUST be done too: dotenv does not
+        #    override an already-set process env var, so a stale
+        #    DDI_WS_ALLOW_PLAINTEXT=1 left in AppEnvironmentExtra would keep the
+        #    cleartext guard defeated no matter what .env.local says.
+        if ($ddiNssm) {
+            if (Set-NssmEnvVars $ddiNssm 'DDIVault-API' $wsVars @('DDI_WS_ALLOW_PLAINTEXT')) {
+                Write-OK "Set DDI_WS_TLS_CERT / DDI_WS_TLS_KEY in the DDIVault-API service environment"
+            } else {
+                Write-Warn "Could not update the DDIVault-API NSSM environment - if DDI_WS_ALLOW_PLAINTEXT=1 is still set there it overrides .env.local. Check: nssm get DDIVault-API AppEnvironmentExtra"
+            }
+        } else {
+            Write-Warn "nssm.exe not found - could not clear DDI_WS_ALLOW_PLAINTEXT from the DDIVault-API service environment"
+        }
+        Write-OK "DDI_WS_ALLOW_PLAINTEXT removed - the DDIVault agent ingest now requires wss://"
+        if ($DDIWsTls.NotAfter -and $DDIWsTls.NotAfter -lt (Get-Date).AddDays(90)) {
+            Write-Warn "Agent WS certificate expires $($DDIWsTls.NotAfter.ToString('yyyy-MM-dd')) - the whole agent fleet drops when it does. Plan a re-issue + re-pin."
+        }
+    } else {
+        # No certificate => the ingest would refuse to bind 3011 at all. Re-arm the
+        # conscious cleartext opt-out so this update is a no-op, not an outage.
+        Write-Warn "Agent WS certificate not configured ($($DDIWsTls.Error)) - keeping DDI_WS_ALLOW_PLAINTEXT=1 so port 3011 still binds"
+        $null = Set-EnvFileVars $rootEnvPath @{ DDI_WS_ALLOW_PLAINTEXT = '1' } @()
+        if (Test-Path $frontendEnvPath) { Copy-Item -LiteralPath $rootEnvPath -Destination $frontendEnvPath -Force }
     }
 }
 
@@ -996,6 +1278,23 @@ Write-StatusJson -Success $true -Stage $null -ErrorCode 0 -RolledBack $false -He
 Write-Host ""
 Write-Host "  DDIVault updated successfully to $commitHash" -ForegroundColor Green
 Write-Host "  $commitMsg" -ForegroundColor Green
+# The agent WS certificate is self-signed, so there is no chain for an agent to
+# validate - it pins the SHA-256 fingerprint instead. Print it so the operator can
+# carry it into the agent install command.
+$wsDisplayIp = $wsIp
+if (-not $wsDisplayIp) { $wsDisplayIp = 'this-server' }
+if ($DDIWsTls -and $DDIWsTls.Ok) {
+    Write-Host ""
+    Write-Host "  DDIVault agent WS TLS fingerprint: $($DDIWsTls.Fingerprint)" -ForegroundColor Cyan
+    Write-Host "    (pass to the agent installer as -WsFingerprintDdi)" -ForegroundColor Gray
+    Write-Host "    ingest: wss://$($wsDisplayIp):3011" -ForegroundColor Gray
+    Write-Host "    cert:   $($DDIWsTls.Cert)  expires: $($DDIWsTls.NotAfter.ToString('yyyy-MM-dd'))" -ForegroundColor Gray
+    Write-Host "    Re-running this updater REUSES the same certificate; deleting it to" -ForegroundColor Gray
+    Write-Host "    regenerate breaks every already-pinned agent." -ForegroundColor Gray
+} else {
+    Write-Host ""
+    Write-Host "  Agent WS ingest: ws://$($wsDisplayIp):3011 (NO TLS - WinRM credentials cross it in cleartext)" -ForegroundColor Yellow
+}
 Write-Host ""
 
 } finally {
