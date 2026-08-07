@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/Toast';
 import { useEscape } from '@/components/ui';
 import { INPUT_SM, INPUT_MD } from '@/lib/settingsFormStyles';
+import { copyText } from '@/lib/clipboard';
 
 const MUTED: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)' };
 
@@ -95,7 +96,14 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
 function RevealModal({ fullKey, onClose }: { fullKey: string; onClose: () => void }) {
   const { toast } = useToast();
   useEscape(onClose);
-  const copy = () => { navigator.clipboard.writeText(fullKey).then(() => toast('Copied to clipboard', 'success')).catch(() => toast('Copy failed', 'error')); };
+  // copyText, not navigator.clipboard directly. The clipboard API is undefined
+  // over plain HTTP, and the `.catch()` here never helped: the TypeError is
+  // thrown synchronously while reading `.writeText`, before any promise exists —
+  // so copying an API key threw instead of showing either toast.
+  const copy = () => {
+    if (copyText(fullKey)) toast('Copied to clipboard', 'success');
+    else toast('Copy failed', 'error');
+  };
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-md)', padding: 24, width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>

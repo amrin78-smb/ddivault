@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.29.3': [
+    'Fixed copying an API key. The Copy button did nothing on this server: browsers only expose the clipboard to pages served over HTTPS, and neither the success nor the failure message was shown because the attempt failed before either could run. It now copies reliably and reports the result.',
+  ],
   '1.29.2': [
     'Moved the rounded/square corners control out of the top bar and into the avatar menu, where it sits alongside the other personal settings. It was cluttering the top bar and looked out of place there. It works exactly as before and is still available to everyone, regardless of role.',
   ],
