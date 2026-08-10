@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.30.1': [
+    'DDIVault no longer accepts an email and password directly. Signing in has always gone through the NocVault hub and there is no login page here, but the underlying check still existed and could be reached by sending credentials straight to the address the sign-in form would normally use. Confirmed against this server before the change: it granted a full session without the hub being involved at all.',
+    'That route also ignored per-user application access. A user explicitly not granted DDIVault could reach it this way, while the hub correctly turned them away.',
+    'Nothing changes for anyone signing in normally, and this matters ahead of two-factor authentication: a requirement added at the hub would have been enforced there while this second route quietly ignored it. The hub is now the only way in, which is already how SpanVault works.',
+  ],
   '1.30.0': [
     'The connection remote collection agents use to send data is now encrypted. This link carries decrypted server passwords, so it previously had to be trusted to the network it ran on; the server now presents a certificate created during installation and the agent verifies it against a known fingerprint, refusing a substituted server before any credentials are sent.',
     'The setting that allowed this connection to run unencrypted is removed on any installation where the certificate was created successfully, so it cannot quietly be left switched off. If a certificate cannot be created the previous behaviour is kept rather than leaving the agent unable to connect.',

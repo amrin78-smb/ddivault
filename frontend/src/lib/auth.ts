@@ -1,7 +1,6 @@
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { Pool } from 'pg';
-import bcrypt from 'bcryptjs';
 
 const netvaultDb = new Pool({
   host:     process.env.NETVAULT_DB_HOST || 'localhost',
@@ -76,27 +75,29 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
-        // ── Direct credentials path (fallback) ────────────────
-        if (!credentials.email || !credentials.password) return null;
-        try {
-          const result = await netvaultDb.query(
-            'SELECT id, name, email, password_hash, role FROM users WHERE email = $1 LIMIT 1',
-            [credentials.email]
-          );
-          const user = result.rows[0];
-          if (!user) return null;
-          const valid = await bcrypt.compare(credentials.password, user.password_hash);
-          if (!valid) return null;
-          return {
-            id:    String(user.id),
-            name:  user.name,
-            email: user.email,
-            role:  user.role,
-          };
-        } catch (err) {
-          console.error('[Auth] DB error:', err);
-          return null;
-        }
+        // Direct email/password is NOT supported — DDIVault has no login UI, and
+        // the hub is the suite's single authentication point.
+        //
+        // This used to bcrypt-compare against netvault.users.password_hash right
+        // here, making DDIVault a second front door into the hub's own user
+        // table. Nothing in this app ever used it: there is no login page, and
+        // the only signIn('credentials') call site is /sso, which passes a token.
+        // It was reachable solely by POSTing directly to
+        // /api/auth/callback/credentials.
+        //
+        // It also returned NO `apps` claim, and middleware treats an absent claim
+        // as default-all — so this path additionally bypassed per-user app
+        // access. A user explicitly denied DDIVault could reach it by logging in
+        // here directly, while the hub correctly refused them.
+        //
+        // Keep it closed. Any authentication policy the hub enforces (MFA being
+        // the immediate reason, but equally password rotation, lockout, or an IdP
+        // migration) lives in NetVault's authorize(); a second password path here
+        // silently opts out of all of it while the hub still reports the policy
+        // as active.
+        //
+        // Matches SpanVault, which has always returned null here.
+        return null;
       },
     }),
   ],
