@@ -37,12 +37,63 @@ const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
  * different message (new score, serial, or state) doesn't create a duplicate;
  * it defaults to the exact message.
  */
+// Minutes a condition must stay quiet after it resolves before the SAME condition
+// may raise a new alert.
+//
+// Without this, dedup only covers an alert that is still open — so a metric
+// oscillating around its threshold fires, auto-resolves, fires again, and every
+// cycle writes a NEW row. Live, that produced 387 "health score dropped" alerts
+// for two servers in 7 days, and 213 DNS-lag ones: 99% of all alert volume from
+// two flapping conditions, drowning the handful that mattered (a scope at 92%
+// full showed up twice in the same period).
+//
+// 60 minutes means a genuinely flapping condition reports at most once an hour
+// instead of once per poll, while a condition that clears and returns hours
+// later is still treated as a new event — which it is.
+const REFIRE_COOLDOWN_MIN = 60;
+
+// Health alerts fire below 80 but only clear at 85 — a deliberate hysteresis
+// gap. With a single threshold, a server hovering at 79/81 raises and clears an
+// alert on every poll; the condition never actually changed, only which side of
+// the line the sample landed on. The gap means it must genuinely recover, not
+// merely touch the threshold. Fire and clear must never share a boundary.
+const HEALTH_RECOVER_AT = 85;
+
+// Consecutive polls (~5 min apart) the score must stay below the threshold
+// before an alert is raised. This is the change that actually matters.
+//
+// Replaying 7 days of real server_health_history through the alternatives: the
+// old single-sample rule fired 462 times; hysteresis alone brought that to 233;
+// requiring 3 consecutive samples brings it to 5. The reason is visible in the
+// distribution — across 9,935 samples NOTHING ever landed in the 80-84 band. The
+// score sits at 90+ and drops to ~75 for a single poll (a transient slow DNS
+// query), then recovers. Those are blips, not incidents, and alerting on one
+// sample of a metric that fluctuates is what generated 68% of this app's entire
+// alert volume.
+//
+// A genuinely unhealthy server stays unhealthy for more than 15 minutes and is
+// still caught. Same lesson SpanVault's wireless RF alerting learned: windowed
+// and sustained checks, never single-poll snapshots.
+const HEALTH_SUSTAIN_SAMPLES = 3;
+
 async function fireAlertDeduped(db, { serverId, scopeId, message, severity, dedupeKey }) {
+  const key = dedupeKey || message;
   const recent = await db.query(
     `SELECT id FROM alert_events
       WHERE message LIKE $1 AND acknowledged=FALSE AND resolved_at IS NULL LIMIT 1`,
-    [dedupeKey || message]).catch(() => ({ rows: [] }));
+    [key]).catch(() => ({ rows: [] }));
   if (recent.rows.length) return;
+
+  // Same condition raised and cleared very recently => it is flapping, not
+  // recurring. Suppress rather than log the same story again.
+  const flapping = await db.query(
+    `SELECT id FROM alert_events
+      WHERE message LIKE $1
+        AND resolved_at IS NOT NULL
+        AND resolved_at > NOW() - make_interval(mins => $2)
+      LIMIT 1`,
+    [key, REFIRE_COOLDOWN_MIN]).catch(() => ({ rows: [] }));
+  if (flapping.rows.length) return;
   await db.query(
     `INSERT INTO alert_events (server_id, scope_id, message, severity) VALUES ($1,$2,$3,$4)`,
     [serverId || null, scopeId || null, message, severity || 'warning']).catch(() => {});
@@ -253,16 +304,39 @@ async function pollHealth(db, ps, server, auth) {
     if (worst >= 90) factors.push(`Scope utilization: ${Math.round(worst)}% (high)`);
 
     const breakdown = factors.length ? ` — ${factors.join(', ')}` : '';
-    await fireAlertDeduped(db, {
-      serverId: server.id,
-      message: `Server "${server.hostname}" health score dropped to ${score}/100${breakdown}`,
-      dedupeKey: `Server "${server.hostname}" health score dropped to%`,
-      severity: score < 70 ? 'critical' : 'warning',
-    });
-  } else {
-    // Server healthy again (score >= 80) — auto-resolve any open health alert for it.
+
+    // Only alert once the score has stayed down across several polls. The row
+    // for THIS poll was inserted just above, so it is included in the window.
+    // A read failure must not silently suppress a real alert — fall back to
+    // firing, which is the pre-existing behaviour.
+    let sustained = true;
+    try {
+      const recent = await db.query(
+        `SELECT health_score FROM server_health_history
+          WHERE server_id = $1 ORDER BY recorded_at DESC LIMIT $2`,
+        [server.id, HEALTH_SUSTAIN_SAMPLES]);
+      // Fewer rows than the window = not enough history yet to call it sustained
+      // (a freshly added server should not alert on its very first poll).
+      sustained = recent.rows.length >= HEALTH_SUSTAIN_SAMPLES
+        && recent.rows.every(r => Number(r.health_score) < 80);
+    } catch { /* keep sustained = true */ }
+
+    if (sustained) {
+      await fireAlertDeduped(db, {
+        serverId: server.id,
+        message: `Server "${server.hostname}" health score dropped to ${score}/100${breakdown}`,
+        dedupeKey: `Server "${server.hostname}" health score dropped to%`,
+        severity: score < 70 ? 'critical' : 'warning',
+      });
+    }
+  } else if (score >= HEALTH_RECOVER_AT) {
+    // Recovered with margin — auto-resolve any open health alert for it.
     await resolveAlerts(db, { pattern: `Server "${server.hostname}" health score dropped to%`, reason: 'server-recovered' });
   }
+  // Scores between the alert threshold (80) and HEALTH_RECOVER_AT are a
+  // deliberate dead band: neither fire nor resolve, just leave the current state
+  // alone. Resolving the instant a score touched 80 is what made a server
+  // sitting at 79/81/79 raise and clear an alert on every single poll.
   log(`[Health] ${ip} — score ${score}/100 (winrm=${winrmOk}, query=${queryMs ?? '—'}ms)`);
 }
 

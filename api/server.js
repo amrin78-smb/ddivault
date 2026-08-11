@@ -30,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.30.3': [
+    'Server health alerts no longer fire on a single reading. Replaying a week of real measurements: the old rule raised 462 alerts, the new one raises 5. Across 9,935 readings the score never once sat between 80 and 85 - it holds above 90 and drops to about 75 for a single poll when a DNS query happens to be slow, then recovers. Those were momentary dips being reported as incidents, and they accounted for two thirds of every alert this system produced.',
+    'A server that is genuinely unhealthy stays unhealthy for more than fifteen minutes and is still reported, and a serious drop below 70 is still treated as critical.',
+    'A condition that clears and returns within the hour is now treated as one flapping condition rather than a fresh alert each time. This also damps the DNS replication warnings, which were the other large source of noise - they are left visible, because unlike the health dips they are reporting something real.',
+    'Health alerts also now clear only once the score recovers to 85, rather than the instant it touches 80. Raising and clearing an alert at the same number means a reading either side of the line looks like a change when nothing has changed.',
+  ],
   '1.30.2': [
     'The Events & Alerts page was reporting 1 open alert when 70 were open. It loaded the 200 most recent alerts and counted the tabs from those, so "Open" meant "open among the newest 200" - and 70 of the open alerts were older than that, so they were never fetched and never shown. The notification bell was right all along.',
     'The tab counts now come from the server and count every alert, and selecting a tab asks the server for that status instead of filtering what happened to be loaded. Acknowledged and Resolved were understated the same way.',
