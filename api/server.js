@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.30.2': [
+    'The Events & Alerts page was reporting 1 open alert when 70 were open. It loaded the 200 most recent alerts and counted the tabs from those, so "Open" meant "open among the newest 200" - and 70 of the open alerts were older than that, so they were never fetched and never shown. The notification bell was right all along.',
+    'The tab counts now come from the server and count every alert, and selecting a tab asks the server for that status instead of filtering what happened to be loaded. Acknowledged and Resolved were understated the same way.',
+    'The three counts now also add up to the total. Alerts that repeat are grouped for display, and that grouping did not account for whether an alert had been resolved, so a group containing both could be counted under two tabs at once.',
+  ],
   '1.30.1': [
     'DDIVault no longer accepts an email and password directly. Signing in has always gone through the NocVault hub and there is no login page here, but the underlying check still existed and could be reached by sending credentials straight to the address the sign-in form would normally use. Confirmed against this server before the change: it granted a full session without the hub being involved at all.',
     'That route also ignored per-user application access. A user explicitly not granted DDIVault could reach it this way, while the hub correctly turned them away.',
@@ -1923,11 +1928,20 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
 
     // Build the WHERE clause from the status filter (and legacy unacked param).
     // open     → acknowledged=FALSE AND resolved_at IS NULL
+    // acked    → acknowledged=TRUE  AND resolved_at IS NULL
     // resolved → resolved_at IS NOT NULL
     // all      → no filter (default; preserves prior behaviour)
+    //
+    // The three are deliberately MUTUALLY EXCLUSIVE and together cover every
+    // row, so the tab counts add up to the total. 'acked' excludes resolved
+    // rows: an alert that was acknowledged and later resolved belongs under
+    // Resolved, and counting it in both would make the tabs sum to more than
+    // there are alerts.
     const conds = [];
     if (status === 'open') {
       conds.push('ae.acknowledged = FALSE', 'ae.resolved_at IS NULL');
+    } else if (status === 'acked') {
+      conds.push('ae.acknowledged = TRUE', 'ae.resolved_at IS NULL');
     } else if (status === 'resolved') {
       conds.push('ae.resolved_at IS NOT NULL');
     } else if (unackedOnly) {
@@ -1940,10 +1954,17 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
     // collapses to a single entry annotated with its occurrence count. The
     // "alert shape" is the message with all digits normalised away.
     const count = await db.query(
+      // `resolved_at IS NOT NULL` is part of the grouping key alongside
+      // `acknowledged`. Without it a single group could hold both resolved and
+      // unresolved rows, so it would be counted under BOTH the Resolved and the
+      // Acknowledged tab — the per-status counts then sum to more than the total
+      // (16 groups over, live). Grouping on the same dimension the UI slices by
+      // keeps the three counts mutually exclusive and adding up.
       `SELECT COUNT(*) AS total FROM (
          SELECT 1 FROM alert_events ae ${where}
          GROUP BY regexp_replace(ae.message, '[0-9]+', '#', 'g'),
-                  ae.server_id, ae.acknowledged, date_trunc('hour', ae.fired_at)
+                  ae.server_id, ae.acknowledged, (ae.resolved_at IS NOT NULL),
+                  date_trunc('hour', ae.fired_at)
        ) g`
     );
 
@@ -1951,6 +1972,7 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
       `WITH grouped AS (
          SELECT regexp_replace(ae.message, '[0-9]+', '#', 'g') AS norm,
                 ae.server_id, ae.acknowledged,
+                (ae.resolved_at IS NOT NULL) AS is_resolved,
                 date_trunc('hour', ae.fired_at) AS hr,
                 COUNT(*)::int        AS occurrence_count,
                 MIN(ae.fired_at)     AS first_fired_at,
@@ -1958,7 +1980,9 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
                 MAX(ae.id)           AS rep_id
            FROM alert_events ae
            ${where}
-           GROUP BY 1, 2, 3, 4
+           -- Must group IDENTICALLY to the COUNT above, or the page of rows and
+           -- the total it is paginating over describe different things.
+           GROUP BY 1, 2, 3, 4, 5
        )
        SELECT ae.*, g.occurrence_count, g.first_fired_at,
               ar.name AS rule_name, s.hostname AS server_hostname,

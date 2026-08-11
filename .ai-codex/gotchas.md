@@ -365,3 +365,6 @@
   cadence is `dhcp_events_interval_s` (NOT `dhcp_log_interval_s`). A key the agent
   doesn't read is silently ignored (polls fall back to the module default). Match the
   agent module's exact key names when adding/renaming a setting.
+
+- ⛔ **Never derive a count from a page of rows.** The Events & Alerts tabs used to fetch `/alerts?limit=200` once and compute Open/Acknowledged/Resolved by filtering that array — so the labels meant "…among the newest 200", not "…in total". Live, that showed **Open (1) while 70 alerts were genuinely open**: only 1 of them had fired in the last 7 days, the other 70 were older than the 200-row window and were never fetched. The header bell was right the whole time because it reads the server's `total` for `?unacked=true`. The tell was the arithmetic — the three tabs summed to exactly 200. `/api/alerts` supports `status=open|acked|resolved` and returns a real COUNT; use it.
+- `/api/alerts` groups repeated alerts by `(normalised message, server_id, acknowledged, resolved?, hour)`. `resolved_at` belongs in that key: without it one group could hold both resolved and unresolved rows and be counted under two status tabs at once, so the per-status counts summed to more than the total (16 over, live). The COUNT and the rows query must group IDENTICALLY, or a page and the total it paginates over describe different things.

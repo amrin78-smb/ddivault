@@ -895,6 +895,13 @@ function EventsTab() {
   const [alerts, setAlerts]   = useState<AlertEvent[]>([]);
   const [evTotal, setEvTotal] = useState(0);
   const [alTotal, setAlTotal] = useState(0);
+  // Total for the CURRENTLY SELECTED status (what the visible table is a page of),
+  // kept separate from alTotal (every alert, for the "Alerts (n)" view tab).
+  const [alFilteredTotal, setAlFilteredTotal] = useState(0);
+  // Per-status totals from the server. These are the tab labels — never derive
+  // them from a page of rows, which is what made Open read 1 while 70 alerts
+  // were open.
+  const [alCounts, setAlCounts] = useState({ open: 0, acked: 0, resolved: 0 });
   const [page, setPage]       = useState(1);
   const [hours, setHours]     = useState(24);
   const [typeFilter, setTypeFilter] = useState('');
@@ -908,10 +915,36 @@ function EventsTab() {
     const params = new URLSearchParams({ page: String(page), limit: '50', hours: String(hours) });
     if (typeFilter) params.set('type', typeFilter);
     api(`/events?${params}`).then(d => { setEvents(d.data || []); setEvTotal(d.total || 0); }).catch(() => {});
-    api('/alerts?limit=200').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
   }, [page, hours, typeFilter]);
 
-  const reloadAlerts = () => api('/alerts?limit=200').then(d => { setAlerts(d.data || []); setAlTotal(d.total || 0); }).catch(() => {});
+  // Alerts are fetched BY STATUS, server-side.
+  //
+  // This used to pull `/alerts?limit=200` once and derive both the rows and the
+  // tab counts by filtering that slice in the browser. The counts were then not
+  // counts of alerts but counts of "alerts within the newest 200" — which read
+  // as Open (1) while 70 alerts were genuinely open, because 70 of them were
+  // older than the 200 most recent and simply never arrived. The tabs summed to
+  // exactly 200 every time, which is the tell.
+  //
+  // The API already filters by status and returns a real COUNT for the filtered
+  // set (it is how the header bell has always been right). So ask it.
+  const reloadAlerts = useCallback(() => {
+    const q = alertFilter === 'all' ? '' : `&status=${alertFilter}`;
+    api(`/alerts?limit=200${q}`)
+      .then(d => { setAlerts(d.data || []); setAlFilteredTotal(d.total || 0); })
+      .catch(() => {});
+    // Counts for the tab labels. limit=1 because only `total` is wanted — the
+    // rows are thrown away, and asking for 200 of them per tab would be three
+    // needless payloads on every load.
+    (['open', 'acked', 'resolved'] as const).forEach(s => {
+      api(`/alerts?limit=1&status=${s}`)
+        .then(d => setAlCounts(prev => ({ ...prev, [s]: d.total || 0 })))
+        .catch(() => {});
+    });
+    api('/alerts?limit=1').then(d => setAlTotal(d.total || 0)).catch(() => {});
+  }, [alertFilter]);
+
+  useEffect(() => { reloadAlerts(); }, [reloadAlerts]);
 
   const ack = async (id: number) => {
     await api(`/alerts/${id}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin' }) });
@@ -926,9 +959,13 @@ function EventsTab() {
     window.dispatchEvent(new Event('ddivault:alerts-changed')); // refresh the header bell instantly
   };
 
+  // `alerts` now already holds only the selected status (the server filtered
+  // it), so these are just presentation splits for the 'all' view — NOT the
+  // source of the tab counts, which come from alCounts. Deriving a count from a
+  // page of rows is exactly the bug this replaced.
   const openAlerts     = useMemo(() => alerts.filter(a => !a.acknowledged && !a.resolved_at), [alerts]);
-  const ackedAlerts    = useMemo(() => alerts.filter(a =>  a.acknowledged), [alerts]);
-  const resolvedAlerts = useMemo(() => alerts.filter(a => !a.acknowledged &&  a.resolved_at), [alerts]);
+  const ackedAlerts    = useMemo(() => alerts.filter(a =>  a.acknowledged && !a.resolved_at), [alerts]);
+  const resolvedAlerts = useMemo(() => alerts.filter(a =>  !!a.resolved_at), [alerts]);
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -944,9 +981,9 @@ function EventsTab() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Filter pills */}
           <div className="segmented">
-            <button className={alertFilter === 'open' ? 'active' : ''} onClick={() => setAlertFilter('open')}>Open ({openAlerts.length})</button>
-            <button className={alertFilter === 'acked' ? 'active' : ''} onClick={() => setAlertFilter('acked')}>Acknowledged ({ackedAlerts.length})</button>
-            <button className={alertFilter === 'resolved' ? 'active' : ''} onClick={() => setAlertFilter('resolved')}>Resolved ({resolvedAlerts.length})</button>
+            <button className={alertFilter === 'open' ? 'active' : ''} onClick={() => setAlertFilter('open')}>Open ({alCounts.open})</button>
+            <button className={alertFilter === 'acked' ? 'active' : ''} onClick={() => setAlertFilter('acked')}>Acknowledged ({alCounts.acked})</button>
+            <button className={alertFilter === 'resolved' ? 'active' : ''} onClick={() => setAlertFilter('resolved')}>Resolved ({alCounts.resolved})</button>
             <button className={alertFilter === 'all' ? 'active' : ''} onClick={() => setAlertFilter('all')}>All</button>
           </div>
 
