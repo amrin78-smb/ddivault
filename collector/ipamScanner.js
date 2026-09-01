@@ -463,4 +463,10 @@ async function scanAllSubnets() {
   log('All subnet scans complete');
 }
 
-module.exports = { scanSubnet, scanAllSubnets, generateHostIPs };
+// This module is required at top level by api/server.js, so its pool is opened
+// in the API process as well as in each forked scanWorker. The API shutdown path
+// needs a way to close it, or the process lingers on an open pool it has no other
+// handle to.
+async function closeScannerPool() { try { await db.end(); } catch (_e) { /* already closed */ } }
+
+module.exports = { scanSubnet, scanAllSubnets, generateHostIPs, closeScannerPool };

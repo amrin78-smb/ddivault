@@ -1,0 +1,6 @@
+# Normalise line endings so a .sh committed from a Windows box does not arrive
+# with CRLF and fail as: bad interpreter: /bin/bash^M. Set when the suite began
+# adding shell scripts alongside the PowerShell ones.
+* text=auto
+*.sh text eol=lf
+*.ps1 text eol=crlf

@@ -1,4 +1,4 @@
-﻿.env.local
+.env.local
 frontend/.env.local
 node_modules/
 frontend/node_modules/

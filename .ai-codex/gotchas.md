@@ -253,6 +253,12 @@
   `NEXT_PUBLIC_NOCVAULT_HUB_URL` — NOT `NETVAULT_HUB_URL` (old name, SSO
   fails silently falling back to `localhost:3000` if used).
 
+## Shutdown / signals
+- ⛔ **NSSM delivers SIGINT, not SIGTERM.** It stops a service with a console Ctrl-C event, which Node surfaces as `SIGINT`; `SIGTERM` is not a real Windows signal and a SIGTERM-only handler NEVER fires under NSSM. Register `SIGINT` + `SIGBREAK` + `SIGTERM`.
+- ⛔ **`AppKillProcessTree` does not exist in NSSM 2.24** (verified against the production binary - it is rejected as an invalid parameter). Nothing reaps a service child process when the service stops. The forked IPAM `scanWorker` therefore can be, and before 1.31.0 was, ORPHANED by a hard stop: it keeps its own pg pool and keeps writing `ipam_addresses`/`ipam_scan_jobs` for up to `SCAN_TIMEOUT` (5 min), including flipping a row to `done` after the API restarted and after `clearStuckScansOnStartup` already cleared it. `scanningSubnets` is now a `Map<subnetId, ChildProcess>` precisely so shutdown can kill them.
+- **The startup stuck-scan sweep is age-gated and cannot cover a restart.** `clearStuckScansOnStartup` only clears rows older than 30 min / 1 hour, so a service restart that takes ten seconds clears NOTHING and the UI shows a permanent "Scanning" spinner until the threshold passes. The shutdown handler therefore marks in-flight scans aborted UNCONDITIONALLY, by id, before closing the pool. Do not "simplify" that back to relying on the startup sweep.
+- **The DDIVault collector shutdown deliberately waits for nothing.** Every poll it runs writes idempotent DHCP/DNS/IPAM data - an interrupted cycle costs one sample and the next corrects it. That is NOT true of SpanVault, whose collector must wait out an Aruba Central token rotation or permanently brick that integration. Do not copy this simpler shape across without checking what the in-flight write actually is.
+- **`stopWsServer()` ordering matters.** Close the agent sockets FIRST so each connection close handler can write its `status=offline` row, and only then end the `ddi`/`nv` pools those writes need. Reversed, the writes fail silently and every agent stays "online" until the 90s sweep after the next restart.
 ## NSSM / deployment
 - Use backtick-n (`` `n ``) to separate env vars in `AppEnvironmentExtra`
   — plain spaces concatenate into one hostname string.

@@ -24,6 +24,11 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled rejection:', reason);
 });
 
+// Every timer main() arms, so shutdown can stop them before the pool closes.
+// All 14 handles were previously discarded.
+const timers = [];
+function _every(fn, ms) { const t = setInterval(fn, ms); timers.push(t); return t; }
+
 const db = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432'),
@@ -449,24 +454,56 @@ async function main() {
   try { await runDnsMonitor(); } catch (e) { console.error('[DNS-Monitor] startup error:', e.message); }
   try { await runReportScheduler(); } catch (e) { console.error('[Reports] startup error:', e.message); }
 
-  setInterval(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
-  setInterval(() => pollScopesCycle(),                          INTERVAL_SCOPE_STATS);
-  setInterval(() => pollAll(syncLeases,        'Leases'),       INTERVAL_LEASE_SYNC);
-  setInterval(() => pollAll(syncReservations,  'Reservations'), INTERVAL_LEASE_SYNC);
-  setInterval(() => pollAll(syncDns,           'DNS'),          INTERVAL_DNS_SYNC);
-  setInterval(() => pollAll(pollFailover,      'Failover'), INTERVAL_FAILOVER);
-  setInterval(() => pollAll(pollDnsSoa,        'DNS-SOA'),  INTERVAL_SOA_SYNC);
-  setInterval(() => pollAll(pollHealth,        'Health'),   INTERVAL_HEALTH);
+  _every(() => pollAll(tailDhcpLog,       'Log'),          INTERVAL_LOG_TAIL);
+  _every(() => pollScopesCycle(),                          INTERVAL_SCOPE_STATS);
+  _every(() => pollAll(syncLeases,        'Leases'),       INTERVAL_LEASE_SYNC);
+  _every(() => pollAll(syncReservations,  'Reservations'), INTERVAL_LEASE_SYNC);
+  _every(() => pollAll(syncDns,           'DNS'),          INTERVAL_DNS_SYNC);
+  _every(() => pollAll(pollFailover,      'Failover'), INTERVAL_FAILOVER);
+  _every(() => pollAll(pollDnsSoa,        'DNS-SOA'),  INTERVAL_SOA_SYNC);
+  _every(() => pollAll(pollHealth,        'Health'),   INTERVAL_HEALTH);
 
-  setInterval(runForecasts,  INTERVAL_FORECAST);
-  setInterval(runAnomalies,  INTERVAL_ANOMALY);
-  setInterval(runSiteHealth, INTERVAL_SITEHEALTH);
-  setInterval(runDnsMonitor, INTERVAL_DNS_MONITOR);
-  setInterval(hourlyTick,    INTERVAL_DIGEST);
-  setInterval(runReportScheduler, INTERVAL_REPORTS);
+  _every(runForecasts,  INTERVAL_FORECAST);
+  _every(runAnomalies,  INTERVAL_ANOMALY);
+  _every(runSiteHealth, INTERVAL_SITEHEALTH);
+  _every(runDnsMonitor, INTERVAL_DNS_MONITOR);
+  _every(hourlyTick,    INTERVAL_DIGEST);
+  _every(runReportScheduler, INTERVAL_REPORTS);
 
   log('=== DDIVault Collector running ===');
 }
+
+// ── Graceful shutdown ─────────────────────────────────────────
+// NSSM stops a service with a console Ctrl-C event, which Node surfaces as
+// SIGINT - NOT SIGTERM. A SIGTERM-only handler never fires on Windows, so all
+// three are registered (SIGTERM matters for a future Linux host and for
+// process.kill from tooling).
+//
+// Nothing here waits on in-flight work, deliberately. Every poll this collector
+// runs writes idempotent DHCP/DNS/IPAM data - an interrupted cycle costs one
+// sample and the next cycle corrects it. That is NOT true of SpanVault, whose
+// collector must wait out an Aruba Central token rotation; do not copy this
+// simpler shape there without checking what the in-flight write actually is.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`[Shutdown] ${signal} received - stopping timers.`);
+
+  const watchdog = setTimeout(() => {
+    console.error('[Shutdown] timed out - forcing exit.');
+    process.exit(1);
+  }, 13000);
+  if (watchdog.unref) watchdog.unref();
+
+  for (const t of timers) { clearInterval(t); clearTimeout(t); }
+  try { await db.end(); } catch (e) { console.error('[Shutdown] pool close:', e.message); }
+  log('[Shutdown] complete.');
+  process.exit(0);
+}
+process.on('SIGTERM',  () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
+process.on('SIGINT',   () => { shutdown('SIGINT').catch(() => process.exit(1)); });
+process.on('SIGBREAK', () => { shutdown('SIGBREAK').catch(() => process.exit(1)); });
 
 main().catch(err => {
   console.error('[FATAL] Startup error:', err.message, err.stack);

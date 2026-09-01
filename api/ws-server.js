@@ -69,6 +69,14 @@ const SETTINGS = {
 };
 
 // DDIVault DB (read/write) — own pool so this module is self-contained.
+// Handles the shutdown path needs. Both were previously function-local inside
+// startWsServer, so nothing outside could stop the server or its timer.
+let _wss = null;
+let _heartbeatTimer = null;
+// server.id|kind pairs already warned about, so an unpersisted frame is visible
+// once rather than on every poll.
+const _loggedDroppedKinds = new Set();
+
 const ddi = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432', 10),
@@ -258,6 +266,24 @@ async function handleResult(hubAgentId, msg) {
     case 'failover':
       // Accepted for forward-compat; DDIVault Phase 4b does not yet persist
       // these agent-side (central dnsMonitor/haMonitor cover local servers).
+      //
+      // This used to be a BARE break - no log, no counter, no reply - so an
+      // agent could ship these every cycle and have them dropped without a trace
+      // anywhere. The wire contract at the top of this file advertises all three
+      // kinds, so the agent is right to send them; this side is the incomplete
+      // one. Warn once per server+kind so the discard is visible without a line
+      // per poll (same idiom as dhcpReader loggedReadFailures). Persisting them
+      // properly is the real fix and is still outstanding.
+      {
+        const dropKey = `${server.id}|${msg.kind}`;
+        if (!_loggedDroppedKinds.has(dropKey)) {
+          _loggedDroppedKinds.add(dropKey);
+          console.warn(
+            `[WS] ddi_result kind "${msg.kind}" from server ${server.id} is accepted but NOT ` +
+            `persisted (central dnsMonitor/haMonitor cover this today). Warned once per server+kind.`
+          );
+        }
+      }
       break;
     default:
       console.warn(`[WS] Unknown ddi_result kind '${msg.kind}' from agent ${hubAgentId}`);
@@ -472,8 +498,9 @@ function startWsServer(port) {
 
   wss.on('error', (err) => console.error('[WS] Server error:', err.message));
 
-  // Heartbeat monitor — mark agents offline if silent for 90s.
-  setInterval(async () => {
+  // Heartbeat monitor — mark agents offline if silent for 90s. Handle kept so
+  // stopWsServer() can clear it; previously it was discarded and ran forever.
+  _heartbeatTimer = setInterval(async () => {
     try {
       const cutoff = new Date(Date.now() - 90000).toISOString();
       const stale = await ddi.query(
@@ -527,7 +554,23 @@ function startWsServer(port) {
   }, 30000);
 
   console.log(`DDIVault WebSocket ingest server listening on port ${port} (all interfaces)`);
+  _wss = wss;
   return { wss, connectedAgents };
 }
 
-module.exports = { startWsServer, reconfigureAgent, pushConfigToAgent, disconnectAgent, connectedAgents };
+// Shut the ingest plane down. ORDER MATTERS: close the agent sockets FIRST so
+// each connection close handler can write its status=offline row, and only then
+// end the pools those writes need. Reversed, the writes fail silently and every
+// agent stays "online" in the UI until the 90s sweep after the next restart.
+async function stopWsServer() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+  for (const ws of connectedAgents.values()) {
+    try { ws.close(1001, "Server shutting down"); } catch (_e) { /* ignore */ }
+  }
+  if (_wss) { try { _wss.close(); } catch (_e) { /* ignore */ } _wss = null; }
+  // Give those close handlers a moment to land their offline writes.
+  await new Promise((r) => setTimeout(r, 250));
+  await Promise.allSettled([ddi.end(), nv.end()]);
+}
+
+module.exports = { startWsServer, stopWsServer, reconfigureAgent, pushConfigToAgent, disconnectAgent, connectedAgents };

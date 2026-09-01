@@ -30,6 +30,14 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.31.0': [
+    'The API and collector now shut down cleanly when their services are stopped, instead of being killed wherever they happened to be.',
+    'The most consequential part is IPAM scans. A scan runs as a separate background process, and nothing was stopping it when the API stopped - it carried on writing scan results for up to five minutes afterwards, including marking a scan as finished after the API had restarted and already cleared it. Those processes are now tracked and stopped, and any scan interrupted this way is marked as aborted straight away.',
+    'Previously an interrupted scan was only cleared once it was half an hour old, so a normal restart left the subnet showing "Scanning" indefinitely with nothing actually running. That no longer happens.',
+    'Agents are now disconnected cleanly on shutdown so they are recorded as offline immediately, rather than appearing online until a ninety-second check notices after the next restart.',
+    'The commit lookup shown on the Settings page no longer blocks the whole API while it runs, and now has a time limit. Without one it could wait indefinitely if the version-control tool ever paused for input, which presents as the database appearing to time out even though it is healthy.',
+    'Agent data the server accepts but does not yet store is now recorded in the log once per server instead of being discarded with no trace at all.',
+  ],
   '1.30.3': [
     'Server health alerts no longer fire on a single reading. Replaying a week of real measurements: the old rule raised 462 alerts, the new one raises 5. Across 9,935 readings the score never once sat between 80 and 85 - it holds above 90 and drops to about 75 for a single poll when a DNS query happens to be slow, then recovers. Those were momentary dips being reported as incidents, and they accounted for two thirds of every alert this system produced.',
     'A server that is genuinely unhealthy stays unhealthy for more than fifteen minutes and is still reported, and a serious drop below 70 is still treated as critical.',
@@ -607,7 +615,7 @@ const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
 const alertDispatcher = require('./alertDispatcher');
-const { startWsServer, reconfigureAgent, disconnectAgent } = require('./ws-server'); // Phase 4b agent data plane
+const { startWsServer, stopWsServer, reconfigureAgent, disconnectAgent } = require('./ws-server'); // Phase 4b agent data plane
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(cors({ origin: 'http://localhost:3006', exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'] }));
@@ -848,10 +856,18 @@ app.get('/api/stats', async (req, res) => {
 // Short (7-char) hash of the local HEAD commit in the app root, or null if git
 // is unavailable. The repo root is one level up from this api/ directory.
 const APP_ROOT = path.join(__dirname, '..');
-function localCommitHash() {
+// Async: this runs on every Settings-page load via GET /api/system/update-status,
+// and execSync blocks the WHOLE event loop until git exits - the documented
+// failure mode where pg reports "Connection terminated due to connection timeout"
+// from a perfectly healthy local database. It also had no timeout and no GIT_ENV,
+// unlike every execFileP sibling below, so a credential prompt could hang the API
+// indefinitely rather than for a bounded 10s.
+async function localCommitHash() {
   try {
-    return execSync('git rev-parse HEAD', { cwd: APP_ROOT })
-      .toString().trim().slice(0, 7);
+    const { stdout } = await execFileP('git', ['rev-parse', 'HEAD'], {
+      cwd: APP_ROOT, encoding: 'utf8', timeout: 10000, env: GIT_ENV,
+    });
+    return stdout.trim().slice(0, 7);
   } catch {
     return null;
   }
@@ -871,7 +887,7 @@ function localCommitHash() {
 // let the server push/pull.
 app.get('/api/system/update-status', requireAuth, async (_req, res) => {
   const localVersion = version;
-  const localHash = localCommitHash();
+  const localHash = await localCommitHash();
   try {
     // Remote HEAD of origin/main via the async helper (git ls-remote — no fetch,
     // no rate limit, and off the event loop so it can't stall HTTP).
@@ -966,7 +982,7 @@ async function remotePackageVersion(fallback) {
 
 async function checkForUpdates() {
   try {
-    const localHash = localCommitHash();
+    const localHash = await localCommitHash();
     const remoteHash = await remoteCommitHash();
     const changed = !!(localHash && remoteHash && remoteHash !== localHash);
     updateAvailable = changed
@@ -3189,7 +3205,13 @@ app.post('/api/ipam/subnets/:id/addresses/:ip/release', requireWrite, async (req
 
 // ── IPAM — Scan ───────────────────────────────────────────────
 const { scanAllSubnets } = require('../collector/ipamScanner');
-const scanningSubnets = new Set(); // prevent concurrent scans of same subnet
+// subnetId -> ChildProcess. Was a Set of ids only, which meant the forked
+// scanWorker handles were unreachable: nothing could kill them. NSSM 2.24 has no
+// AppKillProcessTree, so a stopped API does NOT take its children with it - an
+// orphaned worker keeps its own pg pool and keeps writing ipam_addresses /
+// ipam_scan_jobs for up to SCAN_TIMEOUT (5 min), including flipping rows to done
+// AFTER the API restarted and cleared them.
+const scanningSubnets = new Map(); // prevent concurrent scans of same subnet
 
 // Auto-expire scans stuck in 'running'/'scanning' for >30 min (covers process
 // crashes/restarts where the in-memory scanningSubnets set was lost). Runs on
@@ -3245,13 +3267,14 @@ app.post('/api/ipam/subnets/:id/scan', requireWrite, async (req, res) => {
     res.json({ success: true, message: `Scan started for ${subnet.network}/${subnet.prefix_length}` });
 
     // Run scan in a completely separate child process — does NOT block the API
-    scanningSubnets.add(id);
     const { fork } = require('child_process');
     const worker = fork(
       require('path').join(__dirname, '..', 'collector', 'scanWorker.js'),
       [String(id), subnet.network, String(subnet.prefix_length), subnet.name || ''],
       { silent: false, env: process.env }
     );
+    // Keep the handle, not just the id, so shutdown can kill it.
+    scanningSubnets.set(id, worker);
     worker.on('exit', (code) => {
       scanningSubnets.delete(id);
       console.log(`[API] Scan worker exited for subnet ${id} with code ${code}`);
@@ -5281,9 +5304,70 @@ getLicense(true).then(lic => {
 setInterval(() => getLicense(true).catch(() => {}), 24 * 60 * 60 * 1000);
 
 // ── Start ─────────────────────────────────────────────────────
-app.listen(PORT, '127.0.0.1', () => {
+const httpServer = app.listen(PORT, '127.0.0.1', () => {
   console.log(`[${new Date().toISOString()}] DDIVault API running on http://127.0.0.1:${PORT}`);
 });
+
+// ── Graceful shutdown ───────────────────────────────────────
+// NSSM stops a service with a console Ctrl-C event, which Node surfaces as
+// SIGINT - NOT SIGTERM. A SIGTERM-only handler never fires on Windows, so all
+// three are registered.
+//
+// The important part here is the forked IPAM scan workers. NSSM 2.24 has no
+// AppKillProcessTree, so nothing reaps them when this process goes away: an
+// orphan keeps its own pg pool and keeps writing scan rows for up to 5 minutes,
+// including marking a scan done after the API restarted and cleared it. They are
+// killed here, and their rows are marked aborted UNCONDITIONALLY - the existing
+// startup sweep is age-gated (30 min / 1 hour), so a normal restart would leave
+// the UI showing a permanent "Scanning" spinner until that threshold passed.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[Shutdown] ${signal} received - closing down.`);
+
+  const watchdog = setTimeout(() => {
+    console.error('[Shutdown] timed out - forcing exit.');
+    process.exit(1);
+  }, 13000);
+  if (watchdog.unref) watchdog.unref();
+
+  try { httpServer.close(); } catch (_e) { /* ignore */ }
+
+  // Kill scan workers first so none of them races the row update below.
+  const scanIds = [...scanningSubnets.keys()];
+  for (const [, worker] of scanningSubnets) {
+    try { worker.kill(); } catch (_e) { /* already gone */ }
+  }
+  if (scanIds.length) {
+    console.log(`[Shutdown] killed ${scanIds.length} in-flight scan worker(s): ${scanIds.join(', ')}`);
+    try {
+      await db.query(
+        `UPDATE ipam_scan_jobs SET status='error', error_msg='Aborted - API shutting down'
+          WHERE status='running' AND subnet_id = ANY($1::int[])`, [scanIds]);
+      await db.query(
+        `UPDATE ipam_subnets SET scan_status='error' WHERE id = ANY($1::int[]) AND scan_status='scanning'`,
+        [scanIds]);
+    } catch (e) {
+      console.error('[Shutdown] could not mark aborted scans:', e.message);
+    }
+  }
+
+  try { await stopWsServer(); } catch (e) { console.error('[Shutdown] stopWsServer:', e.message); }
+
+  let closeScannerPool = null;
+  try { ({ closeScannerPool } = require('../collector/ipamScanner')); } catch (_e) { /* not loaded */ }
+  await Promise.allSettled([
+    db.end(),
+    typeof netvaultDb !== 'undefined' && netvaultDb ? netvaultDb.end() : Promise.resolve(),
+    closeScannerPool ? closeScannerPool() : Promise.resolve(),
+  ]);
+  console.log('[Shutdown] complete.');
+  process.exit(0);
+}
+process.on('SIGTERM',  () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
+process.on('SIGINT',   () => { shutdown('SIGINT').catch(() => process.exit(1)); });
+process.on('SIGBREAK', () => { shutdown('SIGBREAK').catch(() => process.exit(1)); });
 
 // ── Agent WebSocket ingest server (Phase 4b) ──────────────────
 // Bound to all interfaces (unlike the loopback API) so remote agent hosts can
