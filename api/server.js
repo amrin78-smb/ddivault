@@ -30,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.32.0': [
+    'The Operations Center is now organised into five sections - Overview, Capacity and Trends, Infrastructure, DNS/IPAM/Security, and Activity - instead of one long page. The command bar and the headline figures stay above the sections, so the collector heartbeat and the at-a-glance numbers are always visible.',
+    'The page refreshes every thirty seconds and previously refreshed every panel on it, whether or not you were looking at any of them. It now refreshes only the section you have open, which reduces the continuous load on both the server and the browser.',
+    'The section you were last on is remembered, so returning to the dashboard puts you back where you were.',
+    'No panel was removed or changed. The section names are the groupings the page already displayed as headings.',
+  ],
   '1.31.0': [
     'The API and collector now shut down cleanly when their services are stopped, instead of being killed wherever they happened to be.',
     'The most consequential part is IPAM scans. A scan runs as a separate background process, and nothing was stopping it when the API stopped - it carried on writing scan results for up to five minutes afterwards, including marking a scan as finished after the API had restarted and already cleared it. Those processes are now tracked and stopped, and any scan interrupted this way is marked as aborted straight away.',

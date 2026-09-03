@@ -481,27 +481,57 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
 
   const range = timeRange === '24h' ? { days: 1, hours: 24 } : timeRange === '30d' ? { days: 30, hours: 720 } : { days: 7, hours: 168 };
 
+  // Section persists across reloads. Hydrated in an effect, not the useState
+  // initialiser, so the server render and first client render agree.
+  const [section, setSection] = useState<DashSection>('overview');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ddivault-dash-section') as DashSection | null;
+      if (saved && DASH_SECTIONS.some(d => d.id === saved)) setSection(saved);
+    } catch { /* ignore */ }
+  }, []);
+  const selectSection = (id: DashSection) => {
+    setSection(id);
+    try { localStorage.setItem('ddivault-dash-section', id); } catch { /* ignore */ }
+  };
+
+  // Always loaded — every one of these feeds the KPI strip, which never hides.
+  // Note scopeHistory and ipDist are NOT capacity-only despite only being
+  // charted there: scopeHistory drives the KPI delta arrows via trends(), and
+  // ipDist supplies the "Unknown Devices" tile. Gating either would blank part
+  // of the strip.
   const load = useCallback(async () => {
     const results = await Promise.allSettled([
       api('/dashboard/stats'),
-      api('/scopes'),
       api(`/scopes/history/all?hours=${range.hours}`),
       api('/dashboard/ip-distribution'),
-      api(`/dashboard/lease-trend?days=${range.days}`),
     ]);
-    const [s, sc, hist, dist, lt] = results;
+    const [s, hist, dist] = results;
     if (s.status  === 'fulfilled') setStats(s.value);
-    if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
     if (hist.status === 'fulfilled') setScopeHistory(hist.value.data || []);
     if (dist.status === 'fulfilled') setIpDist(dist.value.data || null);
-    if (lt.status === 'fulfilled') setLeaseTrend((lt.value.data || []).map((d: any) => ({ day: d.day, leases: parseInt(d.leases) || 0 })));
     setLoading(false);
     setLastUpdated(Date.now());
-  }, [range.hours, range.days]);
+  }, [range.hours]);
+
+  // Capacity-only: /scopes backs the "Scopes Requiring Attention" table and
+  // nothing else; lease-trend backs one chart. Both are skipped entirely while
+  // another section is open, including on the 30s refresh.
+  const loadCapacity = useCallback(async () => {
+    if (section !== 'capacity') return;
+    const results = await Promise.allSettled([
+      api('/scopes'),
+      api(`/dashboard/lease-trend?days=${range.days}`),
+    ]);
+    const [sc, lt] = results;
+    if (sc.status === 'fulfilled') setScopes(sc.value.data || []);
+    if (lt.status === 'fulfilled') setLeaseTrend((lt.value.data || []).map((d: any) => ({ day: d.day, leases: parseInt(d.leases) || 0 })));
+  }, [section, range.days]);
 
   // Reload inline data on time-range change and on every refresh tick (manual or
   // auto). Skeletons only show on the very first load — refreshes swap silently.
   useEffect(() => { load(); }, [load, refreshNonce]);
+  useEffect(() => { loadCapacity(); }, [loadCapacity, refreshNonce]);
 
   useEffect(() => {
     if (paused) return;
@@ -589,14 +619,32 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
             ))}
       </div>
 
-      {/* Four pillar scorecards — DHCP / DNS / IPAM / Security */}
-      <PillarScorecards timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+      {/* Section tabs. The CommandBar and KPI strip stay above them: posture,
+          collector heartbeat and the at-a-glance numbers must not be reachable
+          only by picking the right tab. */}
+      <div className="settings-tabs">
+        {DASH_SECTIONS.map(sec => (
+          <button key={sec.id} onClick={() => selectSection(sec.id)}
+            className={'settings-tab' + (section === sec.id ? ' active' : '')}>
+            {sec.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Priority Action Center — collapsible triage queue, demoted below the overview */}
-      <PriorityActionCenter refreshNonce={refreshNonce} onNavigate={navStr} onFocusScope={onFocusScope} />
+      {section === 'overview' && (<>
+        {/* Four pillar scorecards — DHCP / DNS / IPAM / Security */}
+        <PillarScorecards timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+
+        {/* Priority Action Center — collapsible triage queue */}
+        <PriorityActionCenter refreshNonce={refreshNonce} onNavigate={navStr} onFocusScope={onFocusScope} />
+      </>)}
 
       {/* Infrastructure & redundancy — server health trend + HA/failover */}
-      <InfraRedundancy timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+      {section === 'infrastructure' && (
+        <InfraRedundancy timeRange={timeRange} refreshNonce={refreshNonce} onNavigate={navStr} />
+      )}
+
+      {section === 'capacity' && (<>
 
       {/* Capacity & trends */}
       <div>
@@ -688,7 +736,10 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
         </div>
       </div>
 
+      </>)}
+
       {/* DNS, IPAM & Security */}
+      {section === 'dns' && (
       <div>
         <SectionHeader>DNS, IPAM &amp; Security</SectionHeader>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 16 }}>
@@ -720,8 +771,12 @@ function DashboardTab({ onNavigate, onFocusScope }: { onNavigate: (tab: Tab, opt
         </div>
       </div>
 
+      )}
+
       {/* Unified activity feed — DHCP events / config changes / fired alerts */}
-      <ActivityFeed refreshNonce={refreshNonce} onNavigate={navStr} />
+      {section === 'activity' && (
+        <ActivityFeed refreshNonce={refreshNonce} onNavigate={navStr} />
+      )}
     </div>
   );
 }
@@ -1570,6 +1625,24 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
 }
 
 type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'updates' | 'about';
+
+// Operations Center sections. The names are the page's own existing
+// SectionHeaders — this makes a grouping the page already had navigable rather
+// than inventing a new one.
+//
+// The saving is ongoing, not just first paint: the dashboard auto-refreshes
+// every 30s and fans that refresh out to ~10 self-fetching child widgets via
+// refreshNonce. A widget that is not mounted neither fetches on mount nor takes
+// part in the 30s refresh, so an unopened section costs nothing indefinitely.
+type DashSection = 'overview' | 'capacity' | 'infrastructure' | 'dns' | 'activity';
+
+const DASH_SECTIONS: { id: DashSection; label: string }[] = [
+  { id: 'overview',       label: 'Overview' },
+  { id: 'capacity',       label: 'Capacity & Trends' },
+  { id: 'infrastructure', label: 'Infrastructure' },
+  { id: 'dns',            label: 'DNS, IPAM & Security' },
+  { id: 'activity',       label: 'Activity' },
+];
 
 function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSubTab }) {
   const [settings, setSettings] = useState<Record<string, string>>({});
