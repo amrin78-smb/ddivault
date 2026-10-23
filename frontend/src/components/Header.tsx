@@ -10,20 +10,29 @@ import CornersToggle from '@/components/CornersToggle';
 
 function DDIVaultLogo({ className }: { className?: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 196 46" className={className}>
-      {/* Orbital globe with nodes on the rings (DNS/DHCP/IPAM). Flat fills, no
-          gradient: the shell is dark in both themes, so a fade would be
-          half-invisible exactly where the mark is used most. Keep this in sync
-          with /ddivault-logo.svg in net-vault/public and nocvault-website. */}
-      <g fill="none" stroke="#d97706" strokeWidth="2.4">
-        <circle cx="20" cy="23" r="16"/>
-        <ellipse cx="20" cy="23" rx="7.5" ry="16"/>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 202 46" className={className}>
+      <defs>
+      <radialGradient id="ddi-hdr-ddiSphere" cx="36%" cy="28%" r="80%">
+      <stop offset="0%"   stopColor="#FFC266"/>
+      <stop offset="45%"  stopColor="#EE8B0B"/>
+      <stop offset="100%" stopColor="#9A4E02"/>
+      </radialGradient>
+      <linearGradient id="ddi-hdr-ddiSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stopColor="#ffffff" stopOpacity="0.40"/>
+      <stop offset="60%" stopColor="#ffffff" stopOpacity="0"/>
+      </linearGradient>
+      </defs>
+      <circle cx="22" cy="23" r="15" fill="url(#ddi-hdr-ddiSphere)"/>
+      <ellipse cx="22" cy="16" rx="11.5" ry="6.5" fill="url(#ddi-hdr-ddiSheen)"/>
+      <g fill="none" stroke="#FFD9A3" strokeWidth="1.7" strokeOpacity="0.95">
+      <ellipse cx="22" cy="23" rx="19" ry="8" transform="rotate(-24 22 23)"/>
+      <ellipse cx="22" cy="23" rx="19" ry="8" transform="rotate(36 22 23)"/>
       </g>
-      <line x1="4" y1="23" x2="36" y2="23" stroke="#d97706" strokeWidth="2.4"/>
-      <g fill="#d97706">
-        <circle cx="20" cy="7" r="3.6"/>
-        <circle cx="6.1" cy="31" r="3.6"/>
-        <circle cx="33.9" cy="31" r="3.6"/>
+      <g>
+      <circle cx="38.4" cy="15.9" r="3.2" fill="#ffffff"/><circle cx="38.4" cy="15.9" r="1.4" fill="#EE8B0B"/>
+      <circle cx="5.6"  cy="30.1" r="3.2" fill="#ffffff"/><circle cx="5.6"  cy="30.1" r="1.4" fill="#EE8B0B"/>
+      <circle cx="6.6"  cy="13.6" r="2.8" fill="#ffffff"/><circle cx="6.6"  cy="13.6" r="1.2" fill="#EE8B0B"/>
+      <circle cx="37.4" cy="32.4" r="2.8" fill="#ffffff"/><circle cx="37.4" cy="32.4" r="1.2" fill="#EE8B0B"/>
       </g>
       <text x="52" y="30" fontSize="26" fontWeight="700" letterSpacing="-0.3" fontFamily="'Rubik','Helvetica Neue',Helvetica,Arial,sans-serif">
         <tspan fill="#ffffff">DDI</tspan>
