@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.32.1': [
+    'Refreshed the app logos across the suite. The marks are redrawn as solid shapes instead of thin outlines - the old ones were 1.5-2.5px strokes that thinned out and lost definition at the size the header actually renders them. Colours are unchanged, and every place a mark appears (header, launcher tiles, suite-health pills, login screen) now uses the same drawing.',
+  ],
   '1.32.0': [
     'The Operations Center is now organised into five sections - Overview, Capacity and Trends, Infrastructure, DNS/IPAM/Security, and Activity - instead of one long page. The command bar and the headline figures stay above the sections, so the collector heartbeat and the at-a-glance numbers are always visible.',
     'The page refreshes every thirty seconds and previously refreshed every panel on it, whether or not you were looking at any of them. It now refreshes only the section you have open, which reduces the continuous load on both the server and the browser.',

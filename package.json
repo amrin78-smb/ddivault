@@ -1,8 +1,8 @@
 {
   "name": "ddivault",
-  "version": "1.32.0",
+  "version": "1.32.1",
   "private": true,
-  "description": "DDIVault — DNS, DHCP, IPAM monitoring for NocVault suite",
+  "description": "DDIVault \u2014 DNS, DHCP, IPAM monitoring for NocVault suite",
   "main": "api/server.js",
   "scripts": {
     "api": "node api/server.js",

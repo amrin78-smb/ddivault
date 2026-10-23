@@ -10,11 +10,22 @@ import CornersToggle from '@/components/CornersToggle';
 
 function DDIVaultLogo({ className }: { className?: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 46" className={className}>
-      <circle cx="19" cy="22" r="15" fill="none" stroke="#d97706" strokeWidth="2"/>
-      <ellipse cx="19" cy="22" rx="7" ry="15" fill="none" stroke="#d97706" strokeWidth="1.5"/>
-      <line x1="4" y1="22" x2="34" y2="22" stroke="#d97706" strokeWidth="1.5"/>
-      <text x="50" y="30" fontSize="26" fontWeight="700" letterSpacing="-0.3" fontFamily="'Rubik','Helvetica Neue',Helvetica,Arial,sans-serif">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 196 46" className={className}>
+      {/* Orbital globe with nodes on the rings (DNS/DHCP/IPAM). Flat fills, no
+          gradient: the shell is dark in both themes, so a fade would be
+          half-invisible exactly where the mark is used most. Keep this in sync
+          with /ddivault-logo.svg in net-vault/public and nocvault-website. */}
+      <g fill="none" stroke="#d97706" strokeWidth="2.4">
+        <circle cx="20" cy="23" r="16"/>
+        <ellipse cx="20" cy="23" rx="7.5" ry="16"/>
+      </g>
+      <line x1="4" y1="23" x2="36" y2="23" stroke="#d97706" strokeWidth="2.4"/>
+      <g fill="#d97706">
+        <circle cx="20" cy="7" r="3.6"/>
+        <circle cx="6.1" cy="31" r="3.6"/>
+        <circle cx="33.9" cy="31" r="3.6"/>
+      </g>
+      <text x="52" y="30" fontSize="26" fontWeight="700" letterSpacing="-0.3" fontFamily="'Rubik','Helvetica Neue',Helvetica,Arial,sans-serif">
         <tspan fill="#ffffff">DDI</tspan>
         <tspan fill="#d97706">Vault</tspan>
       </text>
