@@ -119,6 +119,38 @@ function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "    [!!] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "    [XX] $msg" -ForegroundColor Red }
+# ======================================================================
+# NocVault-Tls: the suite's shared TLS terminator
+# ======================================================================
+# The suite installer can front all four consoles with ONE terminator
+# (installer\terminator\ in the netvault repo): each console moves to
+# 127.0.0.1:1300X and NocVault-Tls takes over the public port.
+#
+# ⛔ ITS DependOnService NAMES THIS APP'S SERVICE, SO IT MUST BE STOPPED FIRST.
+# Windows REFUSES `sc stop` on a service that has a RUNNING dependent (1051,
+# ERROR_DEPENDENT_SERVICES_RUNNING) and `sc.exe stop` does not stop dependents
+# for you. Without this, the stop below silently fails, the update rebuilds
+# node_modules and .next underneath a LIVE process, and the only sign is a
+# discarded exit code.
+#
+# Both functions no-op - silently and deliberately - when there is no terminator,
+# which is every install that never configured a certificate.
+function Stop-NocVaultTls {
+    if (-not (Get-Service -Name 'NocVault-Tls' -ErrorAction SilentlyContinue)) { return }
+    $ErrorActionPreference = 'Continue'
+    $null = & sc.exe stop NocVault-Tls 2>&1
+    Start-Sleep -Seconds 2
+}
+# And started again afterwards: with this app's console bound to 127.0.0.1, the
+# terminator is the ONLY route to it. Leaving it down ends the update with a
+# console nobody can reach.
+function Start-NocVaultTls {
+    if (-not (Get-Service -Name 'NocVault-Tls' -ErrorAction SilentlyContinue)) { return }
+    $ErrorActionPreference = 'Continue'
+    $null = & sc.exe start NocVault-Tls 2>&1
+    Start-Sleep -Seconds 3
+}
+
 
 function Get-ServiceStatus($name) {
     $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
@@ -281,6 +313,7 @@ function Invoke-Rollback([string]$Reason) {
         # the safe order the main update flow already uses (STEP 1 stops services
         # before STEP 5/6 ever touch node_modules/.next).
         Write-Step "Stopping services before restoring last known-good version"
+        Stop-NocVaultTls
         # Always issue the stop, regardless of sampled status - a service that
         # isn't currently "RUNNING" isn't necessarily fully stopped (crash-loop,
         # START_PENDING, or NSSM's own PAUSED throttle state all leave its
@@ -349,6 +382,7 @@ function Invoke-Rollback([string]$Reason) {
         Start-Sleep -Seconds 8
         sc.exe start DDIVault-Collector | Out-Null
         Start-Sleep -Seconds 3
+        Start-NocVaultTls
 
         # Informational only - SCM's STARTPENDING -> RUNNING transition can lag
         # several seconds behind the process actually serving traffic (confirmed
@@ -440,6 +474,7 @@ if (-not (Test-Path $LogDir))      { New-Item -ItemType Directory -Force -Path $
 
 # STEP 1 - Stop services
 Write-Step "Stopping services..."
+Stop-NocVaultTls
 foreach ($svc in @("DDIVault-App", "DDIVault-API", "DDIVault-Collector")) {
     $status = Get-ServiceStatus $svc
     if ($status -eq "NOT_FOUND") {
@@ -593,6 +628,7 @@ if ($hasLeftoverBackup -and (Test-Path $StatusPath)) {
         sc.exe start DDIVault-App | Out-Null
         Start-Sleep -Seconds 8
         sc.exe start DDIVault-Collector | Out-Null
+        Start-NocVaultTls
         try { Stop-Transcript | Out-Null } catch {}
         exit 1
     }
@@ -864,6 +900,108 @@ function Set-EnvFileVars([string]$path, [hashtable]$set, [string[]]$remove) {
         return $true
     }
     return $false
+}
+
+# ======================================================================
+# Runtime-settable env keys: the env FILE is authoritative, not NSSM
+# ======================================================================
+# These are the keys a customer can change at runtime from the app's Settings
+# page. Settings writes them to the env file the app reads, but dotenv /
+# loadEnvConfig NEVER override a variable that is already present in
+# process.env - so a value pinned in the NSSM service environment
+# (AppEnvironmentExtra) wins forever and the Settings write is a silent no-op.
+# The suite installer no longer pins them, but NSSM keeps them in the service's
+# own registry key, so a box provisioned before that change still has them and
+# converges only here.
+#
+# TLS_* / ENTRA_* are listed ahead of the Settings work that will manage them.
+# That is safe, because Clear-NssmEnvKeys is only ever handed the keys the env
+# file ALREADY supplies (see Get-EnvFileSuppliedKeys at the call site): a key
+# nothing supplies is left alone, since removing it would leave the app with no
+# value for it at all - which would break sign-in on a fresh install. They
+# therefore become self-converging the moment Settings starts writing them, with
+# no further installer change needed.
+$RuntimeSettableEnvKeys = @(
+    'NEXTAUTH_URL',
+    'TLS_CERT_PATH', 'TLS_KEY_PATH',
+    'ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET'
+)
+
+# Which of $keys the env file at $path actually defines with a NON-EMPTY value.
+# Reads raw and splits on \r?\n itself: the suite installer writes these files
+# LF-only while later Add-Content/Set-Content edits write CRLF, and an anchored
+# regex tested against a line that still carries its trailing \r stops matching.
+function Get-EnvFileSuppliedKeys([string]$path, [string[]]$keys) {
+    $found = @()
+    if (-not $path) { return $found }
+    if (-not (Test-Path -LiteralPath $path)) { return $found }
+    $raw = ''
+    try { $raw = (Get-Content -LiteralPath $path -Raw) } catch { return $found }
+    if (-not $raw) { return $found }
+    $lines = @($raw -split "`r?`n" | ForEach-Object { $_.Trim() })
+    foreach ($k in $keys) {
+        foreach ($l in $lines) {
+            if ($l -match ('^' + [regex]::Escape($k) + '\s*=\s*\S')) { $found += $k; break }
+        }
+    }
+    return $found
+}
+
+# Remove $keys from a service's NSSM AppEnvironmentExtra, PRESERVING every other
+# entry (that block holds DB passwords this script never sees).
+#
+# NSSM has no "delete one entry" verb for a multi-valued setting, so this is a
+# read -> filter -> write-back:
+#   1. nssm get <svc> AppEnvironmentExtra     (nssm emits UTF-16; strip the NULs
+#      that survive the capture)
+#   2. keep only the lines that still parse as KEY=VALUE and are not in $keys
+#   3. nssm set <svc> AppEnvironmentExtra "<kept lines joined with a newline>"
+#      - the same single-argument newline-joined form the suite installer uses -
+#      or, when NOTHING is left, nssm RESET <svc> AppEnvironmentExtra, which
+#      deletes the registry value outright. `set` with an empty string is not a
+#      way to clear a multi-valued setting.
+# Step 2's KEY=VALUE filter is load-bearing: feeding the raw read-back straight
+# into `set` is what made an earlier read-modify-write fail with "Environment
+# should comprise strings of the form KEY=VALUE" (exit 6) - the UTF-16 NULs and
+# the blank trailing line are not valid entries.
+#
+# Returns 'written' (at least one key removed), 'nochange' (already converged,
+# or nothing to read) or 'failed'. NEVER throws, and bails out WITHOUT writing
+# when the read-back does not look like a real env block, so an unreadable read
+# can never blank a working service's environment. $ErrorActionPreference is
+# relaxed around the native calls (assignment inside the function is
+# function-scoped and reverts on return): nssm writes to stderr, which an
+# ambient 'Stop' would turn into a terminating error.
+function Clear-NssmEnvKeys([string]$nssmExe, [string]$service, [string[]]$keys) {
+    if (-not $nssmExe) { return 'failed' }
+    if (-not (Test-Path -LiteralPath $nssmExe)) { return 'failed' }
+    if (@($keys).Count -eq 0) { return 'nochange' }
+    $ErrorActionPreference = 'Continue'
+    $raw = ''
+    try { $raw = (& $nssmExe get $service AppEnvironmentExtra 2>&1 | Out-String) } catch { $raw = '' }
+    $raw = $raw -replace "`0", ''
+    $lines = @($raw -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' })
+    # A real block carries many entries. 0-1 parseable lines means the read
+    # failed, the value is unset, or the service does not exist - in all three
+    # cases write nothing.
+    if ($lines.Count -lt 2) { return 'nochange' }
+    $keep    = @()
+    $dropped = 0
+    foreach ($l in $lines) {
+        $name = ($l -split '=', 2)[0]
+        if (@($keys) -contains $name) { $dropped++; continue }
+        $keep += $l
+    }
+    if ($dropped -eq 0) { return 'nochange' }
+    try {
+        if (@($keep).Count -gt 0) {
+            $null = & $nssmExe set $service AppEnvironmentExtra ($keep -join "`n") 2>&1
+        } else {
+            $null = & $nssmExe reset $service AppEnvironmentExtra 2>&1
+        }
+    } catch { return 'failed' }
+    if ($LASTEXITCODE -ne 0) { return 'failed' }
+    return 'written'
 }
 
 # Locate the nssm.exe that manages a service, from its own registry ImagePath.
@@ -1194,6 +1332,35 @@ if ($proc.ExitCode -ne 0) {
 }
 Write-OK "Frontend build succeeded"
 
+# Settings lets a customer change the console address (NEXTAUTH_URL) at runtime by
+# writing it to frontend\.env.local, which is the file this service actually loads.
+# dotenv/loadEnvConfig do not override a variable already in process.env, so
+# anything NSSM pins in AppEnvironmentExtra shadows that file permanently and the
+# Settings write silently does nothing. The suite installer no longer pins these
+# keys, but NSSM persists them per-service in the registry - so installs made
+# before that change only converge here. Idempotent: a converged box reports
+# "already clear" and writes nothing. NON-FATAL by design - a service env we
+# could not rewrite is a Settings page that does not take effect, not a reason to
+# fail (and roll back) an otherwise healthy update.
+Write-Step "Making the env file authoritative for runtime-settable keys (DDIVault-App)"
+$ddiSvcEnvFile = $frontendEnvPath
+$ddiSvcKeys    = Get-EnvFileSuppliedKeys $ddiSvcEnvFile $RuntimeSettableEnvKeys
+$ddiSvcNssm    = Get-NssmForService 'DDIVault-App'
+if (@($ddiSvcKeys).Count -eq 0) {
+    Write-Warn "None of the runtime-settable keys are set in $ddiSvcEnvFile - leaving the DDIVault-App service environment untouched (clearing a key no file supplies would leave the app with no value for it)"
+} elseif (-not $ddiSvcNssm) {
+    Write-Warn "nssm.exe not found - could not clear $($ddiSvcKeys -join ', ') from the DDIVault-App service environment. If still pinned there it overrides the env file and Settings changes will not apply. Check: nssm get DDIVault-App AppEnvironmentExtra"
+} else {
+    $ddiSvcRes = Clear-NssmEnvKeys $ddiSvcNssm 'DDIVault-App' $ddiSvcKeys
+    if ($ddiSvcRes -eq 'written') {
+        Write-OK "Cleared $($ddiSvcKeys -join ', ') from the DDIVault-App service environment - the env file is now authoritative"
+    } elseif ($ddiSvcRes -eq 'nochange') {
+        Write-OK "DDIVault-App service environment already clear of $($ddiSvcKeys -join ', ') - the env file is authoritative"
+    } else {
+        Write-Warn "Could not update the DDIVault-App service environment - if $($ddiSvcKeys -join ', ') is still pinned there it overrides the env file and Settings changes will not apply. Check: nssm get DDIVault-App AppEnvironmentExtra"
+    }
+}
+
 # STEP 7 - Start services
 Write-Step "Starting services..."
 $currentStage = 'service-start'
@@ -1208,6 +1375,8 @@ Start-Sleep -Seconds 12
 sc.exe start DDIVault-Collector | Out-Null
 Write-Host "    DDIVault-Collector started - waiting 3s..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 3
+
+Start-NocVaultTls
 
 # STEP 7.5 - Ensure the agent-WS ingest firewall port is open (Phase 4b)
 # DDI_WS_PORT (3011) is the agent-WS ingest, bound to all interfaces inside the
