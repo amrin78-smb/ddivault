@@ -453,10 +453,15 @@ function Invoke-Rollback([string]$Reason) {
         }
 
         if ($envBackupForRollback) {
-            if ($envBackupForRollback.Root) {
+            # ⛔ `$null -ne`, NOT A TRUTHINESS TEST. An EMPTY string is falsy in
+            # PowerShell, so a pre-update .env.local that existed but was empty
+            # was silently not restored — leaving whatever the failed run had
+            # written in its place, which is the opposite of a rollback.
+            # LogVault's equivalent already does this correctly.
+            if ($null -ne $envBackupForRollback.Root) {
                 Set-Content -LiteralPath "$AppDir\.env.local" -Value $envBackupForRollback.Root -NoNewline -Encoding UTF8
             }
-            if ($envBackupForRollback.Frontend) {
+            if ($null -ne $envBackupForRollback.Frontend) {
                 Set-Content -LiteralPath "$FrontendDir\.env.local" -Value $envBackupForRollback.Frontend -NoNewline -Encoding UTF8
             }
         }

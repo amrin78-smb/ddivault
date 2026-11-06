@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.32.4': [
+    "Fixed: a rollback did not restore an environment file that existed but was empty before the update, leaving whatever the failed run had written. An empty file is a value, not an absence.",
+    "Hardening: a failed update whose own rollback also failed left behind the last intact copy of the working install, and this app already refused to overwrite it - that protection is unchanged; the same guard now exists in the other three.",
+  ],
   '1.32.3': [
     "Fixed: if an update failed partway through, the shared HTTPS front door could be left stopped - which takes ALL FOUR consoles off the air, not just this app's. The front door is now restored on every path out of an update, including an unexpected error and an abandoned rollback.",
     "Fixed: an update could report success while the HTTPS front door had failed to come back and every public port was dead. The health check it relied on talks to this app directly, behind the front door, so it answered either way. The update now waits for the front door to be running and checks the public port itself before declaring success.",
