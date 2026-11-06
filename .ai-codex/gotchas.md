@@ -377,3 +377,33 @@
 
 - ⛔ **Alerts on a fluctuating metric MUST be sustained, and fire/clear must not share a threshold.** `haMonitor.js`'s health check fired on any single poll below 80 and cleared the instant one reached 80 — so a score oscillating around the line raised and resolved on every poll, and since `fireAlertDeduped` only dedupes against an OPEN alert, each cycle wrote a NEW row. Live: 462 health alerts in 7 days from 2 servers, 68% of the app's entire alert volume. Replaying real `server_health_history`: single-sample 462 → hysteresis alone 233 → 3-sample sustain **5**. The distribution showed why — across 9,935 samples NOTHING landed in 80-84; the score sits 90+ and dips to ~75 for one poll. Three knobs now: `HEALTH_SUSTAIN_SAMPLES` (the one that matters), `HEALTH_RECOVER_AT` (hysteresis gap), `REFIRE_COOLDOWN_MIN` (a condition that clears and returns within the hour is flapping, not recurring — applies to every `fireAlertDeduped` caller). Same lesson as SpanVault's wireless RF alerting. Tune these by REPLAYING history, never by guessing a number.
 - **The Operations Center dashboard is split into 5 sections, and only the open one mounts — which also gates the 30s auto-refresh.** `DashboardTab` holds `section` (persisted to `localStorage['ddivault-dash-section']`). Its ~10 child widgets self-fetch on mount and re-fetch when `refreshNonce` ticks every 30s, so an unmounted section neither loads nor participates in the refresh — that is the main saving, and it is ongoing rather than first-paint-only. The inline loader was split in two: `load()` fetches `/dashboard/stats`, `/scopes/history/all` and `/dashboard/ip-distribution` ALWAYS, and `loadCapacity()` fetches `/scopes` + `/dashboard/lease-trend` only while Capacity is open. **Do not "tidy" scopeHistory or ipDist into the capacity-only loader** — they are only *charted* in Capacity but are also consumed by the always-visible KPI strip (`scopeHistory`→`trends()` drives the delta arrows, `ipDist` supplies the Unknown Devices tile), so gating either silently blanks part of the strip. The tab bar reuses the existing `.settings-tabs` container, and its buttons need `className="settings-tab"` (+` active`) — the CSS styles `.settings-tab`, NOT a bare `button`, so a bare button renders completely unstyled. **When adding a section, make sure it cannot render empty**: several widgets self-hide when they have nothing to show (`PillarScorecards` returns null with <2 data points), so a section containing only self-hiding widgets shows a blank page on a healthy system — the same mistake was shipped in SpanVault 1.103.0 and had to be fixed.
+
+### The shared TLS front door must come back on EVERY path out of an update
+
+`installer/Update-DDIVault.ps1` stops `NocVault-Tls` only when that service
+actually declares a dependency on this app's service — but once stopped, it
+fronts **all four** consoles, so failing to restart it is a suite-wide outage,
+not an app-level one. Three real holes, all fixed 2026-11-07:
+
+1. **The Stop/Start pair sat inside the main `try` with no `finally`.** An
+   exception, an `exit`, or an early `return` from the rollback skipped the
+   Start. (LogVault's rollback had exactly that shape: `return $false` on an
+   un-revertable source, several lines above its own Start call.) The Start now
+   runs from the script-level `finally`, and is idempotent — it returns at once
+   unless THIS run stopped the service.
+2. **The start's exit code was discarded, and nothing downstream could
+   notice.** `Wait-Healthy` probes this app's API on `127.0.0.1`, which sits
+   BEHIND the front door and answers whether or not it is up — so a terminator
+   that failed to start still printed "health check passed", wrote
+   `success:true` and exited 0 with every public port dead. The start now waits
+   for `Running` and probes the PUBLIC port.
+3. **The stop slept 2 seconds instead of waiting for `Stopped`.** The cutover
+   sets `AppStopMethodConsole 15000` on that service deliberately, because it
+   drains every live socket (upgraded WebSockets included) before exiting — so
+   at t+2s it is routinely still `STOP_PENDING`, this app's own `sc stop` is
+   then refused with **1051**, and the `npm install`/build that follows rewrites
+   `node_modules` underneath a live process.
+
+⛔ Only a parse gate on **PowerShell 5.1** can validate these scripts, and a
+parse gate cannot catch an undefined function — check that every `Write-*`
+helper a new line calls is actually defined in that same file.
