@@ -14,7 +14,67 @@
  * Global fallback (from .env.local) used if server has no auth config.
  */
 
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
+
+// ════════════════════════════════════════════════════════════════════════════
+// PowerShell argument escaping — SECURITY CRITICAL, do not bypass
+// ════════════════════════════════════════════════════════════════════════════
+// Every script in this file is built by string interpolation and then executed ON A
+// CUSTOMER'S Windows DNS/DHCP server, over WinRM, as the configured WinRM identity
+// (frequently a domain account with DNS/DHCP admin rights). A caller-supplied value
+// that can close its own quoting context is therefore remote code execution on a
+// domain controller, not a cosmetic bug.
+//
+// There are exactly two kinds of interpolation site below, and each has its own helper:
+//
+//   psq(v)    — the value sits INSIDE a '...' PowerShell string literal
+//               (`-ZoneName '${psq(zoneName)}'`). A single-quoted PowerShell literal
+//               has precisely one escape — a doubled quote ('') — so doubling every
+//               ' makes it impossible to leave the literal. Nothing else needs
+//               escaping in that context: ; & | % $ " \ and newlines are all inert
+//               inside '...'.
+//
+//   psNum(v, fallback, min, max)
+//             — the value sits in an UNQUOTED numeric position
+//               (`-Port ${...}`, `-Priority ${...}`, `AddDays(-${...})`). There is no
+//               quoting to escape out of here, so ANY non-digit text is parsed as
+//               PowerShell code. psNum can only ever emit digits (with a leading '-'
+//               only when `min` permits a negative), whatever it is handed.
+//
+// The credential path has always escaped its username/password this way; the rest of
+// the file did not, and a handful of builders did it inconsistently — that gap was the
+// vulnerability. RULE for anything added below: if you write ${...} inside a PS script
+// string, it goes through psq() when it sits inside '...', and through psNum() when it
+// does not. There is no third option.
+//
+// Both are exported, mainly so they can be unit-tested directly.
+
+/** Escape a value for embedding inside a single-quoted PowerShell string literal. */
+const psq = (v) => String(v == null ? '' : v).replace(/'/g, "''");
+
+/**
+ * Coerce a value for an UNQUOTED numeric position in a PowerShell script.
+ *
+ * Returns a string of digits (optionally sign-prefixed when `min` allows negatives),
+ * or `fallback` when the input cannot be used as a number. `fallback` must be a
+ * literal number written in this file — never a caller-supplied value.
+ */
+function psNum(v, fallback, min, max) {
+  // Only a number or a string can be a number. Anything else (null, undefined,
+  // boolean, object, array, function) is unusable — including '' and '   ', which
+  // Number() would silently turn into 0.
+  if (typeof v !== 'number' && typeof v !== 'string') return fallback;
+  if (typeof v === 'string' && v.trim() === '') return fallback;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;           // NaN, Infinity, '12abc', '0x'…
+  let i = Math.floor(n);
+  if (Number.isFinite(min) && i < min) i = Math.floor(min);
+  if (Number.isFinite(max) && i > max) i = Math.floor(max);
+  const s = String(i);
+  // Belt and braces: never emit anything that is not a plain integer literal
+  // (guards exponential notation such as "1e+21" from an unclamped huge input).
+  return /^-?\d+$/.test(s) ? s : fallback;
+}
 
 // Every PowerShell/WinRM call used to run through execSync, which BLOCKS the Node
 // event loop for the whole duration (up to PS_DNS_TIMEOUT = 60s). While blocked,
@@ -22,21 +82,36 @@ const { exec } = require('child_process');
 // connectionTimeoutMillis timer, so a perfectly healthy database reported
 // "Connection terminated due to connection timeout" purely because the loop was
 // frozen. Same freeze hit the API server, where a single DNS write stalled every
-// other HTTP request. exec() keeps the loop free; callers await instead.
+// other HTTP request. execFile() keeps the loop free; callers await instead.
+//
+// execFile, NOT exec: exec() spawns cmd.exe, so the script crossed TWO quoting layers
+// (cmd.exe's and PowerShell's). That required escaping the command for cmd — which the
+// old code did with `"` -> `\"`, a form cmd.exe does not even honour (it toggles on the
+// bare quote and has no backslash escape), while cmd.exe additionally expanded %VAR%
+// inside the string and mangled backslashes. execFile hands powershell.exe its argv
+// directly: no shell, no second quoting layer, no %VAR% expansion, and the whole PS
+// command travels as ONE -Command argument.
 //
 // Resolves to stdout (not {stdout,stderr}) so call sites keep their .trim() shape,
 // and re-attaches stdout/stderr to the error so the existing catch blocks — which
 // read err.stderr/err.stdout — behave exactly as they did under execSync.
 const PS_MAX_BUFFER = 32 * 1024 * 1024; // was exec/execSync's 1MB default; big DNS zones and DHCP log tails overflowed it
-function execAsync(cmd, opts) {
+
+// Env var the credential path uses to hand the decrypted password to the child
+// PowerShell. It is set ONLY on that child's environment (never on this process),
+// never written to argv — a command line is world-readable via
+// Win32_Process.CommandLine — and never logged.
+const PS_PASS_ENV = 'DDI_PS_PASSWORD';
+
+function execFileAsync(file, args, opts) {
   return new Promise((resolve, reject) => {
-    exec(cmd, opts, (err, stdout, stderr) => {
+    execFile(file, args, opts, (err, stdout, stderr) => {
       if (err) {
         err.stdout = stdout;
         err.stderr = stderr;
         return reject(err);
       }
-      // execSync forwarded the child's stderr to our own stderr by default; exec
+      // execSync forwarded the child's stderr to our own stderr by default; execFile
       // captures it instead. Surface it (bounded) so a command that SUCCEEDS while
       // emitting a PowerShell warning stays as visible in the logs as it was before.
       if (stderr && String(stderr).trim()) {
@@ -66,19 +141,23 @@ const DHCP_LOG_PS_TIMEOUT = parseInt(process.env.PS_DHCP_LOG_TIMEOUT_MS || '1200
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
+// Upper bound used for every DNS TTL / New-TimeSpan -Seconds position. Max int32
+// seconds (~68 years) is far beyond any real TTL and keeps the emitted literal short.
+const TTL_MAX = 2147483647;
+
 // Global fallback auth (from .env.local)
 const DEFAULT_AUTH_MODE = process.env.PS_AUTH_MODE || 'kerberos';
 const DEFAULT_USERNAME  = process.env.PS_USERNAME  || '';
 const DEFAULT_PASSWORD  = process.env.PS_PASSWORD  || '';
 
 /**
- * Build PowerShell command string for a given server config.
+ * Build and run a PowerShell command for a given server config.
  *
  * @param {string} serverIp
  * @param {string} script      - PS script to execute
  * @param {object} auth        - { auth_mode, ps_username, ps_password, winrm_port, winrm_https }
  * @param {boolean} returnRaw  - if true, return stdout as-is; if false, parse JSON
- * @returns {string|object|null}
+ * @returns {Promise<string|object|null>}
  */
 async function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
   // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which
@@ -95,47 +174,61 @@ async function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
   const port     = auth?.winrm_port  || 5985;
   const useHttps = auth?.winrm_https || false;
 
-  // Escape script for PowerShell -Command argument
-  const safeScript = script.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // The IP is interpolated into a '...' literal, and the port into an unquoted
+  // numeric position — both are DB-sourced, so both go through the helpers.
+  const safeIp   = psq(cleanIp);
+  const portOpt  = port !== 5985 ? ` -Port ${psNum(port, 5985, 1, 65535)}` : '';
+  const httpsOpt = useHttps ? ' -UseSSL' : '';
 
   let psCmd;
+  let childEnv = null; // only the credential path needs a modified environment
 
   if (mode === 'local') {
     // Run directly on this machine — only works if NocVault IS the target server
-    psCmd = `powershell.exe -NonInteractive -NoProfile -Command "try { ${safeScript} } catch { Write-Error $_.Exception.Message; exit 1 }"`;
+    psCmd = `try { ${script} } catch { Write-Error $_.Exception.Message; exit 1 }`;
 
   } else if (mode === 'credential') {
     if (!user || !pass) {
       console.error(`[PS] credential mode requires ps_username and ps_password for ${cleanIp}`);
       return null;
     }
-    const safePass = pass.replace(/'/g, "''");
-    const safeUser = user.replace(/'/g, "''");
-    const portOpt  = port !== 5985 ? ` -Port ${port}` : '';
-    const httpsOpt = useHttps ? ' -UseSSL' : '';
+    // The decrypted password reaches PowerShell through the child's environment and is
+    // read inside the script as $env:DDI_PS_PASSWORD — it never appears in the command
+    // line (world-readable via Win32_Process.CommandLine) nor in the script text.
     // NOTE: the inner script already pipes to ConvertTo-Json — do NOT add a second
     // ConvertTo-Json here or the output gets double-encoded (a JSON string of a JSON
     // string), which JSON.parse turns back into a string, not an array/object.
-    psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +
-      `$secPass = ConvertTo-SecureString '${safePass}' -AsPlainText -Force; ` +
-      `$cred = New-Object System.Management.Automation.PSCredential('${safeUser}', $secPass); ` +
+    psCmd =
+      `$secPass = ConvertTo-SecureString $env:${PS_PASS_ENV} -AsPlainText -Force; ` +
+      `$cred = New-Object System.Management.Automation.PSCredential('${psq(user)}', $secPass); ` +
       `try { ` +
-        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${safeScript} } ` +
-      `} catch { Write-Error $_.Exception.Message; exit 1 }" `;
+        `Invoke-Command -ComputerName '${safeIp}'${portOpt}${httpsOpt} -Credential $cred -ScriptBlock { ${script} } ` +
+      `} catch { Write-Error $_.Exception.Message; exit 1 }`;
+    childEnv = { ...process.env, [PS_PASS_ENV]: pass };
 
   } else {
     // kerberos — use current Windows identity (NocVault service account)
-    const portOpt  = port !== 5985 ? ` -Port ${port}` : '';
-    const httpsOpt = useHttps ? ' -UseSSL' : '';
     // NOTE: inner script already emits JSON — no second ConvertTo-Json (see above).
-    psCmd = `powershell.exe -NonInteractive -NoProfile -Command "` +
+    psCmd =
       `try { ` +
-        `Invoke-Command -ComputerName '${cleanIp}'${portOpt}${httpsOpt} -ScriptBlock { ${safeScript} } ` +
-      `} catch { Write-Error $_.Exception.Message; exit 1 }"`;
+        `Invoke-Command -ComputerName '${safeIp}'${portOpt}${httpsOpt} -ScriptBlock { ${script} } ` +
+      `} catch { Write-Error $_.Exception.Message; exit 1 }`;
   }
 
+  const opts = {
+    encoding: 'utf8',
+    timeout: timeoutMs || PS_TIMEOUT,
+    maxBuffer: PS_MAX_BUFFER,
+    windowsHide: true,
+  };
+  if (childEnv) opts.env = childEnv;
+
   try {
-    const raw = (await execAsync(psCmd, { encoding: 'utf8', timeout: timeoutMs || PS_TIMEOUT, maxBuffer: PS_MAX_BUFFER })).trim();
+    const raw = (await execFileAsync(
+      'powershell.exe',
+      ['-NonInteractive', '-NoProfile', '-Command', psCmd],
+      opts
+    )).trim();
     if (!raw) return returnRaw ? '' : null;
     if (returnRaw) return raw;
     return JSON.parse(raw);
@@ -148,12 +241,14 @@ async function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
 
 /**
  * Run a simple local PowerShell command — no remote, no auth.
+ * execFile (no shell) for the same reason as runPS — the script is one argv entry.
  */
 async function runLocalPS(script) {
   try {
-    return (await execAsync(
-      `powershell.exe -NonInteractive -NoProfile -Command "${script.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', timeout: PS_TIMEOUT, maxBuffer: PS_MAX_BUFFER }
+    return (await execFileAsync(
+      'powershell.exe',
+      ['-NonInteractive', '-NoProfile', '-Command', script],
+      { encoding: 'utf8', timeout: PS_TIMEOUT, maxBuffer: PS_MAX_BUFFER, windowsHide: true }
     )).trim();
   } catch (err) {
     console.error('[PS] Local command failed:', (err.stderr || err.message || '').slice(0, 200));
@@ -168,8 +263,9 @@ async function runLocalPS(script) {
 async function addToTrustedHosts(ip) {
   const cleanIp = (ip || '').replace(/\/\d+$/, '').trim();
   if (!cleanIp) return;
-  // Single line — runLocalPS passes this via -Command, and cmd.exe truncates -Command strings at newlines.
-  const script = `$current = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts -ErrorAction SilentlyContinue).Value; $ips = if ($current) { $current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } } else { @() }; if ($ips -notcontains '${cleanIp}') { $newList = ($ips + '${cleanIp}') -join ','; Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newList -Force; Write-Output 'added' } else { Write-Output 'exists' }`;
+  const safeIp = psq(cleanIp);
+  // Single line — kept as a deliberate convention across this file (see getDhcpLeases).
+  const script = `$current = (Get-Item WSMan:\\localhost\\Client\\TrustedHosts -ErrorAction SilentlyContinue).Value; $ips = if ($current) { $current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } } else { @() }; if ($ips -notcontains '${safeIp}') { $newList = ($ips + '${safeIp}') -join ','; Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value $newList -Force; Write-Output 'added' } else { Write-Output 'exists' }`;
   try {
     const result = await runLocalPS(script);
     console.log(`[TrustedHosts] ${cleanIp}: ${result || 'failed'}`);
@@ -219,8 +315,8 @@ async function getDhcpScopes(serverIp, auth) {
 
 async function getDhcpLeases(serverIp, auth) {
   // -AllScope is not supported on PS5, so loop over each scope. Keep this on a
-  // SINGLE line — runPS passes the script via -Command, and cmd.exe truncates
-  // -Command strings at newlines (which previously caused "Missing closing '}'").
+  // SINGLE line — a long-standing convention in this file (it predates the shell
+  // removal, which relaxed the hard newline constraint; don't reformat).
   const script = `$all = foreach ($s in (Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId)) { Get-DhcpServerv4Lease -ScopeId $s -ErrorAction SilentlyContinue | Select-Object ScopeId,IPAddress,HostName,ClientId,AddressState,LeaseExpiryTime }; $all | ConvertTo-Json -Depth 5 -Compress`;
   const r = await runPS(serverIp, script, auth);
   if (!r) return [];
@@ -230,7 +326,7 @@ async function getDhcpLeases(serverIp, auth) {
 // scopeId optional — when null/omitted, returns reservations across ALL scopes.
 async function getDhcpReservations(serverIp, scopeId, auth) {
   const script = scopeId
-    ? `Get-DhcpServerv4Reservation -ScopeId '${scopeId}' | Select-Object ScopeId,IPAddress,ClientId,Name,Description,Type | ConvertTo-Json -Depth 5 -Compress`
+    ? `Get-DhcpServerv4Reservation -ScopeId '${psq(scopeId)}' | Select-Object ScopeId,IPAddress,ClientId,Name,Description,Type | ConvertTo-Json -Depth 5 -Compress`
     : `$scopes = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId; $all = foreach ($s in $scopes) { Get-DhcpServerv4Reservation -ScopeId $s -ErrorAction SilentlyContinue | Select-Object ScopeId,IPAddress,ClientId,Name,Description,Type }; $all | ConvertTo-Json -Depth 5 -Compress`;
   const r = await runPS(serverIp, script, auth);
   if (!r) return [];
@@ -242,15 +338,15 @@ async function getDhcpReservations(serverIp, scopeId, auth) {
 // ════════════════════════════════════════════════════════════
 
 async function addDhcpReservation(serverIp, scopeId, ipAddress, macAddress, name, auth) {
-  const mac    = macAddress.replace(/[:\s]/g, '-').toUpperCase();
-  const saName = (name || ipAddress).replace(/'/g, "''");
-  const script = `Add-DhcpServerv4Reservation -ScopeId '${scopeId}' -IPAddress '${ipAddress}' -ClientId '${mac}' -Name '${saName}' -ErrorAction Stop; Write-Output 'ok'`;
+  // The MAC normaliser strips ':' and whitespace but NOT quotes — psq still required.
+  const mac    = String(macAddress == null ? '' : macAddress).replace(/[:\s]/g, '-').toUpperCase();
+  const script = `Add-DhcpServerv4Reservation -ScopeId '${psq(scopeId)}' -IPAddress '${psq(ipAddress)}' -ClientId '${psq(mac)}' -Name '${psq(name || ipAddress)}' -ErrorAction Stop; Write-Output 'ok'`;
   const r = await runPS(serverIp, script, auth, true);
   return !!(r && r.includes('ok'));
 }
 
 async function removeDhcpReservation(serverIp, scopeId, ipAddress, auth) {
-  const script = `Remove-DhcpServerv4Reservation -ScopeId '${scopeId}' -IPAddress '${ipAddress}' -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Remove-DhcpServerv4Reservation -ScopeId '${psq(scopeId)}' -IPAddress '${psq(ipAddress)}' -ErrorAction Stop; Write-Output 'ok'`;
   const r = await runPS(serverIp, script, auth, true);
   return !!(r && r.includes('ok'));
 }
@@ -259,10 +355,8 @@ async function createDhcpScope(serverIp, auth, scope) {
   // scope = { name, startRange, endRange, subnetMask, description, leaseDuration, state }
   const ip = cleanIp(serverIp);
   const state = scope.state || 'Active';
-  const desc = (scope.description || '').replace(/'/g, "''");
-  const name = (scope.name || '').replace(/'/g, "''");
   const duration = scope.leaseDuration || '8.00:00:00'; // 8 days default
-  const script = `Add-DhcpServerv4Scope -Name '${name}' -StartRange '${scope.startRange}' -EndRange '${scope.endRange}' -SubnetMask '${scope.subnetMask}' -Description '${desc}' -LeaseDuration '${duration}' -State '${state}' -PassThru | Select-Object ScopeId,Name,StartRange,EndRange,SubnetMask,State | ConvertTo-Json -Compress`;
+  const script = `Add-DhcpServerv4Scope -Name '${psq(scope.name || '')}' -StartRange '${psq(scope.startRange)}' -EndRange '${psq(scope.endRange)}' -SubnetMask '${psq(scope.subnetMask)}' -Description '${psq(scope.description || '')}' -LeaseDuration '${psq(duration)}' -State '${psq(state)}' -PassThru | Select-Object ScopeId,Name,StartRange,EndRange,SubnetMask,State | ConvertTo-Json -Compress`;
   return await runPS(ip, script, auth);
 }
 
@@ -270,48 +364,56 @@ async function editDhcpScope(serverIp, auth, scopeId, changes) {
   // changes = { name, description, leaseDuration, state }
   const ip = cleanIp(serverIp);
   const parts = [];
-  if (changes.name) parts.push(`-Name '${changes.name.replace(/'/g, "''")}'`);
-  if (changes.description !== undefined) parts.push(`-Description '${(changes.description||'').replace(/'/g, "''")}'`);
-  if (changes.leaseDuration) parts.push(`-LeaseDuration '${changes.leaseDuration}'`);
-  if (changes.state) parts.push(`-State '${changes.state}'`);
-  const script = `Set-DhcpServerv4Scope -ScopeId '${scopeId}' ${parts.join(' ')}; Write-Output 'ok'`;
+  if (changes.name) parts.push(`-Name '${psq(changes.name)}'`);
+  if (changes.description !== undefined) parts.push(`-Description '${psq(changes.description || '')}'`);
+  if (changes.leaseDuration) parts.push(`-LeaseDuration '${psq(changes.leaseDuration)}'`);
+  if (changes.state) parts.push(`-State '${psq(changes.state)}'`);
+  const script = `Set-DhcpServerv4Scope -ScopeId '${psq(scopeId)}' ${parts.join(' ')}; Write-Output 'ok'`;
   return await runPS(ip, script, auth, true);
 }
 
 async function setScopeState(serverIp, auth, scopeId, state) {
   const ip = cleanIp(serverIp);
-  const script = `Set-DhcpServerv4Scope -ScopeId '${scopeId}' -State '${state}'; Write-Output 'ok'`;
+  const script = `Set-DhcpServerv4Scope -ScopeId '${psq(scopeId)}' -State '${psq(state)}'; Write-Output 'ok'`;
   return await runPS(ip, script, auth, true);
 }
 
 async function deleteDhcpScope(serverIp, auth, scopeId) {
   const ip = cleanIp(serverIp);
-  const script = `Remove-DhcpServerv4Scope -ScopeId '${scopeId}' -Force; Write-Output 'ok'`;
+  const script = `Remove-DhcpServerv4Scope -ScopeId '${psq(scopeId)}' -Force; Write-Output 'ok'`;
   return await runPS(ip, script, auth, true);
 }
 
 async function getDhcpScopeOptions(serverIp, auth, scopeId) {
   const ip = cleanIp(serverIp);
-  const script = `Get-DhcpServerv4OptionValue -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | ForEach-Object { [PSCustomObject]@{ OptionId = $_.OptionId; Name = $_.Name; Value = ($_.Value -join ', ') } } | ConvertTo-Json -Compress`;
+  const script = `Get-DhcpServerv4OptionValue -ScopeId '${psq(scopeId)}' -ErrorAction SilentlyContinue | ForEach-Object { [PSCustomObject]@{ OptionId = $_.OptionId; Name = $_.Name; Value = ($_.Value -join ', ') } } | ConvertTo-Json -Compress`;
   return await runPS(ip, script, auth);
 }
 
 async function setDhcpScopeOption(serverIp, auth, scopeId, optionId, values) {
   const ip = cleanIp(serverIp);
-  const vals = values.map(v => `'${v}'`).join(',');
-  const script = `Set-DhcpServerv4OptionValue -ScopeId '${scopeId}' -OptionId ${optionId} -Value ${vals}; Write-Output 'ok'`;
+  // -OptionId is an UNQUOTED numeric position. There is no sane default for an option
+  // id, so an unusable one is rejected here rather than silently coerced; null is what
+  // runPS itself returns on failure, so callers already treat it as "did not apply".
+  const oid = psNum(optionId, null, 0, 255);
+  if (oid === null) {
+    console.error(`[PS] setDhcpScopeOption: invalid optionId ${JSON.stringify(optionId)}`);
+    return null;
+  }
+  const vals = (Array.isArray(values) ? values : [values]).map(v => `'${psq(v)}'`).join(',');
+  const script = `Set-DhcpServerv4OptionValue -ScopeId '${psq(scopeId)}' -OptionId ${oid} -Value ${vals}; Write-Output 'ok'`;
   return await runPS(ip, script, auth, true);
 }
 
 async function getDhcpExclusions(serverIp, auth, scopeId) {
   const ip = cleanIp(serverIp);
-  const script = `Get-DhcpServerv4ExclusionRange -ScopeId '${scopeId}' -ErrorAction SilentlyContinue | Select-Object StartRange,EndRange | ConvertTo-Json -Compress`;
+  const script = `Get-DhcpServerv4ExclusionRange -ScopeId '${psq(scopeId)}' -ErrorAction SilentlyContinue | Select-Object StartRange,EndRange | ConvertTo-Json -Compress`;
   return await runPS(ip, script, auth);
 }
 
 async function addDhcpExclusion(serverIp, auth, scopeId, startRange, endRange) {
   const ip = cleanIp(serverIp);
-  const script = `Add-DhcpServerv4ExclusionRange -ScopeId '${scopeId}' -StartRange '${startRange}' -EndRange '${endRange}'; Write-Output 'ok'`;
+  const script = `Add-DhcpServerv4ExclusionRange -ScopeId '${psq(scopeId)}' -StartRange '${psq(startRange)}' -EndRange '${psq(endRange)}'; Write-Output 'ok'`;
   return await runPS(ip, script, auth, true);
 }
 
@@ -326,15 +428,15 @@ async function getDnsZones(serverIp, auth) {
 }
 
 async function getDnsRecords(serverIp, zoneName, auth) {
-  // Single line — cmd.exe truncates -Command strings at newlines.
-  const script = `Get-DnsServerResourceRecord -ZoneName '${zoneName}' | ForEach-Object { $r = $_; $data = ''; try { if ($r.RecordData.IPv4Address) { $data = $r.RecordData.IPv4Address.IPAddressToString } elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString } elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias } elseif ($r.RecordData.MailExchange) { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference } elseif ($r.RecordData.NameServer) { $data = $r.RecordData.NameServer } elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText } else { $data = '' } } catch {}; [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data } } | ConvertTo-Json -Depth 5 -Compress`;
+  // Single line — file convention, kept deliberately.
+  const script = `Get-DnsServerResourceRecord -ZoneName '${psq(zoneName)}' | ForEach-Object { $r = $_; $data = ''; try { if ($r.RecordData.IPv4Address) { $data = $r.RecordData.IPv4Address.IPAddressToString } elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString } elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias } elseif ($r.RecordData.MailExchange) { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference } elseif ($r.RecordData.NameServer) { $data = $r.RecordData.NameServer } elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText } else { $data = '' } } catch {}; [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data } } | ConvertTo-Json -Depth 5 -Compress`;
   const r = await runPS(serverIp, script, auth, false, DNS_PS_TIMEOUT);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
 }
 
 async function getDnsServerStats(serverIp, auth) {
-  // Single line — cmd.exe truncates -Command strings at newlines.
+  // Single line — file convention, kept deliberately.
   const script = `$s = Get-DnsServerStatistics -ErrorAction SilentlyContinue; if ($s) { [PSCustomObject]@{ TotalQueries=$s.Query2Statistics.TotalReceived; TotalResponses=$s.Query2Statistics.TotalResponseSent; TotalFailures=$s.Query2Statistics.TotalFailure } | ConvertTo-Json -Compress }`;
   return await runPS(serverIp, script, auth, false, DNS_PS_TIMEOUT);
 }
@@ -347,14 +449,14 @@ async function getDnsServerRole(serverIp, auth) {
 
 // Get SOA record detail for a zone
 async function getDnsZoneSoaDetail(serverIp, auth, zoneName) {
-  const z = String(zoneName).replace(/'/g, "''");
+  const z = psq(zoneName);
   const script = `Get-DnsServerResourceRecord -ZoneName '${z}' -RRType Soa -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $soa = $_.RecordData; [PSCustomObject]@{ Serial=$soa.SerialNumber; PrimaryServer=$soa.PrimaryServer; AdminEmail=$soa.ResponsiblePerson; Refresh=$soa.RefreshInterval.TotalSeconds; Retry=$soa.RetryDelay.TotalSeconds; Expire=$soa.ExpireLimit.TotalSeconds; MinTTL=$soa.TimeToLive.TotalSeconds } } | ConvertTo-Json -Compress`;
   return await runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get record counts by type per zone
 async function getDnsZoneRecordCounts(serverIp, auth, zoneName) {
-  const z = String(zoneName).replace(/'/g, "''");
+  const z = psq(zoneName);
   const script = `$recs = Get-DnsServerResourceRecord -ZoneName '${z}' -ErrorAction SilentlyContinue; [PSCustomObject]@{ Total=$recs.Count; A=($recs | Where-Object RecordType -eq 'A').Count; PTR=($recs | Where-Object RecordType -eq 'PTR').Count; CNAME=($recs | Where-Object RecordType -eq 'CNAME').Count; MX=($recs | Where-Object RecordType -eq 'MX').Count; TXT=($recs | Where-Object RecordType -eq 'TXT').Count; SRV=($recs | Where-Object RecordType -eq 'SRV').Count; AAAA=($recs | Where-Object RecordType -eq 'AAAA').Count } | ConvertTo-Json -Compress`;
   return await runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
@@ -367,15 +469,17 @@ async function getDnsForwarders(serverIp, auth) {
 
 // Get scavenging/aging settings per zone
 async function getDnsZoneScavenging(serverIp, auth, zoneName) {
-  const z = String(zoneName).replace(/'/g, "''");
+  const z = psq(zoneName);
   const script = `Get-DnsServerZoneAging -ZoneName '${z}' -ErrorAction SilentlyContinue | Select-Object AgingEnabled,ScavengeServers,NoRefreshInterval,RefreshInterval | ConvertTo-Json -Compress`;
   return await runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
 // Get stale records (not updated in X days)
 async function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
-  const z = String(zoneName).replace(/'/g, "''");
-  const cutoff = staleDays || 90;
+  const z = psq(zoneName);
+  // UNQUOTED numeric position inside AddDays(-N) — the '-' is part of the script, so
+  // the emitted value must be a non-negative integer (min 1). 36500 days = 100 years.
+  const cutoff = psNum(staleDays || 90, 90, 1, 36500);
   // `$r = @(...)` + `ConvertTo-Json -InputObject` is deliberate, NOT a style choice.
   // Piping an EMPTY pipeline into ConvertTo-Json emits nothing at all, so runPS saw
   // empty output and returned null — identical to what it returns when the command
@@ -392,7 +496,7 @@ async function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
 
 // Test forwarder reachability (resolves a name via the forwarder, measures ms)
 async function testDnsForwarder(serverIp, auth, forwarderIp) {
-  const f = String(forwarderIp).replace(/'/g, "''");
+  const f = psq(forwarderIp);
   // Force an A-record lookup and use -ErrorAction Stop so a failed resolve lands
   // in catch; both branches emit an explicit [PSCustomObject] with a real
   // boolean Reachable (never the raw record array, which has no .Reachable).
@@ -416,81 +520,107 @@ async function getDnsQueryStats(serverIp, auth) {
 // ════════════════════════════════════════════════════════════
 
 async function addDnsARecord(serverIp, zoneName, hostname, ipAddress, ttl, auth) {
-  const script = `Add-DnsServerResourceRecordA -ZoneName '${zoneName}' -Name '${hostname}' -IPv4Address '${ipAddress}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Add-DnsServerResourceRecordA -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -IPv4Address '${psq(ipAddress)}' -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsCNameRecord(serverIp, zoneName, hostname, alias, ttl, auth) {
-  const script = `Add-DnsServerResourceRecordCName -ZoneName '${zoneName}' -Name '${hostname}' -HostNameAlias '${alias}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Add-DnsServerResourceRecordCName -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -HostNameAlias '${psq(alias)}' -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsAaaaRecord(serverIp, zoneName, hostname, ipv6Address, ttl, auth) {
-  const script = `Add-DnsServerResourceRecordAAAA -ZoneName '${zoneName}' -Name '${hostname}' -IPv6Address '${ipv6Address}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Add-DnsServerResourceRecordAAAA -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -IPv6Address '${psq(ipv6Address)}' -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsSrvRecord(serverIp, zoneName, hostname, priority, weight, port, target, ttl, auth) {
-  const script = `Add-DnsServerResourceRecord -Srv -ZoneName '${zoneName}' -Name '${hostname}' -DomainName '${target}' -Priority ${priority||0} -Weight ${weight||0} -Port ${port||0} -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  // -Priority / -Weight / -Port / -Seconds are UNQUOTED numeric positions.
+  const script = `Add-DnsServerResourceRecord -Srv -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -DomainName '${psq(target)}' -Priority ${psNum(priority || 0, 0, 0, 65535)} -Weight ${psNum(weight || 0, 0, 0, 65535)} -Port ${psNum(port || 0, 0, 0, 65535)} -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsPtrRecord(serverIp, zoneName, hostname, ptrDomain, ttl, auth) {
-  const script = `Add-DnsServerResourceRecordPtr -ZoneName '${zoneName}' -Name '${hostname}' -PtrDomainName '${ptrDomain}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Add-DnsServerResourceRecordPtr -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -PtrDomainName '${psq(ptrDomain)}' -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsMxRecord(serverIp, zoneName, hostname, mailExchange, preference, ttl, auth) {
-  const script = `Add-DnsServerResourceRecordMX -ZoneName '${zoneName}' -Name '${hostname}' -MailExchange '${mailExchange}' -Preference ${preference||10} -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  // -Preference is an UNQUOTED numeric position.
+  const script = `Add-DnsServerResourceRecordMX -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -MailExchange '${psq(mailExchange)}' -Preference ${psNum(preference || 10, 10, 0, 65535)} -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsTxtRecord(serverIp, zoneName, hostname, text, ttl, auth) {
-  const escaped = text.replace(/'/g, "''");
-  const script = `Add-DnsServerResourceRecordTxt -ZoneName '${zoneName}' -Name '${hostname}' -DescriptiveText '${escaped}' -TimeToLive (New-TimeSpan -Seconds ${ttl||3600}) -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Add-DnsServerResourceRecordTxt -ZoneName '${psq(zoneName)}' -Name '${psq(hostname)}' -DescriptiveText '${psq(text)}' -TimeToLive (New-TimeSpan -Seconds ${psNum(ttl || 3600, 3600, 1, TTL_MAX)}) -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function removeDnsRecord(serverIp, zoneName, hostname, recordType, recordData, auth) {
+  const z = psq(zoneName);
+  const h = psq(hostname);
   let script;
   if (recordType === 'A') {
-    script = `Remove-DnsServerResourceRecord -ZoneName '${zoneName}' -Name '${hostname}' -RRType A -RecordData '${recordData}' -Force -ErrorAction Stop; Write-Output 'ok'`;
+    script = `Remove-DnsServerResourceRecord -ZoneName '${z}' -Name '${h}' -RRType A -RecordData '${psq(recordData)}' -Force -ErrorAction Stop; Write-Output 'ok'`;
   } else if (recordType === 'CNAME') {
-    script = `Remove-DnsServerResourceRecord -ZoneName '${zoneName}' -Name '${hostname}' -RRType CName -Force -ErrorAction Stop; Write-Output 'ok'`;
+    script = `Remove-DnsServerResourceRecord -ZoneName '${z}' -Name '${h}' -RRType CName -Force -ErrorAction Stop; Write-Output 'ok'`;
   } else {
-    script = `Get-DnsServerResourceRecord -ZoneName '${zoneName}' -Name '${hostname}' -RRType '${recordType}' -ErrorAction Stop | Remove-DnsServerResourceRecord -ZoneName '${zoneName}' -Force; Write-Output 'ok'`;
+    script = `Get-DnsServerResourceRecord -ZoneName '${z}' -Name '${h}' -RRType '${psq(recordType)}' -ErrorAction Stop | Remove-DnsServerResourceRecord -ZoneName '${z}' -Force; Write-Output 'ok'`;
   }
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function addDnsZone(serverIp, zoneName, zoneType, replicationScope, auth) {
   const scope = replicationScope || 'Domain';
-  const script = zoneType === 'Secondary'
-    ? `Add-DnsServerSecondaryZone -Name '${zoneName}' -MasterServers ${scope} -ErrorAction Stop; Write-Output 'ok'`
-    : `Add-DnsServerPrimaryZone -Name '${zoneName}' -ReplicationScope '${scope}' -ErrorAction Stop; Write-Output 'ok'`;
+  let script;
+  if (zoneType === 'Secondary') {
+    // ⚠ Pre-existing SEMANTIC bug, deliberately left as-is (only the injection is
+    // fixed): this branch passes `replicationScope` as -MasterServers, i.e. it feeds a
+    // replication-scope name ('Domain'/'Forest' — what both call sites actually send)
+    // into a parameter that wants an IPAddress[] of master servers, so creating a
+    // secondary zone cannot succeed today. The value was also interpolated UNQUOTED,
+    // which in PowerShell argument mode means a comma-separated value became a real
+    // array — so it is quoted per element here, preserving the only input shape that
+    // could ever have worked (a comma list of master IPs) while removing the
+    // injection. Fixing the semantics means a signature change + a UI field for
+    // master servers, which is out of scope for a security fix.
+    const masters = String(scope).split(',').map(s => s.trim()).filter(Boolean)
+      .map(s => `'${psq(s)}'`).join(',');
+    if (!masters) {
+      console.error('[PS] addDnsZone: Secondary zone requires at least one master server');
+      return false;
+    }
+    script = `Add-DnsServerSecondaryZone -Name '${psq(zoneName)}' -MasterServers ${masters} -ErrorAction Stop; Write-Output 'ok'`;
+  } else {
+    script = `Add-DnsServerPrimaryZone -Name '${psq(zoneName)}' -ReplicationScope '${psq(scope)}' -ErrorAction Stop; Write-Output 'ok'`;
+  }
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 // Create a conditional forwarder zone — WRITE. forwarderIps is an array of IP strings.
 async function addDnsForwarderZone(serverIp, zoneName, forwarderIps, auth) {
   const masters = (Array.isArray(forwarderIps) ? forwarderIps : [forwarderIps])
-    .map(ip => String(ip).trim())
+    .map(ip => String(ip == null ? '' : ip).trim())
     .filter(Boolean)
-    .map(ip => `'${ip}'`)
+    .map(ip => `'${psq(ip)}'`)
     .join(',');
-  const script = `Add-DnsServerConditionalForwarderZone -Name '${zoneName}' -MasterServers ${masters} -ReplicationScope 'Forest' -ErrorAction Stop; Write-Output 'ok'`;
+  if (!masters) {
+    console.error('[PS] addDnsForwarderZone: at least one forwarder IP is required');
+    return false;
+  }
+  const script = `Add-DnsServerConditionalForwarderZone -Name '${psq(zoneName)}' -MasterServers ${masters} -ReplicationScope 'Forest' -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 async function removeDnsZone(serverIp, zoneName, auth) {
-  const script = `Remove-DnsServerZone -Name '${zoneName}' -Force -ErrorAction Stop; Write-Output 'ok'`;
+  const script = `Remove-DnsServerZone -Name '${psq(zoneName)}' -Force -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(serverIp, script, auth, true) || '').includes('ok');
 }
 
 // Enable/disable scavenging (aging) on a zone — WRITE
 async function setDnsZoneAging(serverIp, auth, zoneName, enabled) {
-  const z = String(zoneName).replace(/'/g, "''");
-  const flag = enabled ? '$true' : '$false';
+  const z = psq(zoneName);
+  const flag = enabled ? '$true' : '$false'; // derived from a boolean — never caller text
   const script = `Set-DnsServerZoneAging -Name '${z}' -Aging ${flag} -Force -ErrorAction Stop; Write-Output 'ok'`;
   return !!(await runPS(cleanIp(serverIp), script, auth, true) || '').includes('ok');
 }
@@ -511,7 +641,7 @@ async function getDhcpFailover(serverIp, auth) {
 /** Per-scope state inside a named failover relationship. */
 async function getDhcpFailoverScopeState(serverIp, relationshipName, auth) {
   const r = await runPS(serverIp,
-    `Get-DhcpServerv4Failover -Name '${String(relationshipName).replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ScopeId | ForEach-Object { [PSCustomObject]@{ ScopeId = $_.IPAddressToString } } | ConvertTo-Json -Depth 4 -Compress`,
+    `Get-DhcpServerv4Failover -Name '${psq(relationshipName)}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ScopeId | ForEach-Object { [PSCustomObject]@{ ScopeId = $_.IPAddressToString } } | ConvertTo-Json -Depth 4 -Compress`,
     auth);
   if (!r) return [];
   return Array.isArray(r) ? r : [r];
@@ -540,11 +670,15 @@ async function getDhcpFailoverScopeState(serverIp, relationshipName, auth) {
  * @returns {string|null}    - raw log text, or null if unreadable/absent
  */
 async function getDhcpAuditLog(serverIp, auth, dayFile, maxLines) {
+  // This allow-list sanitiser is the strongest guard in the file and is kept as the
+  // primary control: a filename reduced to [A-Za-z0-9._-] cannot carry a quote, a
+  // path separator or a PowerShell metacharacter. psq() is applied on top only so
+  // that every interpolation in this file goes through one mechanism.
   const safeFile = String(dayFile || '').replace(/[^A-Za-z0-9._-]/g, ''); // filename only, never a path
   if (!safeFile) return null;
-  const n = Math.max(1, Math.min(parseInt(maxLines, 10) || 2000, 20000));
+  const n = psNum(parseInt(maxLines, 10) || 2000, 2000, 1, 20000);
   const script =
-    `$p = Join-Path $env:SystemRoot 'System32\\dhcp\\${safeFile}'; ` +
+    `$p = Join-Path $env:SystemRoot 'System32\\dhcp\\${psq(safeFile)}'; ` +
     `if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Tail ${n} } `;
   const out = await runPS(serverIp, script, auth, true, DHCP_LOG_PS_TIMEOUT);
   return (typeof out === 'string' && out.trim()) ? out : null;
@@ -552,8 +686,9 @@ async function getDhcpAuditLog(serverIp, auth, dayFile, maxLines) {
 
 /** SOA serial for a zone (replication-lag detection). */
 async function getDnsZoneSoa(serverIp, zoneName, auth) {
-  // Single line — cmd.exe truncates -Command strings at newlines.
-  const script = `$rec = Get-DnsServerResourceRecord -ZoneName '${String(zoneName).replace(/'/g, "''")}' -RRType SOA -ErrorAction SilentlyContinue | Select-Object -First 1; if ($rec) { [PSCustomObject]@{ ZoneName='${String(zoneName).replace(/'/g, "''")}'; Serial=[int64]$rec.RecordData.SerialNumber } | ConvertTo-Json -Compress }`;
+  const z = psq(zoneName);
+  // Single line — file convention, kept deliberately.
+  const script = `$rec = Get-DnsServerResourceRecord -ZoneName '${z}' -RRType SOA -ErrorAction SilentlyContinue | Select-Object -First 1; if ($rec) { [PSCustomObject]@{ ZoneName='${z}'; Serial=[int64]$rec.RecordData.SerialNumber } | ConvertTo-Json -Compress }`;
   return await runPS(serverIp, script, auth);
 }
 
@@ -562,9 +697,10 @@ async function testDnsQuery(serverIp, queryName, auth) {
   // serverIp is embedded INSIDE the PS script (-Server) and as a query fallback,
   // so it must be CIDR-stripped here — runPS only cleans its -ComputerName target.
   const target = cleanIp(serverIp);
-  const q = String(queryName || target).replace(/'/g, "''");
-  // Single line — cmd.exe truncates -Command strings at newlines.
-  const script = `$sw = [System.Diagnostics.Stopwatch]::StartNew(); try { Resolve-DnsName -Name '${q}' -Server '${target}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }; $sw.Stop(); [PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
+  const q = psq(queryName || target);
+  const t = psq(target);
+  // Single line — file convention, kept deliberately.
+  const script = `$sw = [System.Diagnostics.Stopwatch]::StartNew(); try { Resolve-DnsName -Name '${q}' -Server '${t}' -QuickTimeout -ErrorAction Stop | Out-Null; $ok = $true } catch { $ok = $false }; $sw.Stop(); [PSCustomObject]@{ Ok=$ok; Ms=[int]$sw.ElapsedMilliseconds } | ConvertTo-Json -Compress`;
   return await runPS(serverIp, script, auth);
 }
 
@@ -573,6 +709,9 @@ module.exports = {
   runLocalPS,
   testWinRM,
   addToTrustedHosts,
+  // escaping helpers (exported for unit tests and for any new PS builder)
+  psq,
+  psNum,
   // HA / health
   getDhcpFailover,
   getDhcpFailoverScopeState,

@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.32.5': [
+    "Security: a DNS or DHCP change submitted through this app - or through the public API with a key holding only write permission - could carry text that was treated as commands and run on the Windows DNS/DHCP server it was aimed at, with the credentials configured for that server. Every value this app puts into a command sent to those servers is now escaped, and every numeric field is now checked to be a number. This affected creating and deleting DNS records and zones, and creating and editing DHCP scopes, reservations, exclusions and options.",
+    "Security: commands are no longer handed to the Windows command interpreter on the way to PowerShell. Removing that extra step removes a whole class of quoting problem, and also removes a length limit that commands were previously subject to.",
+    "Security: the password for a server configured with stored credentials is no longer placed on a command line, where any account on the machine could read it while the command ran. It is now passed privately to the process that needs it.",
+    "Fixed, as a side effect of the above: DNS query statistics and the DHCP audit log were being requested with mangled paths, so both could come back empty. They should now return data.",
+    "The public API now rejects an invalid record lifetime with a clear error instead of accepting it, and so does the in-app form.",
+  ],
   '1.32.4': [
     "Fixed: a rollback did not restore an environment file that existed but was empty before the update, leaving whatever the failed run had written. An empty file is a value, not an absence.",
     "Hardening: a failed update whose own rollback also failed left behind the last intact copy of the working install, and this app already refused to overwrite it - that protection is unchanged; the same guard now exists in the other three.",
@@ -3514,6 +3521,22 @@ app.get('/api/ipam/audit', attachSiteFilter, async (req, res) => {
 const psWrite = require('../collector/powershellRunner');
 const { encrypt: encryptCred, decrypt: decryptCred } = require('../collector/credStore');
 
+// Validate a value that will land in an UNQUOTED numeric position inside a generated
+// PowerShell script (see psq/psNum in collector/powershellRunner.js — TTLs, SRV
+// priority/weight/port, MX preference). psNum there is the backstop that guarantees only
+// digits ever reach the DNS server; this is the guard that answers a bad request with a
+// clear 400 instead of silently substituting a default. Returns the integer, or null.
+const DNS_TTL_MIN = 1;
+const DNS_TTL_MAX = 2147483647;
+function intInRange(v, min, max) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'number' && typeof v !== 'string') return null;
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) return null;
+  return n;
+}
+
 /**
  * Load a server row and build auth object for PS runner.
  */
@@ -3565,20 +3588,40 @@ app.post('/api/dns/records', requireWrite, async (req, res) => {
     const { ip: serverIp, auth } = serverData;
 
     let ok = false;
-    const ttlSec = parseInt(ttl || '3600');
+    const ttlSec = (ttl === null || ttl === undefined || ttl === '')
+      ? 3600
+      : intInRange(ttl, DNS_TTL_MIN, DNS_TTL_MAX);
+    if (ttlSec === null) {
+      return res.status(400).json({ error: `ttl must be an integer between ${DNS_TTL_MIN} and ${DNS_TTL_MAX} seconds` });
+    }
 
     switch (record_type.toUpperCase()) {
       case 'A':     ok = await psWrite.addDnsARecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'AAAA':  ok = await psWrite.addDnsAaaaRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'CNAME': ok = await psWrite.addDnsCNameRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'PTR':   ok = await psWrite.addDnsPtrRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
-      case 'MX':    ok = await psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, parseInt(preference||'10'), ttlSec, auth); break;
+      case 'MX': {
+        const pref = (preference === null || preference === undefined || preference === '')
+          ? 10
+          : intInRange(preference, 0, 65535);
+        if (pref === null) return res.status(400).json({ error: 'preference must be an integer between 0 and 65535' });
+        ok = await psWrite.addDnsMxRecord(serverIp, zone_name, hostname, record_data, pref, ttlSec, auth);
+        break;
+      }
       case 'TXT':   ok = await psWrite.addDnsTxtRecord(serverIp, zone_name, hostname, record_data, ttlSec, auth); break;
       case 'SRV': {
         // record_data format: "priority weight port target"
         const [priority, weight, port, target] = String(record_data).trim().split(/\s+/);
         if (!target) return res.status(400).json({ error: 'SRV record_data must be "priority weight port target"' });
-        ok = await psWrite.addDnsSrvRecord(serverIp, zone_name, hostname, priority, weight, port, target, ttlSec, auth);
+        // priority/weight/port are interpolated UNQUOTED into the PowerShell command —
+        // they must be real integers, not just "whatever was in the string".
+        const prio = intInRange(priority, 0, 65535);
+        const wgt  = intInRange(weight, 0, 65535);
+        const prt  = intInRange(port, 1, 65535);
+        if (prio === null || wgt === null || prt === null) {
+          return res.status(400).json({ error: 'SRV record_data must be "priority weight port target" with integer priority/weight (0-65535) and port (1-65535)' });
+        }
+        ok = await psWrite.addDnsSrvRecord(serverIp, zone_name, hostname, prio, wgt, prt, target, ttlSec, auth);
         break;
       }
       case 'NS':

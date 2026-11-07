@@ -42,6 +42,23 @@ function pageMeta(total, page, limit) {
   return { total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) };
 }
 
+// Validate a value that will land in an UNQUOTED numeric position inside a generated
+// PowerShell script (see psq/psNum in collector/powershellRunner.js). psNum there is the
+// backstop that guarantees only digits reach the DNS server; this is the guard that tells
+// an API caller their input was wrong instead of silently substituting a default.
+// Returns the integer, or null when the value is unusable.
+function intInRange(v, min, max) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'number' && typeof v !== 'string') return null;
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) return null;
+  return n;
+}
+
+const TTL_MIN = 1;
+const TTL_MAX = 2147483647;
+
 function createV1Router(deps) {
   const { db, psWrite, getServerWithAuth } = deps;
   const router = express.Router();
@@ -236,11 +253,19 @@ function createV1Router(deps) {
         return fail(res, 400, 'VALIDATION_ERROR', 'server_id, zone_name, hostname, record_type and record_data are required');
       const srv = await getServerWithAuth(server_id);
       if (!srv) return fail(res, 404, 'SERVER_NOT_FOUND', 'DNS server not found');
+      // ttl is interpolated into an unquoted `New-TimeSpan -Seconds N` position by the
+      // PowerShell builder — validate it here rather than passing it through raw
+      // (server.js's equivalent route does the same).
+      const ttlSec = (ttl === null || ttl === undefined || ttl === '')
+        ? 3600
+        : intInRange(ttl, TTL_MIN, TTL_MAX);
+      if (ttlSec === null)
+        return fail(res, 400, 'VALIDATION_ERROR', `ttl must be an integer between ${TTL_MIN} and ${TTL_MAX} seconds`);
       let okp = false;
       const t = String(record_type).toUpperCase();
-      if (t === 'A') okp = await psWrite.addDnsARecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
-      else if (t === 'CNAME') okp = await psWrite.addDnsCNameRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
-      else if (t === 'TXT') okp = await psWrite.addDnsTxtRecord(srv.ip, zone_name, hostname, record_data, ttl || 3600, srv.auth);
+      if (t === 'A') okp = await psWrite.addDnsARecord(srv.ip, zone_name, hostname, record_data, ttlSec, srv.auth);
+      else if (t === 'CNAME') okp = await psWrite.addDnsCNameRecord(srv.ip, zone_name, hostname, record_data, ttlSec, srv.auth);
+      else if (t === 'TXT') okp = await psWrite.addDnsTxtRecord(srv.ip, zone_name, hostname, record_data, ttlSec, srv.auth);
       else return fail(res, 400, 'UNSUPPORTED_TYPE', `Record type ${t} is not supported via the API`);
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Record creation failed on the DNS server');
       if (req.audit) req.audit({ action: 'create', entity_type: 'dns_record', entity_name: `${hostname} ${t}`, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });

@@ -1,13 +1,14 @@
 {
   "name": "ddivault",
-  "version": "1.32.4",
+  "version": "1.32.5",
   "private": true,
   "description": "DDIVault — DNS, DHCP, IPAM monitoring for NocVault suite",
   "main": "api/server.js",
   "scripts": {
     "api": "node api/server.js",
     "collector": "node collector/collector.js",
-    "schema": "psql -U ddivault_user -d ddivault -f scripts/schema.sql"
+    "schema": "psql -U ddivault_user -d ddivault -f scripts/schema.sql",
+    "test": "node --test \"tests/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -12,6 +12,13 @@ const fs        = require('fs');
 const path      = require('path');
 const os        = require('os');
 const deviceClassifier = require('../api/deviceClassifier'); // { classifyDevice(mac, hostname) }
+// Single-quote escaper for values interpolated into a '...' PowerShell literal. Shared
+// with powershellRunner.js deliberately — one mechanism for the whole repo, so there is
+// no second, subtly different copy to keep in step. The scripts below are written to a
+// temp .ps1 and run with -File (no shell), so the single quote is the ONLY escape that
+// matters: a value that closes its literal runs as PowerShell on the collector host,
+// which is LocalSystem.
+const { psq } = require('./powershellRunner');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
@@ -108,7 +115,9 @@ async function pingSweep(ips, onProgress) {
   for (let i = 0; i < ips.length; i += BATCH) batches.push(ips.slice(i, i + BATCH));
 
   const runBatch = async (batch, idx) => {
-    const ipArray = batch.map(ip => `'${ip}'`).join(',');
+    // IPs are generated numerically by generateHostIPs, but escape anyway so every
+    // interpolation in this file goes through the one mechanism.
+    const ipArray = batch.map(ip => `'${psq(ip)}'`).join(',');
     const script = `
 $ips = @(${ipArray})
 $jobs = @()
@@ -173,10 +182,13 @@ async function resolveHostname(ip, dnsServer) {
   let script;
   if (dnsServer) {
     // Use specific DNS server for PTR lookup
+    // dnsServer is the super_admin-settable `scan_dns_server` app_setting and ip is
+    // generated here, but BOTH are escaped: this script runs as the collector's
+    // LocalSystem identity, so an unescaped quote in a setting would be local RCE.
     script = `
 try {
-    $ns = '${dnsServer}'
-    $result = Resolve-DnsName -Name '${ip}' -Type PTR -Server $ns -ErrorAction SilentlyContinue
+    $ns = '${psq(dnsServer)}'
+    $result = Resolve-DnsName -Name '${psq(ip)}' -Type PTR -Server $ns -ErrorAction SilentlyContinue
     if ($result) { Write-Output $result.NameHost } else { Write-Output '' }
 } catch { Write-Output '' }
 `;
@@ -184,7 +196,7 @@ try {
     // Use system default DNS
     script = `
 try {
-    $h = [System.Net.Dns]::GetHostEntry('${ip}')
+    $h = [System.Net.Dns]::GetHostEntry('${psq(ip)}')
     Write-Output $h.HostName
 } catch { Write-Output '' }
 `;
@@ -200,11 +212,11 @@ try {
 function getMacFromArp(ip) {
   const script = `
 # Ping once to ensure ARP cache is populated
-Test-Connection -ComputerName '${ip}' -Count 1 -Quiet -ErrorAction SilentlyContinue | Out-Null
+Test-Connection -ComputerName '${psq(ip)}' -Count 1 -Quiet -ErrorAction SilentlyContinue | Out-Null
 # Read ARP table and find the entry
 $arpOutput = arp -a
 foreach ($line in $arpOutput) {
-    if ($line -match [regex]::Escape('${ip}') + '\\s+([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})') {
+    if ($line -match [regex]::Escape('${psq(ip)}') + '\\s+([0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2}[-:][0-9a-f]{2})') {
         Write-Output $matches[1]
         exit
     }

@@ -549,7 +549,13 @@ Key derived from `NEXTAUTH_SECRET`. Never stored in plaintext.
 - No `-Parallel` on `ForEach-Object` (PS7 only)
 - Use `-Quiet` flag for ping
 - Use background jobs for parallelism
-- Write multi-line scripts to temp `.ps1` files — never use `-Command` with newlines
+- Write multi-line scripts to temp `.ps1` files — never use `-Command` with newlines.
+  (Why this rule existed: `runPS` passed its script through **cmd.exe**, which truncates a
+  `-Command` string at the first newline. As of the psq/psNum security fix `runPS` uses
+  `execFile` with an argv array and no shell, so that specific truncation is gone and the
+  "keep it on a SINGLE line" comments in `collector/powershellRunner.js` are now a
+  defensive habit rather than a hard constraint. The rule still stands for
+  `collector/ipamScanner.js`, which genuinely writes temp `.ps1` files.)
 - Use `-ExecutionPolicy Bypass -File` to run temp scripts
 
 ### IPAM scan architecture
