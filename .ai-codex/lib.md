@@ -4,8 +4,33 @@ alertDispatcher.js
   dispatchAlert(db, alert, ruleType) — route one alert to filtered recipients (rule/cooldown/severity/site), sends via emailer or defers to digest
   sendHourlyDigest(db) — gather last-60min un-emailed alerts, send one digest per recipient matching their filters
 
+clientIp.js
+  clientIp(req, env?) — the caller's IP for an API behind a proxy [SENSITIVE]. Counts trusted
+    hops from the RIGHT of x-forwarded-for (`hops[len - DDI_TRUSTED_PROXY_HOPS]`, default 1 =
+    the Next.js frontend proxy), because the LEFTMOST entries are whatever the caller sent.
+    `DDI_TRUSTED_PROXY_HOPS=0` ignores the header entirely. Fails closed (socket peer) when the
+    header carries fewer hops than declared. Used by middleware/apiAuth.js (api_keys.allowed_ips)
+    and middleware/audit.js (audit_log.ip_address) — both used to read `split(',')[0]`, so an
+    IP-restricted key was bypassable and audit source IPs were forgeable.
+  normalizeIp(v) — trim, strip [brackets]/`:port`, reduce `::ffff:a.b.c.d` to IPv4
+  trustedHops(env) — parsed DDI_TRUSTED_PROXY_HOPS (default 1; junk/negative ⇒ default)
+  DEFAULT_TRUSTED_HOPS — const 1
+
 csv.js
   escapeCsvCell(v) — RFC-4180 quote + formula-injection guard for a single CSV cell
+
+queryScope.js
+  siteAllowed(allowedSiteIds, siteId) — tri-state scope test; NULL site ⇒ false (fail closed)
+  siteScopeSql(allowedSiteIds, column, params) — '' when unrestricted, else
+    `<column> = ANY($n::int[])`, pushing the bind param onto `params`. `[]` still emits the
+    predicate (matches nothing) rather than '' (would mean "see everything")
+  scopeGate(row, allowedSiteIds, message, siteKey?) — null to serve, else ONE
+    `{status:404, body:{error:message}}` for BOTH absent and out-of-scope, so the two answers
+    cannot be told apart (a 403 on out-of-scope lets a caller map which ids exist)
+  buildLeaseWhere(query, allowedSiteIds) — `{whereClause, params}` for GET /api/leases
+  buildLeaseExportQuery(allowedSiteIds) — `{sql, params}` for GET /api/leases/export
+  buildLeaseHistoryQuery(ip, allowedSiteIds) — `{sql, params}` for GET /api/leases/ip/:ip/history
+  Unit tested in tests/siteScoping.test.js (no DB required).
 
 deviceClassifier.js
   classifyDevice(mac, hostname) — best-effort device type/os/icon/vendor/risk from OUI + hostname pattern
@@ -50,6 +75,14 @@ api/middleware/audit.js
   auditContext(db) — middleware factory: attaches req._auditActor + req.audit(), auto-logs unaudited mutating routes on response finish
   writeAudit(db, entry) — low-level INSERT into audit_log; swallows all errors, returns id or null
   ACTIONS — frozen enum object of audit action names (create/modify/delete/scan/import/export/test/login/logout/reserve/release/acknowledge)
+
+v1-envelope.js
+  ok(res, data, meta) / fail(res, status, code, message, details) / pageMeta(total, page, limit) /
+    reqId() — the /api/v1/* response envelope (extracted from v1.js so the error path is testable)
+  internalError(res, scope, err) — logs the real error, returns a FIXED 500 message. Every v1
+    catch uses this; never `e.message`, which carries raw Postgres text (table/column/constraint
+    names) to an API-key holder. Unit tested in tests/v1Envelope.test.js.
+  GENERIC_500 — the one message every v1 500 returns
 
 api/middleware/apiAuth.js
   apiAuth(db, requiredPerm) — middleware factory: extracts+SHA-256-hashes API key, looks up api_keys, checks active/expiry/IP-allowlist/permission/rate-limit [SENSITIVE]

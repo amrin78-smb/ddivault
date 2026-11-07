@@ -21,10 +21,10 @@ getRequestUser and 401s with no identity, so it enforces auth even when used alo
 GET /api/health public db — DB connectivity + version check, `{status,db,version}`
 GET /api/stats public db — no-auth summary counts (dns_servers/dhcp_clusters/ip_utilized) for hub tiles; never 500s
 GET /api/license-status public external — current NocVault hub license + derived enforcement state (getLicense/getLicenseState, 5-min cache)
-GET /api/hub/settings auth external — server-side proxy to NocVault hub `/api/settings` (avoids browser CORS)
+GET /api/hub/settings auth external — server-side proxy to NocVault hub `/api/settings` (avoids browser CORS). Origin comes from `configuredHubOrigin()` (NOCVAULT_HUB_URL env), NEVER from request headers — it used `resolveHubOrigin(req,…)`, which made it an SSRF read primitive; errors are generic (no hub host/port/status echoed)
 GET /api/system/update-status auth external — git ls-remote/fetch HEAD vs local HEAD commit, release notes for the offered version
 GET /api/system/update-available public external — cached (24h-refreshed) update-availability flag, no live I/O at request time
-GET /api/system/last-update-status public — reads logs/last-update-status.json written by Update-DDIVault.ps1 (stage/error code/rollback outcome of the last update run); {exists:false} if none yet
+GET /api/system/last-update-status role>=admin — reads logs/last-update-status.json written by Update-DDIVault.ps1 (stage/error code/rollback outcome of the last update run); {exists:false} if none yet. NOT public and NOT in middleware.ts PUBLIC_API (it spreads raw updater error text + commit hashes); still exempt from enforceLicense's disabled-block
 POST /api/system/update super-admin external — schedules a SYSTEM `schtasks` task running Update-DDIVault.ps1; license-gated; 409 if logs/update.lock (written by the running .ps1) shows a run already in progress
 POST /api/internal/ddi-agents/reconfigure super-admin — Phase 4b; re-pushes ddi_config to a connected remote agent (body `{hub_agent_id}`) after its ddi_servers assignments change. Registered BEFORE enforceLicense (never license-blocked). In-process callers should call `reconfigureAgent(hubId)` from api/ws-server.js directly instead.
 - `POST /api/internal/ddi-agents/disconnect` [loopback] [none] - hub revoke fan-out: actively closes a revoked agent's live WS session (body {hub_agent_id}); registered BEFORE enforceLicense so a lapsed licence cannot block a revocation (1.26.0)
@@ -47,9 +47,9 @@ GET /api/scopes/:scopeId/options auth+site-filter db+external — read DHCP scop
 POST /api/scopes/:scopeId/options write db+external — set a DHCP scope option via WinRM
 GET /api/scopes/:scopeId/exclusions auth+site-filter db+external — read DHCP exclusions via WinRM
 POST /api/scopes/:scopeId/exclusions write db+external — add a DHCP exclusion range via WinRM
-GET /api/leases auth db — paginated/filterable lease list (search/scope/state/device_type)
-GET /api/leases/ip/:ip/history auth db — lease_history for one IP
-GET /api/leases/export auth db — CSV export of all leases (formula-injection-safe via escapeCsvCell)
+GET /api/leases auth+site-filter db — paginated/filterable lease list (search/scope/state/device_type); site via dhcp_leases.server_id -> ddi_servers.site_id, on BOTH the rows query and the COUNT (api/queryScope.js buildLeaseWhere)
+GET /api/leases/ip/:ip/history auth+site-filter db — lease_history for one IP; site via lease_history.server_id -> ddi_servers.site_id (api/queryScope.js buildLeaseHistoryQuery)
+GET /api/leases/export auth+site-filter db — CSV export of leases in the caller's sites (formula-injection-safe via escapeCsvCell); was unfiltered by site AND unpaginated (api/queryScope.js buildLeaseExportQuery)
 GET /api/events auth+site-filter db — DHCP log events, filterable by hours/type/severity
 POST /api/dhcp/reservations write db+external — create DHCP reservation via WinRM
 DELETE /api/dhcp/reservations write db+external — remove DHCP reservation via WinRM
@@ -101,7 +101,7 @@ POST /api/ipam/scan-all write db+external — trigger a scan of every managed su
 POST /api/ipam/sync-from-dhcp write db+external — reconcile IPAM from live DHCP scopes across all active servers via WinRM
 GET /api/ipam/subnets/:id/scan-status auth+site-filter db — single-subnet scan/job status + live IP counts
 GET /api/ipam/scan-status auth+site-filter db — global scan status (all running jobs + all managed subnets)
-GET /api/ipam/vlans auth db — VLAN list (ipam_vlans has no site_id column, so no site-filter precedent)
+GET /api/ipam/vlans auth+site-filter db — VLAN list; ipam_vlans has no site_id, only `site` TEXT holding a NetVault site NAME (written by the SiteSelect in IPAMTab), so allowed site ids are translated to names via netvault.sites and filtered with `site = ANY($1::text[])`; fails closed (no name match / lookup error ⇒ no rows)
 POST /api/ipam/vlans write db — create/upsert VLAN
 DELETE /api/ipam/vlans/:id write db — delete VLAN
 GET /api/ipam/audit auth+site-filter db — IPAM change audit trail, filterable by ip, site-scoped via subnet_id EXISTS subquery
@@ -133,7 +133,7 @@ POST /api/ddi-agents/:hubId/servers write db — set/clear ddi_servers.agent_hub
 
 ## Alerts / Alert Rules / Recipients (api/server.js)
 
-GET /api/alerts auth db — paginated alerts, grouped/deduplicated by hour+shape, enriched with plain-English explanation
+GET /api/alerts auth+site-filter db — paginated alerts, grouped/deduplicated by hour+shape, enriched with plain-English explanation; site via alert_events.server_id -> ddi_servers.site_id, applied inside the grouped subquery of BOTH the COUNT and the rows query
 POST /api/alerts/:id/acknowledge write db — ack an alert (and its grouped siblings within the same hour)
 POST /api/alerts/acknowledge-all write db — bulk-ack all open alerts, optional severity filter
 GET /api/alert-rules auth db — list alert_rules
@@ -153,7 +153,7 @@ GET /api/alerts/:id/acknowledge public db — one-click email ack link; HMAC-tok
 
 GET /api/forecasts/scopes auth+site-filter db — DHCP scope capacity forecasts (scope_forecasts join dhcp_scopes/ddi_servers), 42P01-safe
 GET /api/forecasts/scopes/:id auth+site-filter db — forecast for one scope
-GET /api/forecasts/summary auth db — critical/warning/healthy counts (scope_forecasts has no site_id, global aggregate)
+GET /api/forecasts/summary auth+site-filter db — critical/warning/healthy counts; site via scope_forecasts.scope_id -> dhcp_scopes -> ddi_servers.site_id, the same path the /api/forecasts/scopes siblings use (the old 'no site_id' note was wrong)
 
 ## Anomalies (api/server.js)
 
@@ -200,7 +200,7 @@ GET /api/reports/pack auth+site-filter db — compliance pack: combines several 
 
 api/reports.js:
 GET /api/reports/ auth* db — list available report types/titles for UI cards (no explicit Express guard on this specific handler — reachable only via middleware.ts's session-requiring proxy since it isn't in PUBLIC_API)
-GET /api/reports/drill/:entity/:id auth+site-filter db — drill-down detail (scope/subnet/zone) with history chart honoring the report's date range; registered before `/:type` to avoid shadowing
+GET /api/reports/drill/:entity/:id auth+site-filter db — drill-down detail (scope/subnet/zone) with history chart honoring the report's date range; registered before `/:type` to avoid shadowing. Out-of-scope returns the SAME 404 body as absent (via queryScope.scopeGate) — it used to 403 'Forbidden', which let a caller map which ids exist
 GET /api/reports/:type auth+site-filter db — generate one report; `?format=json|csv|pdf`; CSV/PDF paths log to report_run_history and req.audit; PDF rendered in-process via pdfkit (no external service)
 
 ## Infrastructure / HA (api/server.js)
@@ -227,7 +227,7 @@ GET /api/dashboard/pillars auth+site-filter db — DHCP/DNS/IPAM/Security pillar
 
 Mounted at /api/v1; entire prefix is in middleware.ts's public passthrough (self-authenticates
 via API key, `read`/`write` permission checked by apiAuth.js against `api_keys.permissions`).
-Envelope: `{success,data,meta,timestamp,request_id}` / `{success:false,error:{code,message,details}}`.
+Envelope: `{success,data,meta,timestamp,request_id}` / `{success:false,error:{code,message,details}}` — built in `api/v1-envelope.js`. Every 500 goes through `internalError(res, scope, err)`: the detail is logged, the client gets one fixed message. Never `e.message` (raw Postgres text names tables/columns/constraints).
 
 GET /api/v1/health public db — DB connectivity check (no API key required — meta endpoint)
 GET /api/v1/version public — static product/version info, no I/O (no API key required)
@@ -251,7 +251,7 @@ GET /api/v1/leases apikey(read) db — paginated leases, filterable by ip/mac
 POST /api/v1/dhcp/reservations apikey(write) db+external — create reservation via WinRM
 DELETE /api/v1/dhcp/reservations/:id apikey(write) db+external — remove reservation via WinRM (id = dhcp_leases row id)
 GET /api/v1/search apikey(read) db — cross-entity search (subnets/leases/dns_records)
-GET /api/v1/audit apikey(read) db — paginated audit_log
+GET /api/v1/audit apikey(admin) db — paginated audit_log. NOT `read`: no v1 route is site-scoped, so on `read` a key provisioned to list subnets outranked a site_admin session; the session-side whole-table dump GET /api/audit/export is requireSuperAdmin
 
 ## Next.js API routes (frontend/src/app/api/)
 

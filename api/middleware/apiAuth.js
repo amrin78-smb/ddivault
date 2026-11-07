@@ -17,6 +17,12 @@
  */
 
 const crypto = require('crypto');
+// ⛔ The IP allow-list below is only as trustworthy as this function. It used to
+// read `x-forwarded-for`'s FIRST entry — the hop the CALLER supplies — so a
+// holder of an IP-restricted key could send `X-Forwarded-For: <allowed-ip>` and
+// the restriction evaporated. See api/clientIp.js for why the client address is
+// counted from the right instead.
+const { clientIpForAuthorization } = require('../clientIp');
 
 const KEY_PREFIX = 'ddiv_live_';
 const RATE_LIMIT = 1000;          // requests
@@ -71,12 +77,6 @@ function extractKey(req) {
   return null;
 }
 
-function clientIp(req) {
-  const fwd = req.headers['x-forwarded-for'];
-  if (fwd) return String(fwd).split(',')[0].trim();
-  return (req.socket && req.socket.remoteAddress) || req.ip || null;
-}
-
 /**
  * Express middleware factory enforcing an API key with a required permission
  * ('read' | 'write' | 'admin'). Attaches req.apiKey on success.
@@ -102,9 +102,37 @@ function apiAuth(db, requiredPerm) {
       if (!key.is_active) return sendErr(401, 'KEY_REVOKED', 'This API key has been revoked.');
       if (key.expires_at && new Date(key.expires_at) < new Date()) return sendErr(401, 'KEY_EXPIRED', 'This API key has expired.');
 
-      // IP allowlist
+      // IP allow-list. FAILS CLOSED, including when the caller's address is not
+      // knowable at all.
+      //
+      // ⛔ "Not knowable" is the NORMAL case as currently deployed, and it must
+      // not be mistaken for "the caller is 127.0.0.1". This API binds loopback
+      // and the only thing that reaches it is the Next frontend proxy, which
+      // forwards `x-forwarded-for` untouched rather than appending to it
+      // (measured — see api/clientIp.js). So neither the header nor the socket
+      // peer identifies the caller: the header is whatever the caller chose,
+      // and the peer is always the proxy.
+      //
+      // Allowing the request would reinstate the bypass this check exists for.
+      // Comparing the loopback address instead would be worse than useless: an
+      // allow-list that happens to contain 127.0.0.1 would match EVERY caller.
+      // So an IP-restricted key is refused with an error that says why, and the
+      // operator has two real options — drop the restriction, or configure a
+      // genuinely appending reverse proxy and set DDI_TRUSTED_PROXY_HOPS.
       if (Array.isArray(key.allowed_ips) && key.allowed_ips.length) {
-        const ip = clientIp(req);
+        const { ip, trustworthy } = clientIpForAuthorization(req);
+        if (!trustworthy) {
+          console.warn(
+            `[apiAuth] key "${key.name}" has an allowed_ips restriction, but the caller's address ` +
+            `cannot be determined behind the frontend proxy (saw ${ip || 'nothing'}). Refusing. ` +
+            `Set DDI_TRUSTED_PROXY_HOPS only if a reverse proxy in front genuinely APPENDS to x-forwarded-for.`
+          );
+          return sendErr(
+            403,
+            'IP_NOT_VERIFIABLE',
+            'This key is restricted by IP address, but the caller\'s address cannot be verified on this deployment. Remove the IP restriction or configure a trusted forwarding proxy.'
+          );
+        }
         if (!key.allowed_ips.includes(ip)) {
           return sendErr(403, 'IP_NOT_ALLOWED', `Requests from ${ip} are not permitted for this key.`);
         }

@@ -137,6 +137,82 @@
   one route's guard, grep `api/server.js` + `api/v1.js` for every other
   route on the same resource/table/URL-prefix and confirm they all carry
   the equivalent guard.
+- **Authorization/disclosure sweep (2026-11-07) — the patterns, not just the
+  routes.** Nine findings, every one a case of a guard that looked present:
+  - ⛔ **`requireAuth` is an IDENTITY check, not an AUTHORIZATION check.**
+    `GET /api/leases/export` had been revisited once purely to ADD `requireAuth`
+    — and the query stayed `SELECT … FROM dhcp_leases ORDER BY ip_address`, no
+    site filter, no pagination, so any signed-in `site_admin` downloaded every
+    lease in every site. Same on `/api/leases` and `/api/leases/ip/:ip/history`.
+    `/api/leases` is the sharpest tell: it ALREADY had
+    `LEFT JOIN ddi_servers s ON s.id = l.server_id` for the hostname column. The
+    join was there; only the predicate was missing. **When you see a join to a
+    site-bearing table with no `site_id` predicate, assume the predicate was
+    forgotten, not declined.**
+  - ⛔ **A site predicate must go in the COUNT as well as the rows query** — and
+    for `/api/alerts`, inside the GROUPED subquery of both, or the page and the
+    total it paginates over describe different row sets (the same failure mode
+    already recorded for this route's status grouping).
+  - ⛔ **An in-code justification for leaving a route unscoped can go stale, and
+    nothing re-checks it.** Three of these carried comments explaining why
+    scoping was impossible. `/api/forecasts/summary` said `scope_forecasts` had
+    "no join target" — both its own siblings reach the site through
+    `scope_id -> dhcp_scopes -> ddi_servers.site_id`. `/api/search` left its six
+    `dhcp_leases` sub-queries unfiltered *because `/api/leases` was unfiltered*,
+    so fixing `/api/leases` alone would have left `vendor:apple` as the same leak
+    through another door. `/api/ipam/vlans` said `ipam_vlans` has no site_id —
+    true, but its `site` TEXT column is not free text: the only writer is the Add
+    VLAN modal's `SiteSelect`, whose values are NetVault site NAMES, so ids
+    translate to names via `netvault.sites`. **Re-derive the claim; a comment is
+    not evidence.** (Still genuinely unscopable, and deliberately left alone:
+    `/api/ipam/utilization-history`, `/api/dns/health`, `/api/anomalies*`,
+    `/api/dashboard/stats`.)
+  - ⛔ **403 on out-of-scope while 404 on absent is a disclosure.** It lets a
+    caller walk small integer ids and map which rows exist.
+    `api/reports.js`'s drill route did both in the same handler. Both branches now
+    go through `queryScope.scopeGate`, which returns ONE object for the two cases
+    so they cannot drift apart. Every other by-id read in the app was already
+    404-both-ways.
+  - ⛔ **`x-forwarded-for`'s FIRST entry is the CALLER's.** The header is built by
+    appending, so only the entries a trusted proxy added are non-forgeable.
+    `clientIp` (duplicated in `middleware/apiAuth.js` and `middleware/audit.js`)
+    read `split(',')[0]`, so `X-Forwarded-For: <allowed-ip>` defeated
+    `api_keys.allowed_ips` outright and every audit-log source IP was whatever the
+    caller typed. Now one shared `api/clientIp.js` counting from the RIGHT. **The
+    duplication was the structural bug** — it is how one call site stays broken
+    after the other is fixed.
+  - ⛔ **A request-derived origin is fine for a LINK and an SSRF primitive for a
+    FETCH.** `resolveHubOrigin(req, …)` exists because `NEXTAUTH_URL` is baked to
+    the install IP, and for a browser redirect that is correct. `/api/hub/settings`
+    used it to choose a host to `fetch()` and returned the body — a bounded
+    internal read plus a port-3000 oracle, live on any plain-HTTP install and on a
+    TLS install with `TLS_PUBLIC_HOST` unset (the terminator then re-derives
+    `x-forwarded-host` from the client's own `Host`). Server-side fetches now use
+    `configuredHubOrigin()` (env only); `TRUST_PROXY_HEADERS` additionally gates
+    forwarded-header trust for the link path, matching
+    `net-vault/lib/publicUrl.ts`. **Split the two uses before hardening either.**
+  - ⛔ **`e.message` from pg names your schema.** ~20 `catch` blocks in
+    `api/v1.js` returned it to API-key holders, while `api/reports.js` had an
+    explicit comment NOT to and `api/server.js` was already generic — the rule
+    existed and one file never got it. All v1 500s now go through
+    `v1-envelope.internalError`.
+  - ⛔ **A route in `middleware.ts`'s `PUBLIC_API` cannot carry an RBAC guard**
+    (no `x-ddi-actor*` headers get stamped, so even a super_admin 401s), so gate 1
+    and gate 3 of the three-gate checklist must move TOGETHER.
+    `/api/system/last-update-status` was public and spread the whole updater
+    status file — stage, raw error text, rollback flag, commit hashes. It is now
+    out of `PUBLIC_API` and `requireRole('admin')`. **`enforceLicense`'s exemption
+    list is now deliberately NOT identical to `PUBLIC_API`** — the licence
+    exemption stays (an admin must still see a failed update past grace) while the
+    session exemption is gone. Don't re-sync those two lists on the assumption
+    that they must match; both files say so.
+  - **`/api/v1/*` has NO site model at all** (`rbac.js` collapses a key to
+    `admin`/`viewer`, `getAllowedSiteIds` returns null for both, `api_keys` has no
+    site column). That may be intended for machine credentials, but it means a
+    `read` key is unscoped by construction — so `GET /api/v1/audit` on `read`
+    outranked a `site_admin` session. Raised to `admin` as the nearest analogue of
+    the session side's `requireSuperAdmin` export. The broader gap is a product
+    decision, not a bug fix.
 
 ## Architecture / routing
 - This is NOT a Next.js-monolith app. The real API is a separate Express

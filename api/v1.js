@@ -13,34 +13,11 @@
  */
 
 const express = require('express');
-const crypto = require('crypto');
 const { apiAuth } = require('./middleware/apiAuth');
-
-function reqId() {
-  return 'req_' + crypto.randomBytes(8).toString('hex');
-}
-
-function ok(res, data, meta) {
-  res.json({
-    success: true,
-    data,
-    meta: meta || null,
-    timestamp: new Date().toISOString(),
-    request_id: res.req.requestId,
-  });
-}
-function fail(res, status, code, message, details) {
-  res.status(status).json({
-    success: false,
-    error: { code, message, details: details || {} },
-    timestamp: new Date().toISOString(),
-    request_id: res.req.requestId,
-  });
-}
-
-function pageMeta(total, page, limit) {
-  return { total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) };
-}
+// Envelope + the generic 500. `internalError` logs the real error and returns a
+// fixed message — never `e.message`, which carries raw Postgres text (table,
+// column and constraint names) straight to an API-key holder.
+const { reqId, ok, fail, pageMeta, internalError } = require('./v1-envelope');
 
 // Validate a value that will land in an UNQUOTED numeric position inside a generated
 // PowerShell script (see psq/psNum in collector/powershellRunner.js). psNum there is the
@@ -81,6 +58,11 @@ function createV1Router(deps) {
 
   const read = apiAuth(db, 'read');
   const write = apiAuth(db, 'write');
+  // `admin` is NOT just "write + a bit" here — apiAuth satisfies any required
+  // permission when the key holds `admin`, so this is the only gate a key cannot
+  // reach by holding `read` or `write`. Reserved for the whole-instance audit
+  // dump; see the comment on GET /audit below.
+  const admin = apiAuth(db, 'admin');
 
   // helper for pagination params
   const pg = (req) => {
@@ -99,7 +81,7 @@ function createV1Router(deps) {
                 vlan_id, site, owner, total_hosts, used_hosts, free_hosts, unknown_hosts, last_scanned
            FROM ipam_subnets ORDER BY network LIMIT $1 OFFSET $2`, [limit, offset]);
       ok(res, r.rows, pageMeta(total, page, limit));
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /subnets', e); }
   });
 
   router.get('/subnets/:id', read, async (req, res) => {
@@ -110,7 +92,7 @@ function createV1Router(deps) {
            FROM ipam_subnets WHERE id=$1`, [parseInt(req.params.id)]);
       if (!r.rows.length) return fail(res, 404, 'SUBNET_NOT_FOUND', `Subnet with ID ${req.params.id} was not found`);
       ok(res, r.rows[0]);
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /subnets/:id', e); }
   });
 
   router.post('/subnets', write, async (req, res) => {
@@ -125,7 +107,7 @@ function createV1Router(deps) {
       ok(res, { id: r.rows[0].id });
     } catch (e) {
       if (e.code === '23505') return fail(res, 409, 'SUBNET_EXISTS', 'A subnet with this network/prefix already exists');
-      fail(res, 500, 'INTERNAL_ERROR', e.message);
+      internalError(res, 'POST /subnets', e);
     }
   });
 
@@ -141,7 +123,7 @@ function createV1Router(deps) {
       if (!r.rows.length) return fail(res, 404, 'SUBNET_NOT_FOUND', `Subnet ${id} not found`);
       if (req.audit) req.audit({ action: 'modify', entity_type: 'subnet', entity_id: id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { id });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'PUT /subnets/:id', e); }
   });
 
   router.delete('/subnets/:id', write, async (req, res) => {
@@ -151,7 +133,7 @@ function createV1Router(deps) {
       if (!r.rows.length) return fail(res, 404, 'SUBNET_NOT_FOUND', `Subnet ${id} not found`);
       if (req.audit) req.audit({ action: 'delete', entity_type: 'subnet', entity_id: id, entity_name: `${r.rows[0].network}/${r.rows[0].prefix_length}`, username: `apikey:${req.apiKey.name}` });
       ok(res, { id });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'DELETE /subnets/:id', e); }
   });
 
   router.get('/subnets/:id/addresses', read, async (req, res) => {
@@ -163,7 +145,7 @@ function createV1Router(deps) {
         `SELECT host(ip_address) AS ip_address, status, hostname, mac_address, last_seen, ping_ms
            FROM ipam_addresses WHERE subnet_id=$1 ORDER BY ip_address LIMIT $2 OFFSET $3`, [id, limit, offset]);
       ok(res, r.rows, pageMeta(total, page, limit));
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /subnets/:id/addresses', e); }
   });
 
   router.get('/subnets/:id/next-ip', read, async (req, res) => {
@@ -174,14 +156,14 @@ function createV1Router(deps) {
           WHERE a.subnet_id=$1 AND a.status='available' ORDER BY a.ip_address LIMIT 1`, [id]);
       if (!r.rows.length) return fail(res, 404, 'NO_FREE_IP', 'No available IP found in this subnet (run a scan first)');
       ok(res, { next_ip: r.rows[0].ip });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /subnets/:id/next-ip', e); }
   });
 
   router.get('/supernets', read, async (req, res) => {
     try {
       const r = await db.query('SELECT id, host(network) AS network, prefix_length, name, description, site FROM ipam_supernets ORDER BY network');
       ok(res, r.rows, { total: r.rows.length });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /supernets', e); }
   });
 
   router.get('/supernets/:id/next-subnet', read, async (req, res) => {
@@ -191,7 +173,7 @@ function createV1Router(deps) {
       if (!r.rows.length) return fail(res, 404, 'SUPERNET_NOT_FOUND', 'Supernet not found');
       // delegate detailed allocation to internal helper if present; otherwise advisory
       ok(res, { supernet: `${r.rows[0].network}/${r.rows[0].prefix_length}`, requested_prefix: prefix, hint: 'Use the internal allocation endpoint for an exact free block.' });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /supernets/:id/next-subnet', e); }
   });
 
   // ════════════════════ DNS ════════════════════
@@ -199,7 +181,7 @@ function createV1Router(deps) {
     try {
       const r = await db.query('SELECT z.id, z.zone_name, z.zone_type, z.is_reverse, z.record_count, srv.hostname AS server FROM dns_zones z JOIN ddi_servers srv ON srv.id=z.server_id ORDER BY z.zone_name');
       ok(res, r.rows, { total: r.rows.length });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /dns/zones', e); }
   });
 
   router.post('/dns/zones', write, async (req, res) => {
@@ -212,7 +194,7 @@ function createV1Router(deps) {
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Zone creation failed on the DNS server');
       if (req.audit) req.audit({ action: 'create', entity_type: 'dns_zone', entity_name: zone_name, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { zone_name });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'POST /dns/zones', e); }
   });
 
   router.delete('/dns/zones/:id', write, async (req, res) => {
@@ -226,7 +208,7 @@ function createV1Router(deps) {
       await db.query('DELETE FROM dns_zones WHERE id=$1', [parseInt(req.params.id)]).catch(() => {});
       if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_zone', entity_name: z.rows[0].zone_name, username: `apikey:${req.apiKey.name}` });
       ok(res, { id: parseInt(req.params.id) });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'DELETE /dns/zones/:id', e); }
   });
 
   router.get('/dns/records', read, async (req, res) => {
@@ -243,7 +225,7 @@ function createV1Router(deps) {
            FROM dns_records r JOIN dns_zones z ON z.id=r.zone_id ${where}
           ORDER BY r.hostname LIMIT $${vals.length - 1} OFFSET $${vals.length}`, vals);
       ok(res, r.rows, pageMeta(total, page, limit));
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /dns/records', e); }
   });
 
   router.post('/dns/records', write, async (req, res) => {
@@ -270,7 +252,7 @@ function createV1Router(deps) {
       if (!okp) return fail(res, 502, 'DNS_OP_FAILED', 'Record creation failed on the DNS server');
       if (req.audit) req.audit({ action: 'create', entity_type: 'dns_record', entity_name: `${hostname} ${t}`, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { hostname, record_type: t });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'POST /dns/records', e); }
   });
 
   router.delete('/dns/records/:id', write, async (req, res) => {
@@ -285,7 +267,7 @@ function createV1Router(deps) {
       await db.query('DELETE FROM dns_records WHERE id=$1', [parseInt(req.params.id)]).catch(() => {});
       if (req.audit) req.audit({ action: 'delete', entity_type: 'dns_record', entity_name: `${rec.hostname} ${rec.record_type}`, username: `apikey:${req.apiKey.name}` });
       ok(res, { id: parseInt(req.params.id) });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'DELETE /dns/records/:id', e); }
   });
 
   // ════════════════════ DHCP ════════════════════
@@ -293,7 +275,7 @@ function createV1Router(deps) {
     try {
       const r = await db.query('SELECT sc.id, sc.scope_id, sc.name, sc.in_use, sc.total_ips, sc.free, sc.percent_used, sc.state, srv.hostname AS server FROM dhcp_scopes sc JOIN ddi_servers srv ON srv.id=sc.server_id ORDER BY sc.percent_used DESC');
       ok(res, r.rows, { total: r.rows.length });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /scopes', e); }
   });
 
   router.get('/leases', read, async (req, res) => {
@@ -309,7 +291,7 @@ function createV1Router(deps) {
         `SELECT id, host(ip_address) AS ip_address, hostname, mac_address, scope_id, address_state, lease_expiry
            FROM dhcp_leases ${where} ORDER BY ip_address LIMIT $${vals.length - 1} OFFSET $${vals.length}`, vals);
       ok(res, r.rows, pageMeta(total, page, limit));
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /leases', e); }
   });
 
   router.post('/dhcp/reservations', write, async (req, res) => {
@@ -323,7 +305,7 @@ function createV1Router(deps) {
       if (!okp) return fail(res, 502, 'DHCP_OP_FAILED', 'Reservation creation failed on the DHCP server');
       if (req.audit) req.audit({ action: 'reserve', entity_type: 'dhcp_reservation', entity_name: ip_address, server_id, new_value: req.body, username: `apikey:${req.apiKey.name}` });
       ok(res, { ip_address, mac_address });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'POST /dhcp/reservations', e); }
   });
 
   router.delete('/dhcp/reservations/:id', write, async (req, res) => {
@@ -338,7 +320,7 @@ function createV1Router(deps) {
       if (!okp) return fail(res, 502, 'DHCP_OP_FAILED', 'Reservation removal failed on the DHCP server');
       if (req.audit) req.audit({ action: 'release', entity_type: 'dhcp_reservation', entity_name: lease.ip, username: `apikey:${req.apiKey.name}` });
       ok(res, { id: parseInt(req.params.id) });
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'DELETE /dhcp/reservations/:id', e); }
   });
 
   // ════════════════════ Search ════════════════════
@@ -353,11 +335,21 @@ function createV1Router(deps) {
         db.query(`SELECT 'dns_record' AS type, id, hostname AS label, record_type AS name FROM dns_records WHERE hostname ILIKE $1 OR record_data ILIKE $1 LIMIT 20`, [like]),
       ]);
       ok(res, [...subnets.rows, ...leases.rows, ...records.rows]);
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /search', e); }
   });
 
   // ════════════════════ Audit ════════════════════
-  router.get('/audit', read, async (req, res) => {
+  // ⛔ `admin`, not `read`. This returns the ENTIRE audit_log — username,
+  // action, entity_type, entity_name, change_summary — for every site, and no
+  // v1 route is site-scoped (api/middleware/rbac.js collapses a key to
+  // 'admin'/'viewer' and `getAllowedSiteIds` returns null for both, and
+  // `api_keys` has no site column). So on `read` a key provisioned to list
+  // subnets also got more than any session user can obtain: the session-side
+  // equivalents are stricter — `GET /api/audit` is `attachSiteFilter`
+  // (site-scoped) and the comparable whole-table dump `GET /api/audit/export`
+  // is `requireSuperAdmin`. `admin` is this surface's nearest analogue of
+  // super_admin.
+  router.get('/audit', admin, async (req, res) => {
     try {
       const { page, limit, offset } = pg(req);
       const total = parseInt((await db.query('SELECT COUNT(*) c FROM audit_log')).rows[0].c);
@@ -365,7 +357,7 @@ function createV1Router(deps) {
         `SELECT id, timestamp, username, action, entity_type, entity_name, change_summary, result
            FROM audit_log ORDER BY timestamp DESC LIMIT $1 OFFSET $2`, [limit, offset]);
       ok(res, r.rows, pageMeta(total, page, limit));
-    } catch (e) { fail(res, 500, 'INTERNAL_ERROR', e.message); }
+    } catch (e) { internalError(res, 'GET /audit', e); }
   });
 
   // catch-all 404 inside v1

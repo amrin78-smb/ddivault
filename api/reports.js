@@ -15,6 +15,7 @@ const PDFDocument = require('pdfkit');
 const { attachSiteFilter } = require('./middleware/rbac');
 const { escapeCsvCell } = require('./csv');
 const { renderTrendChart } = require('./pdfCharts');
+const { scopeGate } = require('./queryScope');
 
 // ── Brand palette (matches the frontend design system) ────────
 const RED = '#C8102E';
@@ -1681,7 +1682,14 @@ function createReportsRouter(db) {
     if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid id' });
-    const siteAllowed = (siteId) => allowed == null || (siteId != null && allowed.includes(siteId));
+    // ⛔ Out-of-scope answers EXACTLY as absent does — a 404 with the same body.
+    // This handler used to 404 on a missing row but 403 'Forbidden' on an
+    // out-of-scope one, in the same request, so a site_admin could walk ids and
+    // learn which scopes/subnets/zones exist outside its sites. Every other
+    // by-id read in this app already 404s both ways (api/server.js:1252, :1283,
+    // :2601, :3712, :4924); `scopeGate` returns one object for both cases so
+    // they cannot drift apart again.
+    const gate = (row, message) => scopeGate(row, allowed, message);
     try {
       if (entity === 'scope') {
         const q = await db.query(
@@ -1689,9 +1697,9 @@ function createReportsRouter(db) {
                   sc.percent_used, sc.state, srv.hostname AS server, srv.site_id
              FROM dhcp_scopes sc JOIN ddi_servers srv ON srv.id = sc.server_id
             WHERE sc.id = $1`, [id]);
-        if (!q.rows.length) return res.status(404).json({ error: 'Scope not found' });
+        const denied = gate(q.rows[0], 'Scope not found');
+        if (denied) return res.status(denied.status).json(denied.body);
         const s = q.rows[0];
-        if (!siteAllowed(s.site_id)) return res.status(403).json({ error: 'Forbidden' });
 
         const util = parseFloat(s.percent_used) || 0;
 
@@ -1776,9 +1784,9 @@ function createReportsRouter(db) {
                   s.total_hosts, s.used_hosts, s.free_hosts,
                   CASE WHEN s.total_hosts > 0 THEN ROUND(s.used_hosts::numeric * 100 / s.total_hosts, 1) ELSE 0 END AS util
              FROM ipam_subnets s WHERE s.id = $1`, [id]);
-        if (!q.rows.length) return res.status(404).json({ error: 'Subnet not found' });
+        const denied = gate(q.rows[0], 'Subnet not found');
+        if (denied) return res.status(denied.status).json(denied.body);
         const s = q.rows[0];
-        if (!siteAllowed(s.site_id)) return res.status(403).json({ error: 'Forbidden' });
         const util = parseFloat(s.util) || 0;
         const addrs = await db.query(
           `SELECT host(ip_address) AS ip, hostname, mac_address, status, last_seen
@@ -1818,9 +1826,9 @@ function createReportsRouter(db) {
           `SELECT z.id, z.zone_name, z.zone_type, z.is_reverse, z.record_count, srv.hostname AS server, srv.site_id
              FROM dns_zones z JOIN ddi_servers srv ON srv.id = z.server_id
             WHERE z.id = $1`, [id]);
-        if (!q.rows.length) return res.status(404).json({ error: 'Zone not found' });
+        const denied = gate(q.rows[0], 'Zone not found');
+        if (denied) return res.status(denied.status).json(denied.body);
         const z = q.rows[0];
-        if (!siteAllowed(z.site_id)) return res.status(403).json({ error: 'Forbidden' });
         const recs = await db.query(
           `SELECT hostname, record_type, record_data, ttl, last_seen
              FROM dns_records WHERE zone_id = $1 ORDER BY record_type, hostname LIMIT 200`, [id]);

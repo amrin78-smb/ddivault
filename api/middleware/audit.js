@@ -17,6 +17,12 @@
  * Audit writes NEVER throw — a failed audit must not break the operation.
  */
 
+// ⛔ Source IPs in the audit log were forgeable for the same reason the API-key
+// IP allow-list was bypassable: this file's own `clientIp` took the FIRST
+// `x-forwarded-for` hop, which the caller supplies. Shared with
+// middleware/apiAuth.js so there is one definition to get right.
+const { clientIp } = require('../clientIp');
+
 const ACTIONS = Object.freeze({
   CREATE: 'create',
   MODIFY: 'modify',
@@ -31,12 +37,6 @@ const ACTIONS = Object.freeze({
   RELEASE: 'release',
   ACKNOWLEDGE: 'acknowledge',
 });
-
-function clientIp(req) {
-  const fwd = req.headers['x-forwarded-for'];
-  if (fwd) return String(fwd).split(',')[0].trim();
-  return (req.socket && req.socket.remoteAddress) || req.ip || null;
-}
 
 /** Build a one-line human summary when the route didn't supply one. */
 function buildSummary(entry) {

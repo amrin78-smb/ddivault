@@ -30,6 +30,14 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.33.0': [
+    "Security: DHCP lease views are now restricted to your assigned sites. The lease list, the per-address history and the CSV export all returned every lease in every site to any signed-in user, including site-scoped ones - the export had no filters at all. Global search had six further lease lookups with the same gap, so searching by vendor or device type showed the same data through another door.",
+    "Security: the alerts list, the DHCP forecast summary tiles and the VLAN list are now restricted to your assigned sites as well, matching the routes beside them that always were.",
+    "Security: an API key restricted to particular IP addresses was bypassable by sending a forged X-Forwarded-For header. The restriction is now enforced only where the caller's address can actually be verified; where it cannot - which is the normal case behind the bundled web front end - a key carrying an IP restriction is refused outright with an explanation, rather than being let through. If you rely on IP-restricted keys, see DDI_TRUSTED_PROXY_HOPS in .env.local.example.",
+    "Security: this app no longer fetches the NocVault hub at an address taken from the incoming request's own headers, which could be pointed at other machines on your network and the response read back. Hub links shown in the interface still follow the hostname you are using; only the server-to-server call is pinned to the configured address.",
+    "The public API no longer returns raw database error text (which names tables and columns) to callers, the full audit log now requires an admin key rather than a read-only one, and the last-update-status endpoint requires an administrator instead of being readable by anyone.",
+    "Report drill-downs now answer the same way for a record that does not exist and one outside your sites, so the identifiers of other sites' records can no longer be discovered by trying them.",
+  ],
   '1.32.5': [
     "Security: a DNS or DHCP change submitted through this app - or through the public API with a key holding only write permission - could carry text that was treated as commands and run on the Windows DNS/DHCP server it was aimed at, with the credentials configured for that server. Every value this app puts into a command sent to those servers is now escaped, and every numeric field is now checked to be a number. This affected creating and deleting DNS records and zones, and creating and editing DHCP scopes, reservations, exclusions and options.",
     "Security: commands are no longer handed to the Windows command interpreter on the way to PowerShell. Removing that extra step removes a whole class of quoting problem, and also removes a length limit that commands were previously subject to.",
@@ -624,7 +632,16 @@ db.on('error', (err) => console.error('[DB] Pool error:', err.message));
 // ── Enterprise modules ────────────────────────────────────────
 const { auditContext } = require('./middleware/audit');
 const { generateKey, maskedDisplay } = require('./middleware/apiAuth');
-const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
+const { requireRole, requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = require('./middleware/rbac');
+// Site-scoping primitives, kept in one dependency-free module so they can be
+// unit tested without a DB (tests/siteScoping.test.js).
+const {
+  siteAllowed: siteAllowedFor,
+  siteScopeSql,
+  buildLeaseWhere,
+  buildLeaseExportQuery,
+  buildLeaseHistoryQuery,
+} = require('./queryScope');
 
 // IDOR guard for by-ID routes: true when `siteId` is within req.allowedSiteIds
 // (attachSiteFilter), or when the requester is unrestricted (allowedSiteIds === null).
@@ -632,9 +649,7 @@ const { requireWrite, requireSuperAdmin, requireAuth, attachSiteFilter } = requi
 // should respond 404 (not 403) to match the "not found" phrasing already used by these
 // routes and avoid confirming the resource's existence to an unauthorized site_admin.
 function siteAllowed(req, siteId) {
-  if (req.allowedSiteIds === null) return true;
-  if (siteId == null) return false;
-  return req.allowedSiteIds.includes(siteId);
+  return siteAllowedFor(req.allowedSiteIds, siteId);
 }
 const { createReportsRouter } = require('./reports');
 const { escapeCsvCell } = require('./csv');
@@ -688,8 +703,59 @@ function safeLimit(val) {
 // doesn't carry a usable Host — never worse than today's behavior.
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
-function resolveHubOrigin(req, port, legacyFallback) {
-  const rawHost = req.headers['x-forwarded-host'] || req.headers['host'] || '';
+/**
+ * Hostnames that may legitimately appear in `x-forwarded-host`.
+ *
+ * ⛔ THIS IS THE `TRUST_PROXY_HEADERS` GAP RECORDED AS KIV IN
+ * net-vault/lib/publicUrl.ts, and it had gone live here. `x-forwarded-host` was
+ * accepted on SHAPE alone (and HOSTNAME_RE accepts dotted IPv4), so anything
+ * that could reach this API could name any host it liked.
+ *
+ * ⛔ UNSET MEANS "BEHAVE EXACTLY AS BEFORE", DELIBERATELY. The tempting default
+ * — ignore proxy headers unless a proxy is declared — is wrong: behind the
+ * NocVault TLS terminator this app is reached over plain HTTP on loopback, so
+ * with `x-forwarded-proto` ignored it would conclude `http`, build `http://`
+ * hub links on a genuinely TLS deployment, and the hardening would simply be
+ * switched off again. So this narrows the hole when configured and changes
+ * nothing when not — and the one sink where a spoofed host actually MATTERED
+ * (the server-side fetch in /api/hub/settings) no longer uses request-derived
+ * origins at all. See `configuredHubOrigin` below.
+ *
+ * Shares the name `TRUST_PROXY_HEADERS` with the hub so one suite-wide setting
+ * governs both.
+ */
+function trustedForwardHosts(env) {
+  const raw = String(((env || process.env).TRUST_PROXY_HEADERS) || '').trim();
+  if (!raw) return null;
+  const hosts = raw
+    .split(',')
+    .map(h => h.trim().split(':')[0].toLowerCase())
+    .filter(h => h !== '');
+  return hosts.length > 0 ? hosts : null;
+}
+
+/**
+ * Build a hub origin for a BROWSER to follow (a redirect or a link) from the
+ * current request, so hub links keep working when a customer reaches the suite
+ * by a hostname other than the install-time IP.
+ *
+ * ⛔ Do NOT use this to build a URL this process will fetch. A request-derived
+ * host in a server-side fetch is an SSRF primitive; use `configuredHubOrigin`.
+ *
+ * When an allow-list IS configured, a forwarded host that is not on it is
+ * DISCARDED rather than refused — we fall back to the request's own Host, which
+ * is what this app would have seen without a proxy. Refusing outright would turn
+ * a misconfigured allow-list into a broken link on every page.
+ */
+function resolveHubOrigin(req, port, legacyFallback, env) {
+  const allowed = trustedForwardHosts(env);
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const useForwarded = forwardedHost != null && (
+    allowed === null ||
+    allowed.includes(String(forwardedHost).split(':')[0].trim().toLowerCase())
+  );
+
+  const rawHost = (useForwarded ? forwardedHost : req.headers['host']) || '';
   const hostname = String(rawHost).split(':')[0].trim();
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
 
@@ -697,6 +763,40 @@ function resolveHubOrigin(req, port, legacyFallback) {
     return `${proto}://${hostname}${port ? ':' + port : ''}`;
   }
   return legacyFallback;
+}
+
+/**
+ * The hub origin for a SERVER-SIDE fetch — configuration only, never the
+ * request.
+ *
+ * ⛔ WHY THIS EXISTS. `/api/hub/settings` used to fetch
+ * `resolveHubOrigin(req, …) + '/api/settings'` and return the response body to
+ * the caller. The host came from `x-forwarded-host`/`Host`, checked for shape
+ * only — and the shape check accepts dotted IPv4 — so any authenticated caller
+ * could make this server fetch `http://<any-internal-host>:3000/api/settings`
+ * and read the reply, or time the failure to learn whether something answers on
+ * port 3000. Live on a plain-HTTP install (the installer's default) AND on a TLS
+ * install with `TLS_PUBLIC_HOST` unset, because the terminator then re-derives
+ * `x-forwarded-host` from the client's own `Host` header.
+ *
+ * This is the same source `api/licenseCheck.js` already fetches the hub from, so
+ * nothing new has to be configured. Default is 127.0.0.1, not localhost: on
+ * Windows `localhost` resolves to `::1` first and the suite apps listen on IPv4
+ * only, so every probe stalls on the dead connect first.
+ */
+function configuredHubOrigin() {
+  const raw = String(
+    process.env.NOCVAULT_HUB_URL ||
+    process.env.NEXT_PUBLIC_NOCVAULT_HUB_URL ||
+    'http://127.0.0.1:3000'
+  ).trim();
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
 }
 
 // ── License enforcement ───────────────────────────────────────
@@ -727,7 +827,15 @@ async function enforceLicense(req, res, next) {
     }
   }
 
-  // Block all access when fully disabled (health + license-status always allowed)
+  // Block all access when fully disabled (health + license-status always allowed).
+  //
+  // ⛔ This list is NO LONGER identical to middleware.ts's PUBLIC_API, and that
+  // divergence is deliberate: /api/system/last-update-status is exempt HERE (an
+  // admin must still learn that an update failed when the licence is past grace)
+  // but is NOT in PUBLIC_API (it discloses updater error text and commit hashes,
+  // so it needs a session + the admin guard on the route itself). A licence
+  // exemption and a session exemption are different questions; don't re-sync
+  // these two lists on the assumption that they must match.
   if (state.disabled
       && !req.path.startsWith('/api/health')
       && !req.path.startsWith('/api/stats')
@@ -750,14 +858,28 @@ app.get('/api/license-status', async (req, res) => {
 });
 
 // ── NocVault hub proxy (avoids browser CORS to the hub) ───────
+// ⛔ The origin here is CONFIGURED, never request-derived — see
+// configuredHubOrigin. This handler fetches a URL and returns the body, so a
+// caller-chosen host would make it a bounded read primitive against the internal
+// network plus a port oracle.
 app.get('/api/hub/settings', requireAuth, async (req, res) => {
-  const hub = resolveHubOrigin(req, 3000, process.env.NOCVAULT_HUB_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const hub = configuredHubOrigin();
+  if (!hub) {
+    console.error('[API] hub/settings: NOCVAULT_HUB_URL is missing or not a valid http(s) URL');
+    return res.status(502).json({ error: 'Hub unreachable' });
+  }
   try {
     const r = await fetch(`${hub}/api/settings`, { headers: { Accept: 'application/json' } });
-    if (!r.ok) return res.status(502).json({ error: `Hub returned ${r.status}` });
+    if (!r.ok) {
+      console.error(`[API] hub/settings: hub returned ${r.status}`);
+      return res.status(502).json({ error: 'Hub unreachable' });
+    }
     res.json(await r.json());
   } catch (e) {
-    res.status(502).json({ error: e && e.message ? e.message : 'Hub unreachable' });
+    // Never echo the fetch error: it carries the resolved host/port and the
+    // failure mode, which is exactly the oracle this route must not be.
+    console.error('[API] hub/settings fetch failed:', e && e.message ? e.message : e);
+    res.status(502).json({ error: 'Hub unreachable' });
   }
 });
 
@@ -1034,10 +1156,30 @@ app.get('/api/system/update-available', (_req, res) => {
 // logs/last-update-status.json on every run (success or failure) - see the
 // script's Write-StatusJson function. This route just surfaces that file so the
 // frontend can show a banner the moment a failed update needs attention, without
-// anyone having to go looking at the updater's log files. Same public access
-// level as /api/system/update-available (no auth required) - matches its sibling
-// exactly, including the enforceLicense exemption above.
-app.get('/api/system/last-update-status', (_req, res) => {
+// anyone having to go looking at the updater's log files.
+//
+// ⛔ ADMIN-ONLY, AND NOT IN middleware.ts's PUBLIC_API — unlike its sibling
+// /api/system/update-available, which really is public (two version strings).
+// This one spreads the whole status file into the response (`{ exists: true,
+// ...status }`): stage, error code, the updater's raw error text, the rollback
+// flag and commit hashes. SpanVault's middleware refuses this exact route for
+// this exact reason (spanvault/frontend/src/middleware.ts). Its only consumers —
+// UpdateFailureBanner (gated on `useRBAC().isAdmin`) and page.tsx's
+// UpdatingOverlay (reached only after a super_admin triggers an update) — always
+// have a session, so nothing is lost.
+//
+// `requireRole('admin')` == admin or super_admin == exactly `isAdmin`.
+//
+// The three gates described in CLAUDE.md's "new route that must work with NO
+// session" checklist, for this route, now read:
+//   1. middleware.ts PUBLIC_API  — REMOVED (so a session is required and the
+//      x-ddi-actor* headers this guard needs actually get stamped)
+//   2. enforceLicense            — exemption KEPT, deliberately: an admin must
+//      still be able to see that an update failed on a past-grace licence
+//   3. this handler              — RBAC guard ADDED
+// 1 and 3 must move together: with the route still in PUBLIC_API the frontend
+// proxy stamps no identity, so even a super_admin's fetch would 401 here.
+app.get('/api/system/last-update-status', requireRole('admin'), (_req, res) => {
   const statusPath = path.join(APP_ROOT, 'logs', 'last-update-status.json');
   if (!fs.existsSync(statusPath)) {
     return res.json({ exists: false });
@@ -1580,46 +1722,28 @@ app.post('/api/scopes/:scopeId/exclusions', requireWrite, async (req, res) => {
 });
 
 // ── Leases ────────────────────────────────────────────────────
-app.get('/api/leases', requireAuth, async (req, res) => {
+// Every route in this block is site-scoped through `dhcp_leases.server_id ->
+// ddi_servers.site_id` — the same join `GET /api/scopes/:scopeId/leases` above
+// uses. The join was already present here (for the server_hostname column); only
+// the predicate was missing, including on the COUNT, which must carry it too or
+// the page and the total it paginates over describe different row sets.
+//
+// A lease with no `server_id` cannot be attributed to a site and is therefore
+// NOT shown to a site-restricted caller — fail closed, matching `siteAllowed`.
+app.get('/api/leases', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const page    = safePage(req.query.page);
     const limit   = safeLimit(req.query.limit);
     const offset  = (page - 1) * limit;
-    const search  = (req.query.search || '').trim();
-    const scopeId = (req.query.scope  || '').trim();
-    const state   = (req.query.state  || '').trim();
-    const deviceType = (req.query.device_type || '').trim();
 
-    const params  = [];
-    const where   = [];
-
-    if (search) {
-      params.push(`%${search}%`);
-      where.push(`(l.ip_address::text ILIKE $${params.length} OR l.hostname ILIKE $${params.length} OR l.mac_address ILIKE $${params.length})`);
-    }
-    if (scopeId) {
-      params.push(scopeId);
-      where.push(`l.scope_id = $${params.length}`);
-    }
-    if (state) {
-      params.push(state);
-      where.push(`l.address_state = $${params.length}`);
-    }
-    if (deviceType) {
-      // 'unknown' also covers leases with no classification (NULL / empty).
-      if (deviceType.toLowerCase() === 'unknown') {
-        where.push(`(l.device_type IS NULL OR l.device_type = '' OR LOWER(l.device_type) = 'unknown')`);
-      } else {
-        params.push(deviceType);
-        where.push(`LOWER(l.device_type) = LOWER($${params.length})`);
-      }
-    }
-
-    const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const { whereClause, params } = buildLeaseWhere(req.query, req.allowedSiteIds);
 
     const countParams = [...params];
     const count = await db.query(
-      `SELECT COUNT(*) as total FROM dhcp_leases l ${whereClause}`,
+      `SELECT COUNT(*) as total
+         FROM dhcp_leases l
+         LEFT JOIN ddi_servers s ON s.id = l.server_id
+       ${whereClause}`,
       countParams
     );
 
@@ -1641,16 +1765,12 @@ app.get('/api/leases', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/leases/ip/:ip/history', requireAuth, async (req, res) => {
+// lease_history has its own server_id FK to ddi_servers (scripts/schema.sql),
+// so the per-IP history scopes exactly like the lease list.
+app.get('/api/leases/ip/:ip/history', requireAuth, attachSiteFilter, async (req, res) => {
   try {
-    const ip = req.params.ip;
-    const rows = await db.query(
-      `SELECT * FROM lease_history
-       WHERE ip_address = $1
-       ORDER BY event_time DESC
-       LIMIT 200`,
-      [ip]
-    );
+    const { sql, params } = buildLeaseHistoryQuery(req.params.ip, req.allowedSiteIds);
+    const rows = await db.query(sql, params);
     res.json({ data: rows.rows });
   } catch (err) {
     console.error('[API] lease IP history error:', err.message);
@@ -1663,14 +1783,17 @@ app.get('/api/leases/ip/:ip/history', requireAuth, async (req, res) => {
 // anyone who could reach the API). The download is triggered from the frontend by
 // an authenticated fetch (rides the x-ddi-actor-* header injection), not a plain
 // <a>/window.open navigation, which would carry no identity and 401.
-app.get('/api/leases/export', requireAuth, async (req, res) => {
+//
+// ⛔ AND it is site-scoped. That earlier pass added `requireAuth` and stopped
+// there: the query stayed a bare `SELECT … FROM dhcp_leases ORDER BY
+// ip_address` with no filter of any kind and no pagination, so a site_admin
+// scoped to one site downloaded every lease in every site — IP, hostname, MAC,
+// scope, state and lease window. Adding an identity check is not the same as
+// adding an authorization check.
+app.get('/api/leases/export', requireAuth, attachSiteFilter, async (req, res) => {
   try {
-    const rows = await db.query(
-      `SELECT ip_address, hostname, mac_address, scope_id, address_state,
-              lease_start, lease_expiry, last_seen
-       FROM dhcp_leases
-       ORDER BY ip_address`
-    );
+    const { sql, params } = buildLeaseExportQuery(req.allowedSiteIds);
+    const rows = await db.query(sql, params);
 
     const header = 'IP Address,Hostname,MAC Address,Scope,State,Lease Start,Lease Expiry,Last Seen\n';
     const csv = rows.rows.map(r =>
@@ -1968,7 +2091,20 @@ function buildAlertExplanation(a) {
   return null;
 }
 
-app.get('/api/alerts', requireAuth, async (req, res) => {
+// Site-scoped through `alert_events.server_id -> ddi_servers.site_id`, exactly
+// like the siblings GET /api/events and GET /api/dashboard/recent-events. The
+// rows query already joined ddi_servers (for server_hostname, health_score,
+// query_ms and winrm_test_ok) and simply never filtered on site_id, so another
+// site's server health leaked through this list.
+//
+// ⛔ The predicate goes into the GROUPED subquery of BOTH the COUNT and the rows
+// query, identically — the gotcha recorded for this route is that a page and the
+// total it paginates over must group over the same set.
+//
+// An alert with no `server_id` (an instance-wide alert) has no site and is
+// therefore not shown to a site-restricted caller — fail closed, matching
+// /api/events' LEFT JOIN + `s.site_id = ANY(...)` shape.
+app.get('/api/alerts', requireAuth, attachSiteFilter, async (req, res) => {
   try {
     const page   = safePage(req.query.page);
     const limit  = safeLimit(req.query.limit);
@@ -1997,6 +2133,15 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
     } else if (unackedOnly) {
       conds.push('ae.acknowledged = FALSE', 'ae.resolved_at IS NULL');
     }
+    // Site scope for a site_admin. `alert_events` has no site column, so this
+    // joins the owning server the same way /api/events does. `ddi_servers.id` is
+    // the PK, so the LEFT JOIN cannot multiply rows and the grouped counts stay
+    // exact. The clause and its bind parameter are shared verbatim between the
+    // COUNT and the rows query below.
+    const scopeParams = [];
+    const siteCond = siteScopeSql(req.allowedSiteIds, 'srv.site_id', scopeParams);
+    if (siteCond) conds.push(siteCond);
+    const siteJoin = siteCond ? 'LEFT JOIN ddi_servers srv ON srv.id = ae.server_id' : '';
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
     // Group identical alerts (same server + same alert shape) within the same
@@ -2011,13 +2156,15 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
       // (16 groups over, live). Grouping on the same dimension the UI slices by
       // keeps the three counts mutually exclusive and adding up.
       `SELECT COUNT(*) AS total FROM (
-         SELECT 1 FROM alert_events ae ${where}
+         SELECT 1 FROM alert_events ae ${siteJoin} ${where}
          GROUP BY regexp_replace(ae.message, '[0-9]+', '#', 'g'),
                   ae.server_id, ae.acknowledged, (ae.resolved_at IS NOT NULL),
                   date_trunc('hour', ae.fired_at)
-       ) g`
+       ) g`,
+      scopeParams
     );
 
+    const rowsParams = [...scopeParams, limit, offset];
     const rows = await db.query(
       `WITH grouped AS (
          SELECT regexp_replace(ae.message, '[0-9]+', '#', 'g') AS norm,
@@ -2029,9 +2176,11 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
                 MAX(ae.fired_at)     AS fired_at,
                 MAX(ae.id)           AS rep_id
            FROM alert_events ae
+           ${siteJoin}
            ${where}
            -- Must group IDENTICALLY to the COUNT above, or the page of rows and
-           -- the total it is paginating over describe different things.
+           -- the total it is paginating over describe different things. The site
+           -- predicate is part of that: it is in both, with the same join.
            GROUP BY 1, 2, 3, 4, 5
        )
        SELECT ae.*, g.occurrence_count, g.first_fired_at,
@@ -2043,8 +2192,8 @@ app.get('/api/alerts', requireAuth, async (req, res) => {
          LEFT JOIN alert_rules ar ON ar.id = ae.rule_id
          LEFT JOIN ddi_servers s ON s.id = g.server_id
         ORDER BY g.fired_at DESC
-        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+        LIMIT $${rowsParams.length - 1} OFFSET $${rowsParams.length}`,
+      rowsParams
     );
 
     const data = rows.rows.map((a) => {
@@ -2373,18 +2522,28 @@ app.get('/api/forecasts/scopes/:id', attachSiteFilter, async (req, res) => {
   }
 });
 
-// No site-level breakdown available: scope_forecasts has no site_id (and no
-// join target here) without adding a new server/scope join purely for this
-// aggregate count — requireAuth only, matching the global-aggregate precedent
-// (/api/anomalies/summary, /api/ipam/utilization-history).
-app.get('/api/forecasts/summary', requireAuth, async (req, res) => {
+// Site-scoped. The previous comment here claimed scope_forecasts had "no join
+// target" — it does: both siblings above (/api/forecasts/scopes and
+// /scopes/:id) reach the site through `scope_forecasts.scope_id ->
+// dhcp_scopes.id -> dhcp_scopes.server_id -> ddi_servers.site_id`. This
+// aggregate just never used it, so the critical/warning/healthy tiles counted
+// every site's scopes for a site_admin. This is NOT the same situation as
+// /api/ipam/utilization-history or /api/anomalies/summary, whose tables have no
+// site dimension at all to join to.
+app.get('/api/forecasts/summary', requireAuth, attachSiteFilter, async (req, res) => {
   try {
+    const params = [];
+    const site = siteScopeSql(req.allowedSiteIds, 'srv.site_id', params);
     const r = await db.query(
       `SELECT
-         COUNT(*) FILTER (WHERE days_to_full IS NOT NULL AND days_to_full < 14) as critical,
-         COUNT(*) FILTER (WHERE days_to_full >= 14 AND days_to_full <= 30) as warning,
-         COUNT(*) FILTER (WHERE days_to_full IS NULL OR days_to_full > 30) as healthy
-       FROM scope_forecasts`
+         COUNT(*) FILTER (WHERE f.days_to_full IS NOT NULL AND f.days_to_full < 14) as critical,
+         COUNT(*) FILTER (WHERE f.days_to_full >= 14 AND f.days_to_full <= 30) as warning,
+         COUNT(*) FILTER (WHERE f.days_to_full IS NULL OR f.days_to_full > 30) as healthy
+       FROM scope_forecasts f
+       JOIN dhcp_scopes sc ON sc.id = f.scope_id
+       LEFT JOIN ddi_servers srv ON srv.id = sc.server_id
+       ${site ? `WHERE ${site}` : ''}`,
+      params
     );
     res.json({ data: r.rows[0] });
   } catch (err) {
@@ -3450,11 +3609,42 @@ app.get('/api/ipam/scan-status', attachSiteFilter, async (req, res) => {
 });
 
 // ── IPAM — VLANs ─────────────────────────────────────────────
-// ipam_vlans has no site_id column (only a free-text `site` field) — no
-// existing site-scoping precedent to mirror, so requireAuth only.
-app.get('/api/ipam/vlans', requireAuth, async (req, res) => {
+// `ipam_vlans.site` is a TEXT column, not a site_id — but it is not free text in
+// practice: the only writer is POST /api/ipam/vlans, driven by the Add VLAN
+// modal's `SiteSelect` (frontend/src/components/IPAMTab.tsx), whose option
+// values are NetVault site NAMES. So the scope is resolved by translating the
+// caller's allowed site ids to names via the NetVault sites table (the same
+// cross-DB pool /api/sites uses) and filtering on those.
+//
+// Fail closed twice over: a VLAN with no `site`, or one naming a site that no
+// longer exists, is not shown to a site-restricted caller; and if the name
+// lookup itself fails for such a caller we return no rows rather than all of
+// them. Unrestricted callers (super_admin/admin/viewer) are unaffected and never
+// touch the cross-DB query.
+app.get('/api/ipam/vlans', requireAuth, attachSiteFilter, async (req, res) => {
   try {
-    const rows = await db.query('SELECT * FROM ipam_vlans ORDER BY vlan_id');
+    if (req.allowedSiteIds === null) {
+      const rows = await db.query('SELECT * FROM ipam_vlans ORDER BY vlan_id');
+      return res.json({ data: rows.rows });
+    }
+
+    let siteNames;
+    try {
+      const sites = await netvaultDb.query(
+        'SELECT name FROM sites WHERE id = ANY($1::int[])',
+        [req.allowedSiteIds]
+      );
+      siteNames = sites.rows.map(r => r.name).filter(n => n != null && n !== '');
+    } catch (e) {
+      console.error('[API] vlans site-name resolve failed:', e.message);
+      return res.json({ data: [] });
+    }
+    if (!siteNames.length) return res.json({ data: [] });
+
+    const rows = await db.query(
+      'SELECT * FROM ipam_vlans WHERE site = ANY($1::text[]) ORDER BY vlan_id',
+      [siteNames]
+    );
     res.json({ data: rows.rows });
   } catch (err) {
     console.error('[API] vlans error:', err.message);
@@ -4321,15 +4511,22 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
     if (!q || q.length < 2) return res.json({ data: [] });
 
     // Site scoping for site_admin (allowedSiteIds !== null): applied per
-    // sub-query below wherever the underlying table already has an
-    // established site_id filtering precedent elsewhere in this file
+    // sub-query below wherever the underlying table can be attributed to a site
     // (dhcp_scopes via ddi_servers, ipam_subnets/ipam_supernets/ipam_addresses,
-    // dns_zones via ddi_servers). dhcp_leases-derived results (type/vendor/
-    // subnet/new/risk sub-queries, and the unstructured `leases` search) are
-    // intentionally left unfiltered — matching the existing GET /api/leases
-    // and /api/leases/export routes, which are also unfiltered by site in
-    // this codebase. anomaly_events is likewise left unfiltered — it has no
-    // site_id, matching the already-correct POST /api/anomalies/group/ack.
+    // dns_zones via ddi_servers, dhcp_leases via ddi_servers).
+    //
+    // ⛔ The dhcp_leases-derived results (the type/vendor/subnet/new/risk
+    // sub-queries and the unstructured `leases` search) used to be left
+    // unfiltered on the stated grounds that GET /api/leases and
+    // /api/leases/export were unfiltered too. Those two are now scoped, so that
+    // reasoning is void — and leaving search unscoped would have re-opened the
+    // same disclosure through a different door (`vendor:apple` returns every
+    // site's leases). They all join `dhcp_leases.server_id -> ddi_servers.
+    // site_id` now, and a lease with no server_id is excluded for a scoped
+    // caller, matching the lease routes.
+    //
+    // anomaly_events is still left unfiltered — it genuinely has no site_id to
+    // join to, matching the already-correct POST /api/anomalies/group/ack.
 
     // ── Structured query parsing (key:value) ──────────────────
     const m = q.match(/^(\w+):(.+)$/);
@@ -4341,11 +4538,14 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
         try {
           let rows = [];
           if (key === 'type') {
+            const p = [`%${val}%`];
+            const f = siteScopeSql(allowedSiteIds, 'srv.site_id', p);
             const r = await db.query(
-              `SELECT ip_address::text, hostname, mac_address, device_type, device_vendor, address_state, scope_id
-               FROM dhcp_leases
-               WHERE device_type ILIKE $1 LIMIT 100`,
-              [`%${val}%`]
+              `SELECT l.ip_address::text, l.hostname, l.mac_address, l.device_type, l.device_vendor, l.address_state, l.scope_id
+               FROM dhcp_leases l
+               LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+               WHERE l.device_type ILIKE $1${f ? ` AND ${f}` : ''} LIMIT 100`,
+              p
             );
             rows = r.rows.map(x => ({
               type: 'lease', title: x.ip_address,
@@ -4353,10 +4553,14 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
               status: x.address_state, meta: { device_type: x.device_type, device_vendor: x.device_vendor },
             }));
           } else if (key === 'vendor') {
+            const p = [`%${val}%`];
+            const f = siteScopeSql(allowedSiteIds, 'srv.site_id', p);
             const r = await db.query(
-              `SELECT ip_address::text, hostname, mac_address, device_type, device_vendor, address_state
-               FROM dhcp_leases WHERE device_vendor ILIKE $1 LIMIT 100`,
-              [`%${val}%`]
+              `SELECT l.ip_address::text, l.hostname, l.mac_address, l.device_type, l.device_vendor, l.address_state
+               FROM dhcp_leases l
+               LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+               WHERE l.device_vendor ILIKE $1${f ? ` AND ${f}` : ''} LIMIT 100`,
+              p
             );
             rows = r.rows.map(x => ({
               type: 'lease', title: x.ip_address,
@@ -4364,10 +4568,14 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
               status: x.address_state, meta: { device_vendor: x.device_vendor },
             }));
           } else if (key === 'subnet') {
+            const p = [`${val}%`];
+            const f = siteScopeSql(allowedSiteIds, 'srv.site_id', p);
             const r = await db.query(
-              `SELECT ip_address::text, hostname, mac_address, device_type, address_state, scope_id
-               FROM dhcp_leases WHERE host(ip_address) LIKE $1 LIMIT 100`,
-              [`${val}%`]
+              `SELECT l.ip_address::text, l.hostname, l.mac_address, l.device_type, l.address_state, l.scope_id
+               FROM dhcp_leases l
+               LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+               WHERE host(l.ip_address) LIKE $1${f ? ` AND ${f}` : ''} LIMIT 100`,
+              p
             );
             rows = r.rows.map(x => ({
               type: 'lease', title: x.ip_address,
@@ -4439,9 +4647,15 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
             const cutoff = val.toLowerCase() === 'today'
               ? `date_trunc('day', NOW())`
               : `NOW() - INTERVAL '7 days'`;
+            const p = [];
+            const f = siteScopeSql(allowedSiteIds, 'srv.site_id', p);
             const r = await db.query(
-              `SELECT ip_address::text, hostname, mac_address, device_type, address_state, first_seen
-               FROM dhcp_leases WHERE first_seen > ${cutoff} ORDER BY first_seen DESC LIMIT 100`
+              `SELECT l.ip_address::text, l.hostname, l.mac_address, l.device_type, l.address_state, l.first_seen
+               FROM dhcp_leases l
+               LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+               WHERE l.first_seen > ${cutoff}${f ? ` AND ${f}` : ''}
+               ORDER BY l.first_seen DESC LIMIT 100`,
+              p
             );
             rows = r.rows.map(x => ({
               type: 'lease', title: x.ip_address,
@@ -4449,10 +4663,14 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
               status: x.address_state, meta: { first_seen: x.first_seen },
             }));
           } else if (key === 'risk') {
+            const p = [val.toLowerCase()];
+            const f = siteScopeSql(allowedSiteIds, 'srv.site_id', p);
             const r = await db.query(
-              `SELECT ip_address::text, hostname, mac_address, device_type, risk_level, address_state
-               FROM dhcp_leases WHERE risk_level = $1 LIMIT 100`,
-              [val.toLowerCase()]
+              `SELECT l.ip_address::text, l.hostname, l.mac_address, l.device_type, l.risk_level, l.address_state
+               FROM dhcp_leases l
+               LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+               WHERE l.risk_level = $1${f ? ` AND ${f}` : ''} LIMIT 100`,
+              p
             );
             rows = r.rows.map(x => ({
               type: 'lease', title: x.ip_address,
@@ -4610,16 +4828,22 @@ app.get('/api/search', attachSiteFilter, async (req, res) => {
       });
     }
 
-    // Search DHCP leases
+    // Search DHCP leases (site-scoped via the lease's server, matching the
+    // GET /api/leases pattern — note the OR group must stay parenthesised or
+    // the AND would only bind to the last alternative)
+    const leaseParams = [`%${q}%`];
+    const leasesSiteFilter = siteScopeSql(allowedSiteIds, 'srv.site_id', leaseParams);
     const leases = await db.query(
-      `SELECT ip_address::text, hostname, mac_address, address_state, scope_id
-       FROM dhcp_leases
-       WHERE
-         ip_address::text ILIKE $1 OR
-         hostname ILIKE $1 OR
-         mac_address ILIKE $1
+      `SELECT l.ip_address::text, l.hostname, l.mac_address, l.address_state, l.scope_id
+       FROM dhcp_leases l
+       LEFT JOIN ddi_servers srv ON srv.id = l.server_id
+       WHERE (
+         l.ip_address::text ILIKE $1 OR
+         l.hostname ILIKE $1 OR
+         l.mac_address ILIKE $1
+       )${leasesSiteFilter ? ` AND ${leasesSiteFilter}` : ''}
        LIMIT 10`,
-      [`%${q}%`]
+      leaseParams
     );
     for (const r of leases.rows) {
       results.push({

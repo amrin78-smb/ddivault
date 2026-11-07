@@ -11,13 +11,24 @@ const HUB_URL_FALLBACK = process.env.NOCVAULT_HUB_URL || process.env.NEXT_PUBLIC
 const BACKEND   = 'http://127.0.0.1:3007';
 
 // Explicit, narrow allow-list of Express-backed API routes that must work with
-// NO NextAuth session — kept identical to the `enforceLicense` exemption list
-// in api/server.js (health/stats/license-status/update-available always
+// NO NextAuth session (health/stats/license-status/update-available always
 // respond, even fully unlicensed, e.g. NocVault hub tiles polling this app
 // pre-login). /api/v1/* is handled separately below: it authenticates itself
 // with an API key (Authorization/X-API-Key header), so external integrations
 // never carry a NextAuth session cookie at all.
-const PUBLIC_API = /^\/api\/(health|stats|license-status|system\/update-available|system\/last-update-status)$/;
+//
+// ⛔ This is NOT the same list as `enforceLicense`'s exemptions in
+// api/server.js, and must not be re-synced with it on the assumption that it
+// should be. `/api/system/update-available` is public (it returns two version
+// strings). `/api/system/last-update-status` was here too and should never have
+// been: api/server.js spreads the whole status file into the response — stage,
+// error code, the updater's RAW error text, the rollback flag, commit hashes —
+// to anyone who can reach the port. SpanVault's middleware refuses that exact
+// route for that exact reason. It is now admin-gated in Express instead, and it
+// MUST stay out of this list: a request let through here gets no x-ddi-actor*
+// headers stamped, so its RBAC guard would 401 even a super_admin. It remains
+// exempt from the LICENCE gate in server.js, which is a separate question.
+const PUBLIC_API = /^\/api\/(health|stats|license-status|system\/update-available)$/;
 
 // One-click "acknowledge alert" email link (api/emailer.js builds it as
 // APP_URL + '/api/alerts/:id/acknowledge?token=' + ackToken(id)). It must work
