@@ -30,6 +30,10 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.3': [
+    "The settings menu now uses the same words in every application. The page that holds email recipients and alert rules is called Notifications everywhere - two of the four used to call it Email Alerts - and the sections are System, Alerting, Records and Software across the suite rather than a different set per app.",
+    "NetVault's equivalent page is now called Mail server, because that is what it is: the mail server for the whole suite, and nothing else. It holds no recipients, no filters and no rules - those stay in each application. Calling it Notifications sent people there looking for settings that were never on it.",
+  ],
   '1.35.2': [
     "The mail-server panel no longer says the suite mail server is switched off when it cannot actually tell. DDIVault falls back to its own settings for several reasons - none configured on the hub, the hub unreachable, an older hub, or a password it cannot read - and naming the wrong one would send you to the wrong screen. It now states what is true: no suite mail server is reaching DDIVault.",
     "The labels in that panel were a shade too light to read comfortably against its tinted background, measured just under the accessibility threshold. They are now a step darker.",

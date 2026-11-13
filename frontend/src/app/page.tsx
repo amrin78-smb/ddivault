@@ -1701,7 +1701,7 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
 
   const TABS: { id: SettingsSubTab; label: string; subtitle: string }[] = [
     { id: 'general',       label: 'General',      subtitle: 'IPAM scan and data retention' },
-    { id: 'notifications', label: 'Email Alerts', subtitle: 'Email delivery, alert recipients, and alert rules' },
+    { id: 'notifications', label: 'Notifications', subtitle: 'Email delivery, alert recipients, and alert rules' },
     { id: 'integrations',  label: 'Integrations', subtitle: 'NocVault hub connection and REST API keys' },
     { id: 'updates',       label: 'Updates',      subtitle: 'Software version and update management' },
     { id: 'about',         label: 'About',        subtitle: 'Application and system information' },

@@ -184,7 +184,7 @@ function EffectiveTransport({ state, hub, legacy }: {
   const hubLink = `${getHubUrl()}/settings?tab=notifications`;
   const link = (
     <a href={hubLink} target="_blank" rel="noopener noreferrer" style={HUB_LINK}>
-      NetVault → Settings → Notifications
+      NetVault → Settings → Mail server
     </a>
   );
 
