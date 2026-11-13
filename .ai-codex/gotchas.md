@@ -604,3 +604,21 @@ from the start: `last-update-status.json` recording `success:false` AND
 `rolledBack:false` is exactly the "ROLLBACK ALSO FAILED" state. They restart the
 services and the TLS front door first, so aborting does not also leave the app
 down on top of the bad state being reported.
+
+## ⛔ A link ON a tint panel cannot keep the colour it had on the card (1.35.2)
+
+`HUB_LINK` in `SmtpSettings.tsx` used `var(--blue)`, which is correct on `--bg-card` and
+fails on the `--tint-info`/`--tint-warn` washes the transport panel moved onto. Measured
+in-browser against this stylesheet: **`--blue` 3.03:1** and **`--primary` 2.66:1** on the dark
+warn tint, against the 4.5:1 body-text floor. The link now takes `color: inherit` — the panel's
+own matched `--tint-*-fg` (8.89:1 info / 10.86:1 warn dark, 6.16 / 4.84 light) — and is marked
+by **weight + underline** rather than hue.
+
+This is the `--canvas-light` trap from the other direction: there, page-themed chrome was
+dropped onto a permanently light canvas; here, a card-themed colour was dropped onto a tint.
+**Same rule both ways — a colour is only correct against the background it was chosen for.**
+Found by the SpanVault port, which hit it first and measured it; LogVault had the same defect.
+
+⛔ The tempting "fix" later is to reach for a brand colour again so the link "looks like a
+link". It will fail the same way. On a tinted surface, carry the affordance with weight and an
+underline.

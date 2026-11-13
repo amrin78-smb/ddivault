@@ -116,15 +116,30 @@ const FACTS: React.CSSProperties = {
 };
 
 const FACT_LABEL: React.CSSProperties = {
-  color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap',
+  // --text-secondary, not --text-muted: measured 4.37:1 on the light --tint-info
+  // wash, just under the 4.5:1 floor. 13px/600 is not WCAG large text, so the
+  // exemption does not apply. Changed in all three apps at once - one app
+  // quietly altering a shared token is how the divergence started.
+  color: 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap',
 };
 
 const FACT_VALUE: React.CSSProperties = {
   color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all',
 };
 
+// ⛔ INHERITS THE PANEL'S OWN FOREGROUND, AND IS MARKED BY WEIGHT + UNDERLINE
+// RATHER THAN BY HUE. This link sits on the --tint-info / --tint-warn washes, not
+// on the card, and a brand colour chosen against a white card does not survive the
+// move: measured in-browser against this stylesheet, --blue is 3.03:1 on the dark
+// warn tint and --primary 2.66:1 — both below the 4.5:1 body-text floor. Taking
+// `color: inherit` puts it on the panel's matched --tint-*-fg (8.89:1 info /
+// 10.86:1 warn in dark, 6.16 / 4.84 light) and the underline carries the
+// affordance the colour used to.
+// This is the --canvas-light trap from the other direction: a colour picked for
+// one background, reused on another. The obvious "fix" later is to reach for a
+// brand colour again — don't.
 const HUB_LINK: React.CSSProperties = {
-  color: 'var(--blue)', fontWeight: 600, textDecoration: 'none',
+  color: 'inherit', fontWeight: 700, textDecoration: 'underline',
 };
 
 const SUBNOTE: React.CSSProperties = {
@@ -199,7 +214,7 @@ function EffectiveTransport({ state, hub, legacy }: {
     return (
       <div style={NOTE_WARN}>
         <div style={NOTE_TITLE}>Sending through a mail server stored in DDIVault</div>
-        NetVault has no suite mail server switched on, so DDIVault is falling back to the
+        No suite mail server is reaching DDIVault, so it is falling back to the
         server saved in its own settings by an earlier release.
         <div style={FACTS}>
           <Fact label="Server">{legacy.host}:{legacy.port}</Fact>
@@ -217,7 +232,7 @@ function EffectiveTransport({ state, hub, legacy }: {
   return (
     <div style={NOTE_WARN}>
       <div style={NOTE_TITLE}>No mail server configured</div>
-      NetVault has no suite mail server switched on, and DDIVault has none of its own. Until
+      No suite mail server is reaching DDIVault, and DDIVault has none of its own. Until
       one is configured, alerts, digests and scheduled reports <strong>will not be
       delivered</strong> and Send Test Email will fail.
       {/* The settings rail already says mail is managed in NetVault, so this

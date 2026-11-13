@@ -30,6 +30,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.2': [
+    "The mail-server panel no longer says the suite mail server is switched off when it cannot actually tell. DDIVault falls back to its own settings for several reasons - none configured on the hub, the hub unreachable, an older hub, or a password it cannot read - and naming the wrong one would send you to the wrong screen. It now states what is true: no suite mail server is reaching DDIVault.",
+    "The labels in that panel were a shade too light to read comfortably against its tinted background, measured just under the accessibility threshold. They are now a step darker.",
+    "The link to NetVault on the mail-server panel was hard to read. It used a blue that was chosen against a white card, and the panel it now sits on is a tinted one - measured at roughly 3:1 against the required 4.5:1, worse in dark mode. It now takes the panel's own text colour and is marked by weight and an underline instead of by colour.",
+  ],
   '1.35.1': [
     "Settings now lists its sections down the left-hand side in named groups - System, Alerting and Software - instead of a single row of tabs across the top. The sections themselves are unchanged and nothing has moved between them; they are now labelled by the kind of setting they hold, so it is clearer where to look. On a narrow screen the groups fold back into one wrapped line.",
     "A standing line at the top of that list points out that users, single sign-on, licensing and the mail server are managed in NetVault, with a link straight there. DDIVault has no screen for any of the four, and administrators were reasonably concluding they had gone missing rather than that they live in the hub.",
