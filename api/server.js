@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.34.0': [
+    "SMTP can now be configured once for the whole NocVault suite. If an SMTP server is set up and switched on in NetVault, DDIVault sends its alerts, digests and scheduled reports through it automatically - nothing to fill in here. If NetVault has none, DDIVault keeps using its own SMTP settings exactly as before, so existing installs are unaffected and need no action.",
+    "The From address and name stay with DDIVault, so alert mail still arrives as DDIVault rather than as a generic suite sender, and the Enable email alert delivery switch on this page still decides whether DDIVault sends mail at all.",
+    "The SMTP page now says when the mail server is the central one, and shows the server and authentication fields as the fallback used if the central one is switched off.",
+    "Security: the Send Test Email button no longer returns the mail server's raw reply, which could include the host, port, the configured username and the server's own rejection text. It now reports a short status code and the full detail is written to the API log instead.",
+    "Certificate checking: when the mail server comes from NetVault, its certificate is verified unless an administrator has ticked Allow self-signed certificate there. A mail server configured locally in DDIVault behaves exactly as it always has, so no existing setup stops working on upgrade.",
+  ],
   '1.33.0': [
     "Security: DHCP lease views are now restricted to your assigned sites. The lease list, the per-address history and the CSV export all returned every lease in every site to any signed-in user, including site-scoped ones - the export had no filters at all. Global search had six further lease lookups with the same gap, so searching by vendor or device type showed the same data through another door.",
     "Security: the alerts list, the DHCP forecast summary tiles and the VLAN list are now restricted to your assigned sites as well, matching the routes beside them that always were.",
@@ -657,6 +664,7 @@ const { createReportsSchedulingRouter } = require('./reportsScheduling');
 const { createV1Router } = require('./v1');
 const { getLicense, getLicenseState } = require('./licenseCheck');
 const emailer = require('./emailer');
+const suiteSmtp = require('./suiteSmtp');
 const alertDispatcher = require('./alertDispatcher');
 const { startWsServer, stopWsServer, reconfigureAgent, disconnectAgent } = require('./ws-server'); // Phase 4b agent data plane
 
@@ -2297,10 +2305,26 @@ app.put('/api/alert-rules/:id', requireWrite, async (req, res) => {
 app.get('/api/smtp', requireSuperAdmin, async (req, res) => {
   try {
     const r = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
-    if (!r.rows.length) return res.json({ data: null });
+
+    // Which transport is actually in use — this app's own row, or the suite
+    // transport the NetVault hub owns (api/suiteSmtp.js). Only the SOURCE and a
+    // password-free summary are exposed; `resolved.cfg` carries the decrypted
+    // password and must never leave the server. Fails soft: a hub that cannot
+    // be read resolves to 'local', same as the senders.
+    let source = 'local';
+    let hub = null;
+    try {
+      const resolved = await suiteSmtp.resolveSmtp(db);
+      source = resolved.source;
+      hub = resolved.hub || null;
+    } catch (e) {
+      console.error('[API] smtp source resolve error:', e.message);
+    }
+
+    if (!r.rows.length) return res.json({ data: null, source, hub });
     const row = { ...r.rows[0] };
     row.password = row.password ? '********' : '';
-    res.json({ data: row });
+    res.json({ data: row, source, hub });
   } catch (err) {
     console.error('[API] smtp get error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -5649,6 +5673,7 @@ async function shutdown(signal) {
     db.end(),
     typeof netvaultDb !== 'undefined' && netvaultDb ? netvaultDb.end() : Promise.resolve(),
     closeScannerPool ? closeScannerPool() : Promise.resolve(),
+    suiteSmtp.closeSuiteSmtpPool(),
   ]);
   console.log('[Shutdown] complete.');
   process.exit(0);

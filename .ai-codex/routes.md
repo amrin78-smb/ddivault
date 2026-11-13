@@ -138,9 +138,15 @@ POST /api/alerts/:id/acknowledge write db — ack an alert (and its grouped sibl
 POST /api/alerts/acknowledge-all write db — bulk-ack all open alerts, optional severity filter
 GET /api/alert-rules auth db — list alert_rules
 PUT /api/alert-rules/:id write db — update threshold_value/is_enabled on a rule
-GET /api/smtp super-admin db — SMTP config (password masked)
-POST /api/smtp super-admin db — upsert SMTP config (encrypts password), invalidates emailer cache
-POST /api/smtp/test super-admin external — send a live test email (emailer.sendTestEmail, SMTP)
+GET /api/smtp super-admin db — this app's SMTP config (password masked), PLUS `source`
+  ('hub'|'local') and a password-free `hub` summary when the NetVault hub owns the transport
+  (api/suiteSmtp.js). Also reads the hub DB cross-DB; fails soft to source 'local'
+POST /api/smtp super-admin db — upsert SMTP config (encrypts password), invalidates the
+  suiteSmtp cache (hub + local). Writes ONLY this app's row — the hub transport is edited
+  in NetVault
+POST /api/smtp/test super-admin external — send a live test email through whichever transport
+  is active (emailer.sendTestEmail, SMTP). ⛔ returns only a code-derived summary on failure,
+  never the raw nodemailer message (which embeds host/port/username/auth rejection) — 1.34.0
 GET /api/alert-recipients auth db — list alert_recipients
 POST /api/alert-recipients write db — add recipient
 PUT /api/alert-recipients/:id write db — update recipient

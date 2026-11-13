@@ -192,4 +192,15 @@ Both encrypted-password columns derive their key from `NEXTAUTH_SECRET` (or `DDI
   - Documented in this app's `CLAUDE.md` under "Cross-DB access (NetVault sites)" as a manual `GRANT CONNECT`/`GRANT USAGE`/`GRANT SELECT` run against the `netvault` DB.
   - **Not captured in any ddivault schema file** (by design — ddivault's own schema files only touch the `ddivault` DB, never `netvault`).
   - **Is captured in the suite installer**: `Install-NocVault-Suite.ps1` lines 640-642 run exactly this grant (`GRANT CONNECT ON DATABASE netvault TO ddivault_user`, `GRANT USAGE ON SCHEMA public TO ddivault_user`, `GRANT SELECT ON sites, countries TO ddivault_user`) as part of the DDIVault install block — so fresh installs get it automatically; it is not a manual step an admin must remember.
+  - **Second cross-DB READ, added 1.34.0 — `netvault.smtp_config` (suite SMTP centralization Phase 2).**
+    `api/suiteSmtp.js` reads the hub's single suite-wide `smtp_config` row (`host, port, secure,
+    username, password, from_email, from_name, enabled, allow_self_signed`) and decrypts
+    `password` with `collector/credStore.js` — the hub writes the SAME `ivHex:authTagHex:cipherHex`
+    / `sha256(NEXTAUTH_SECRET)` format, which is a documented cross-repo CONTRACT (`net-vault/lib/credStore.ts`).
+    **No new grant and no new env var**: unlike (c) above this does NOT go through `ddivault_user`
+    — it uses its own pool on `NETVAULT_DB_USER`/`NETVAULT_DB_PASS` (default role `netvault`, the
+    hub's own role), exactly like `api/middleware/rbac.js` and `collector/healthScorer.js`, and both
+    `DDIVault-API` and `DDIVault-Collector` already carry those vars plus `NEXTAUTH_SECRET`.
+    ⛔ The read fails SOFT in every direction (notably Postgres `42P01` when the hub has not yet
+    shipped the table) — see `.ai-codex/gotchas.md`.
   - This is the opposite direction from the `nocvault_readonly` grant in (b) — that one is `ddivault`'s own tables being read BY the Hub; this one is `ddivault_user` reading two specific `netvault` tables. Both directions are provisioned by the same installer script but via different mechanisms (installer-issued GRANT vs. schema-file DO-block).

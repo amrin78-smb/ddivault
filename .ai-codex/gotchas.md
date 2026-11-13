@@ -386,6 +386,60 @@
   (closing the `row_count` inference vector) while leaving saved views shared
   is the middle option that was considered.
 
+## Suite SMTP (hub transport) — `api/suiteSmtp.js`, added 1.34.0
+
+- **`api/emailer.js` is required by BOTH processes.** `api/server.js` loads it AND
+  `collector/reportScheduler.js` loads it, so anything emailer pulls in runs in the
+  DDIVault-Collector too. That is why the hub read has its OWN pg pool instead of
+  reusing `api/server.js`'s `netvaultDb` — the collector has no such pool — and why
+  every new failure mode in that path had to be made non-fatal.
+- ⛔ **The hub read FAILS SOFT on everything, and that is the feature.** Missing
+  `NEXTAUTH_SECRET`, Postgres `42P01 undefined_table`, a connection error, a revoked
+  grant, an undecryptable password → fall back to this app's own `smtp_config` row and
+  warn ONCE. `42P01` is not an edge case: a hub that has not yet shipped its own half is
+  the NORMAL state during a staged rollout, and a satellite must not degrade because of
+  it. Do not "tidy" any of these into a throw.
+- ⛔ **`collector/credStore.js` throws at MODULE LOAD without a secret — on purpose.**
+  That stays (it guards credential WRITES). `suiteSmtp.js` therefore requires it lazily,
+  behind an explicit `process.env` guard, so the soft fallback cannot be turned into a
+  dead collector by the require itself. Never hoist that require to the top of the file.
+- **An idle-client error on a pg Pool with no `'error'` listener kills the process.**
+  The hub pool registers one (same reason `collector/healthScorer.js` does).
+- **The LOCAL read deliberately still propagates.** Only the HUB half is soft. A failure
+  to read this app's own `smtp_config` is a real fault and has always thrown out of
+  `getSmtpConfig` — making it soft would silently stop alert mail.
+- **There is exactly ONE SMTP cache now** (5 min, in `suiteSmtp`, covering the hub row,
+  the local row and the choice between them). `emailer.invalidateSmtpCache()` clears it;
+  `POST /api/smtp` calls that after a save. If you add a second cache anywhere in this
+  path, clear it from that same function or an admin's edit appears not to take.
+- **`enabled` and the From identity do NOT come from the hub when a local row exists.**
+  The hub owns host/port/secure/username/password ONLY. `from_email`/`from_name` stay
+  local so recipients still see DDIVault (the hub's are used only when this app has no
+  row at all — otherwise a fresh install would send with no From address). `enabled`
+  stays local too: it answers "does DDIVault send mail", not "does a transport exist",
+  so an admin who switched DDIVault's alert email off does not start receiving it again
+  because the hub gained an SMTP server.
+- ⛔ **TLS verification is source-dependent, and the asymmetry is deliberate.**
+  `buildTransport` VERIFIES for a hub config (unless the hub's `allow_self_signed` is
+  set) and keeps the historic unconditional `rejectUnauthorized: false` for a LOCAL
+  config. Flipping the local path would break any existing customer pointing at a relay
+  with a self-signed/internal-CA certificate — a silent "alerts stopped arriving", the
+  worst failure an alerting path can have. The follow-up is an explicit checkbox on this
+  app's own SMTP form defaulting to today's behaviour, i.e. a migration, not a flag day.
+- ⛔ **A nodemailer error message is not safe to return.** It routinely embeds the host,
+  the port, the configured username and the server's verbatim auth rejection.
+  `POST /api/smtp/test` returned it verbatim until 1.34.0; it now goes through
+  `emailer.mailErrorSummary()` (code/responseCode only) with the detail logged
+  server-side. LogVault and SpanVault had both already fixed this exact class — DDIVault
+  was the surviving instance, which is the "a fixed instance is not a fixed class" rule
+  again. `sendReport`/`sendDigest` still keep the raw message, correctly: it lands in
+  `report_email_log`/`alert_email_log`, server-side audit rows, never an HTTP response.
+  Check that distinction before forwarding either.
+- **No installer or env change was needed, and that was verified not assumed.** Both
+  `DDIVault-API` and `DDIVault-Collector` already receive `NETVAULT_DB_HOST/PORT/NAME/
+  USER/PASS` and `NEXTAUTH_SECRET` from `Install-NocVault-Suite.ps1`, and the pool uses
+  the `netvault` role (the hub's own), so no grant changes either.
+
 ## Remote agent data plane (Phase 4b — `api/ws-server.js` + `collector/writers.js`)
 - The DB-write half of the collector lives in `collector/writers.js`
   (`writeScopeStats`/`writeLeases`/`writeReservations`/`writeDhcpEvents`/

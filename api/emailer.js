@@ -3,7 +3,7 @@
 
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
-const { decrypt } = require('../collector/credStore');
+const suiteSmtp = require('./suiteSmtp');
 
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ||
@@ -23,52 +23,31 @@ if (!process.env.NEXTAUTH_SECRET) {
 }
 const SECRET = process.env.NEXTAUTH_SECRET;
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-let _smtpCache = null; // { config, ts }
-
 // ---------------------------------------------------------------------------
 // SMTP config
 // ---------------------------------------------------------------------------
 
+/**
+ * The single resolution point for every sender below (sendAlert, sendDigest,
+ * sendReport, sendTestEmail).
+ *
+ * Since 1.34.0 the config may come from the NetVault hub's suite-wide
+ * `smtp_config` instead of this app's own row — see `api/suiteSmtp.js`, which
+ * owns the choice, the 5-minute cache and the fail-soft fallback. The RETURNED
+ * SHAPE IS UNCHANGED (`host, port, secure, username, password, from_email,
+ * from_name, enabled`), so no call site had to change; `source` and
+ * `allow_self_signed` ride along for buildTransport.
+ */
 async function getSmtpConfig(db) {
-  if (_smtpCache && (Date.now() - _smtpCache.ts) < CACHE_TTL_MS) {
-    return _smtpCache.config;
-  }
-
-  const result = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
-  if (!result || !result.rows || result.rows.length === 0) {
-    _smtpCache = { config: null, ts: Date.now() };
-    return null;
-  }
-
-  const row = result.rows[0];
-
-  let password = '';
-  if (row.password) {
-    try {
-      password = decrypt(row.password);
-    } catch (e) {
-      password = '';
-    }
-  }
-
-  const config = {
-    host: row.host,
-    port: row.port,
-    secure: row.secure,
-    username: row.username,
-    password,
-    from_email: row.from_email,
-    from_name: row.from_name,
-    enabled: row.enabled,
-  };
-
-  _smtpCache = { config, ts: Date.now() };
-  return config;
+  const resolved = await suiteSmtp.resolveSmtp(db);
+  return resolved.cfg;
 }
 
 function invalidateSmtpCache() {
-  _smtpCache = null;
+  // The cache now lives in suiteSmtp (one cache covering BOTH the hub row and
+  // the local row). POST /api/smtp calls this after a save — if you ever add a
+  // second cache here, clear it from this function too.
+  suiteSmtp.invalidateSuiteSmtpCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -76,13 +55,58 @@ function invalidateSmtpCache() {
 // ---------------------------------------------------------------------------
 
 function buildTransport(cfg) {
-  return nodemailer.createTransport({
+  const opts = {
     host: cfg.host,
     port: cfg.port,
     secure: !!cfg.secure,
     auth: cfg.username ? { user: cfg.username, pass: cfg.password } : undefined,
-    tls: { rejectUnauthorized: false },
-  });
+  };
+
+  if (cfg.source === 'hub') {
+    // HUB transport: the hub owns the TLS policy, and its default is to
+    // VERIFY — matching LogVault and SpanVault. An operator who needs a
+    // self-signed relay ticks "Allow self-signed certificate" on the hub form.
+    if (cfg.allow_self_signed) opts.tls = { rejectUnauthorized: false };
+  } else {
+    // ⛔ LOCAL transport: DELIBERATE CONTINUITY, not an oversight.
+    //
+    // This app has always accepted ANY certificate here, unconditionally and
+    // invisibly, while the other two satellites verify. Flipping it for a
+    // local config would break mid-upgrade for any existing customer pointing
+    // at a relay with a self-signed or internal-CA certificate — a silent
+    // "alerts stopped arriving", which is the worst possible failure for an
+    // alerting path. So today's behaviour is preserved for the local path ONLY.
+    //
+    // Tracked as a follow-up: the fix is an explicit "Allow self-signed
+    // certificate" checkbox on THIS app's SMTP form, defaulting to the
+    // customer's current effective behaviour (on) and letting them turn it off
+    // — i.e. a migration, not a flag day. See the SMTP centralization plan
+    // §2.5 / §8.2 in the netvault repo.
+    opts.tls = { rejectUnauthorized: false };
+  }
+
+  return nodemailer.createTransport(opts);
+}
+
+// ---------------------------------------------------------------------------
+// Error sanitization
+// ---------------------------------------------------------------------------
+/**
+ * A nodemailer error message routinely embeds the SMTP host, the port, the
+ * configured username and the server's verbatim auth rejection. None of that
+ * may travel back to an HTTP caller. Return only the machine code (`code` for
+ * transport errors, `responseCode` for SMTP replies) and keep the detail in
+ * the service log, where an operator can read it.
+ *
+ * Mirrors `mailErrorSummary` in spanvault's `api/rbacScope.js` and the hub's
+ * `lib/mailer.ts`. LogVault and SpanVault had both already fixed this class;
+ * DDIVault was the surviving instance.
+ */
+function mailErrorSummary(err) {
+  const code = err && (err.code || err.responseCode);
+  return code
+    ? 'Email delivery failed (' + String(code).slice(0, 40) + ') — see the API log for detail.'
+    : 'Email delivery failed — see the API log for detail.';
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +303,9 @@ async function sendTestEmail(db, toEmail) {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err.message };
+    // Server-side gets the full detail; the caller gets only a code.
+    console.error('[Emailer] SMTP test send failed:', err && err.message);
+    return { ok: false, error: mailErrorSummary(err) };
   }
 }
 
@@ -300,8 +326,11 @@ function renderReportHtml(reportTitle, intro, meta) {
 }
 
 // Send a scheduled report email with an attachment (PDF or CSV). Safe to call from
-// the collector process — reads smtp_config from the DB and decrypts via credStore
-// (NEXTAUTH_SECRET). Returns { ok, error?, skipped? }.
+// the collector process — getSmtpConfig resolves the hub's suite transport or this
+// app's own row (api/suiteSmtp.js) and decrypts via credStore (NEXTAUTH_SECRET).
+// Returns { ok, error?, skipped? }. `error` here is the RAW message on purpose:
+// its only consumer is report_email_log.error_msg, a server-side audit row. Do not
+// forward it to an HTTP response without mailErrorSummary().
 async function sendReport(db, toEmail, subject, html, attachments) {
   try {
     const cfg = await getSmtpConfig(db);
@@ -477,6 +506,7 @@ module.exports = {
   sendDigest,
   sendReport,
   renderReportHtml,
+  mailErrorSummary,
   ackToken,
   verifyAckToken,
 };

@@ -37,9 +37,17 @@ deviceClassifier.js
   isMacRandomized(mac) — checks locally-administered bit on MAC first octet
 
 emailer.js
-  getSmtpConfig(db) — load+cache (5min) SMTP config row, decrypts stored password via collector/credStore.decrypt [SENSITIVE]
-  invalidateSmtpCache() — clear the in-memory SMTP config cache
-  sendTestEmail(db, toEmail) — send a one-off SMTP test message via nodemailer [SENSITIVE]
+  getSmtpConfig(db) — THE single SMTP resolution point for every sender below. Delegates to
+    suiteSmtp.resolveSmtp(db) (hub transport or this app's own row) and returns `.cfg`.
+    Shape unchanged since 1.33: {host,port,secure,username,password,from_email,from_name,enabled}
+    plus `source` ('hub'|'local') and `allow_self_signed` for buildTransport [SENSITIVE]
+  invalidateSmtpCache() — clears suiteSmtp's cache (the only SMTP cache; emailer has none of
+    its own since 1.34.0). Called by POST /api/smtp after a save
+  mailErrorSummary(err) — code/responseCode-only summary of a nodemailer error [SENSITIVE].
+    A raw nodemailer message embeds host, port, username and the server's auth rejection;
+    this is what may be returned to an HTTP caller. Mirrors spanvault api/rbacScope.js
+  sendTestEmail(db, toEmail) — send a one-off SMTP test message via nodemailer [SENSITIVE].
+    Returns {ok:false, error:<mailErrorSummary>} — never the raw message (fixed 1.34.0)
   sendAlert(db, alert, recipients) — send alert email to each recipient via SMTP, success-gated audit log [SENSITIVE]
   sendDigest(db, alerts, recipient) — send hourly digest email via SMTP, success-gated audit log [SENSITIVE]
   sendReport(db, toEmail, subject, html, attachments) — send scheduled report email w/ attachments via SMTP [SENSITIVE]
@@ -47,7 +55,27 @@ emailer.js
   ackToken(alertId) — HMAC-SHA256(NEXTAUTH_SECRET) token for one-click alert acknowledge links [SENSITIVE]
   verifyAckToken(alertId, token) — timing-safe compare of an ack token against the expected HMAC [SENSITIVE]
   (module throws at load if NEXTAUTH_SECRET unset — no weak fallback secret; deliberate fail-loud)
-  (imports decrypt from ../collector/credStore — AES-256-GCM cred decryption, out of scope here, see collector/credStore.js)
+  (buildTransport's TLS policy is source-dependent: a HUB config verifies unless the hub's
+   allow_self_signed is set; a LOCAL config keeps the historic unconditional
+   rejectUnauthorized:false — deliberate upgrade continuity, see the comment in the file)
+
+suiteSmtp.js  (added 1.34.0 — Phase 2 of the suite SMTP centralization)
+  resolveSmtp(db) — {source:'hub'|'local', cfg, hub?}. Reads the NetVault hub's suite-wide
+    smtp_config over its OWN pg pool (NETVAULT_DB_*, the `netvault` role — same shape as
+    middleware/rbac.js; NOT api/server.js's netvaultDb, because the COLLECTOR process also
+    loads emailer and has no such pool), decrypts the password with collector/credStore
+    (same ivHex:authTagHex:cipherHex / sha256(NEXTAUTH_SECRET) format), and falls back to
+    this app's own smtp_config row. Caches the whole resolution 5 min. `hub` is a
+    password-free summary for the Settings UI [SENSITIVE]
+  invalidateSuiteSmtpCache() — clear that cache (reached via emailer.invalidateSmtpCache)
+  closeSuiteSmtpPool() — end the hub pool on shutdown; no-op if never created
+  ⛔ EVERY hub-side failure is SOFT (fall back to local + warn once): missing
+    NEXTAUTH_SECRET, Postgres 42P01 (hub not yet updated — expected mid-rollout), any other
+    query/connection error, an undecryptable password, no row, enabled=false, blank host.
+    The LOCAL read deliberately still propagates — a failure to read this app's own DB is a
+    real fault and has always thrown.
+  (credStore is required LAZILY behind a secret guard: it throws at module load without
+   NEXTAUTH_SECRET by design, and this module must not add a new way for the collector to die)
 
 licenseCheck.js
   fetchLicense() — GET {NOCVAULT_HUB_URL}/api/license with 10s abort timeout, no auth [SENSITIVE]

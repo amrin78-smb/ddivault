@@ -497,6 +497,13 @@ async function shutdown(signal) {
   if (watchdog.unref) watchdog.unref();
 
   for (const t of timers) { clearInterval(t); clearTimeout(t); }
+  // The report scheduler's mailer may have opened a pool against the hub DB to
+  // read the suite SMTP transport (api/suiteSmtp.js). No-op if it never did.
+  try {
+    await require('../api/suiteSmtp').closeSuiteSmtpPool();
+  } catch (e) {
+    console.error('[Shutdown] suite SMTP pool close:', e.message);
+  }
   try { await db.end(); } catch (e) { console.error('[Shutdown] pool close:', e.message); }
   log('[Shutdown] complete.');
   process.exit(0);

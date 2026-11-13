@@ -27,6 +27,22 @@ interface TestResult {
   error?: string | null;
 }
 
+// Where the transport actually comes from. 'hub' means the NetVault hub holds
+// one SMTP server for the whole suite and this app sends through it; the fields
+// below then stay as the fallback used if the hub transport is switched off.
+type SmtpSource = 'hub' | 'local';
+
+// Password-free summary of the hub transport, for display only.
+interface HubSummary {
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  from_email: string;
+  from_name: string;
+  allow_self_signed: boolean;
+}
+
 // ════════════════════════════════════════════════════════════
 // API helper
 // ════════════════════════════════════════════════════════════
@@ -45,6 +61,32 @@ const SECTION_HEADER: React.CSSProperties = {
 };
 
 const PASSWORD_PLACEHOLDER = '********';
+
+// Calm informational note — tokenized so it flips with the theme.
+const NOTE: React.CSSProperties = {
+  background: 'var(--tint-info)',
+  color: 'var(--tint-info-fg)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '12px 14px',
+  fontSize: 'var(--text-base)',
+  lineHeight: 1.55,
+  marginBottom: 18,
+};
+
+// Small "Fallback" marker beside a section header whose fields are no longer
+// the active transport.
+const TAG: React.CSSProperties = {
+  marginLeft: 8,
+  padding: '2px 7px',
+  borderRadius: 'var(--radius-sm)',
+  background: 'var(--surface-subtle)',
+  color: 'var(--text-muted)',
+  fontSize: 'var(--text-xs)',
+  fontWeight: 600,
+  letterSpacing: 0,
+  textTransform: 'none',
+};
 
 const EMPTY: SmtpConfig = {
   host: '', port: 587, secure: false, username: '', password: '',
@@ -68,6 +110,8 @@ export default function SmtpSettings() {
   const [testing, setTesting] = useState(false);
   const [testTo, setTestTo] = useState('');
   const [showPass, setShowPass] = useState(false);
+  const [source, setSource] = useState<SmtpSource>('local');
+  const [hub, setHub] = useState<HubSummary | null>(null);
 
   const set = <K extends keyof SmtpConfig>(k: K, v: SmtpConfig[K]) =>
     setForm(p => ({ ...p, [k]: v }));
@@ -77,6 +121,8 @@ export default function SmtpSettings() {
     try {
       const d = await api('/smtp');
       const data: SmtpConfig | null = d.data || null;
+      setSource(d.source === 'hub' ? 'hub' : 'local');
+      setHub(d.hub || null);
       if (data) {
         const hasPassword = !!data.password_set || !!data.password;
         setForm({
@@ -157,7 +203,9 @@ export default function SmtpSettings() {
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
       <PageHeader
         title="SMTP / Email"
-        subtitle="Outbound mail server used to deliver alert notifications"
+        subtitle={source === 'hub'
+          ? 'Outbound mail is sent through the NetVault suite mail server'
+          : 'Outbound mail server used to deliver alert notifications'}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--text-sm)', fontWeight: 600 }}>
           <span style={{
@@ -183,7 +231,20 @@ export default function SmtpSettings() {
           </div>
         ) : (
           <>
-            <div style={SECTION_HEADER}>Server</div>
+            {source === 'hub' && (
+              <div style={NOTE}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Mail server managed centrally</div>
+                Alerts and scheduled reports are delivered through the suite mail server configured
+                in NetVault{hub?.host ? <> (<span style={{ fontFamily: 'var(--font-mono)' }}>{hub.host}:{hub.port}</span>)</> : null}.
+                The server and authentication fields below are kept as the fallback and are used
+                again if the central mail server is switched off. The sender identity and the
+                delivery switch stay with DDIVault.
+              </div>
+            )}
+
+            <div style={SECTION_HEADER}>
+              Server{source === 'hub' && <span style={TAG}>Fallback</span>}
+            </div>
             <div style={{ ...FORM_ROW, gap: 12, marginBottom: 16 }}>
               <div style={FIELD_GROW}>
                 <label style={LABEL}>SMTP Host *</label>
@@ -205,7 +266,9 @@ export default function SmtpSettings() {
               </label>
             </div>
 
-            <div style={SECTION_HEADER}>Authentication</div>
+            <div style={SECTION_HEADER}>
+              Authentication{source === 'hub' && <span style={TAG}>Fallback</span>}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
               <div>
                 <label style={LABEL}>Username</label>
@@ -253,6 +316,11 @@ export default function SmtpSettings() {
                 <input type="checkbox" checked={form.enabled} onChange={e => set('enabled', e.target.checked)} disabled={!canWrite} />
                 Enable email alert delivery
               </label>
+              {source === 'hub' && (
+                <div style={{ marginTop: 6, marginLeft: 24, fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+                  This switch still controls whether DDIVault sends mail at all, central mail server or not.
+                </div>
+              )}
             </div>
 
             {canWrite && (

@@ -41,7 +41,11 @@ only within the same file are omitted, except where noted.
 (c) SecurityOverview  onViewAll, onTypeClick — default export
 (c) ServersTab  (no props) — default export; file also defines module-scope `ServerModal`, `ServerCard` (not exported)
 (c) SiteHealth  onSiteClick — default export; file also defines module-scope `ScoreBar`, `SiteTile` (not exported)
-(c) SmtpSettings  (no props) — default export
+(c) SmtpSettings  (no props) — default export. GET /api/smtp now also returns `source`
+    ('hub'|'local') + a password-free `hub` summary; on 'hub' the card shows a note that the
+    mail server is managed centrally in NetVault and tags the Server/Authentication sections
+    "Fallback". All fields stay editable — the From identity and the delivery switch remain
+    DDIVault's own even when the transport is the hub's.
 (c) ThemeProvider  children
 (c) ToastProvider  children
 (c) TrendChart  chart, height
