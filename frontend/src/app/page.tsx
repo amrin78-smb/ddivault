@@ -1547,22 +1547,6 @@ function SettingField({ label, value, settingKey, placeholder, helpText, type, s
   );
 }
 
-// ── Settings sub-tab pill (mirrors the DNS tab pill style) ─────
-function SettingsPill({ label, active, onClick, badge }: { label: string; active: boolean; onClick: () => void; badge?: boolean }) {
-  return (
-    <button onClick={onClick} className={active ? 'settings-tab active' : 'settings-tab'}>
-      {label}
-      {badge && (
-        <span title="Update available" style={{
-          // intentional: 50% notification dot — squaring it looks broken
-          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-          background: '#dc2626', marginLeft: 6, verticalAlign: 'middle',
-        }} />
-      )}
-    </button>
-  );
-}
-
 // ── NocVault hub integration card — Integrations tab ──────────
 function IntegrationsHubCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
   const hub = getHubUrl();
@@ -1626,6 +1610,25 @@ function AboutCard({ titleStyle }: { titleStyle: React.CSSProperties }) {
 
 type SettingsSubTab = 'general' | 'notifications' | 'integrations' | 'updates' | 'about';
 
+// Grouped settings rail (NocVault suite standard — the CSS lives in
+// globals.css and is shared byte-for-byte with NetVault).
+//
+// The grouping is conceptual, not cosmetic — these are three different KINDS
+// of setting with different audiences:
+//   System   — how this installation behaves and what it is wired to: the IPAM
+//              scan / threshold / retention knobs, the hub connection and the
+//              REST API keys that let other systems read DDIVault.
+//   Alerting — who gets told, and when. The one section whose audience is
+//              whoever owns on-call rather than whoever owns the server.
+//   Software — which build is running and how to move to the next one.
+//              Deliberately NOT labelled "About": a group named after one of
+//              its own members is a label, not a concept.
+const SETTINGS_GROUPS: [string, SettingsSubTab[]][] = [
+  ['System',   ['general', 'integrations']],
+  ['Alerting', ['notifications']],
+  ['Software', ['updates', 'about']],
+];
+
 // Operations Center sections. The names are the page's own existing
 // SectionHeaders — this makes a grouping the page already had navigable rather
 // than inventing a new one.
@@ -1688,7 +1691,8 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
   // A settings panel stack paired with a short "what this actually does" explainer,
   // for sections whose behavior isn't obvious from the form alone. The aside sticks
   // to the top of this page's own scroll region (see "Independently-scrolling
-  // content region" below) since the header/tab bar live outside that scroller.
+  // content region" below) since the page header and the settings rail live
+  // outside that scroller.
   const settingsRow: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 16, alignItems: 'start' };
   const infoCard: React.CSSProperties = { background: 'var(--tint-info)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px 18px', position: 'sticky', top: 0 };
   const infoCardTitle: React.CSSProperties = { margin: '0 0 12px', fontSize: 'var(--text-base)', fontWeight: 700, color: 'var(--tint-info-fg)' };
@@ -1708,15 +1712,64 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12, height: '100%', boxSizing: 'border-box' }}>
       <PageHeader title="Settings" subtitle={activeSubtitle} />
 
-      {/* Sub-tab underline bar (NocVault suite standard) */}
-      <div className="settings-tabs">
-        {TABS.map(t => (
-          <SettingsPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} badge={t.id === 'updates' && updateAvail} />
-        ))}
-      </div>
+      {/* Grouped settings rail (NocVault suite standard) — replaces the
+          horizontal strip of five sub-tabs. See SETTINGS_GROUPS above for why
+          the groups are what they are. This is chrome only: every content
+          block below keeps its own `subTab === '<id>'` guard, and the whole
+          Settings tab is still rendered only for canManageSystem.
 
-      {/* Independently-scrolling content region */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          `settings-layout-fill` is the DDIVault-local modifier that lets the
+          panel keep its own scroll region (the page header and the rail stay
+          put while the panel scrolls) — the shared classes are untouched. */}
+      <div className="settings-layout settings-layout-fill" style={{ flex: 1, minHeight: 0 }}>
+        <nav className="settings-nav" aria-label="Settings sections">
+          {/* Standing signpost. Users, single sign-on, licensing and the mail
+              server are all genuinely owned by the hub — DDIVault has no
+              screen for any of them — so an admin who cannot find one here is
+              looking in the wrong app, not at a missing feature. */}
+          <div className="settings-nav-hub">
+            Users, sign-on, licence and mail are managed in{' '}
+            <a href={`${getHubUrl()}/settings`} target="_blank" rel="noopener noreferrer">NetVault&nbsp;→</a>
+          </div>
+
+          {/* No per-tab role filter here: unlike NetVault, DDIVault has no
+              settings section with a narrower audience than the tab itself —
+              Settings as a whole is super-admin only (canManageSystem at the
+              single render site in the app shell, mirroring requireSuperAdmin
+              on the SMTP / alert-rule / API-key routes). The group structure
+              still drops an empty group, so adding a gated section later is a
+              filter here plus its own guard on the content block. */}
+          {SETTINGS_GROUPS.map(([group, ids]) => {
+            const visible = TABS.filter(t => ids.includes(t.id));
+            if (visible.length === 0) return null;
+            return (
+              <div key={group} className="settings-nav-group">
+                <div className="settings-nav-label">{group}</div>
+                {visible.map(t => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="settings-nav-item"
+                    aria-current={subTab === t.id ? 'page' : undefined}
+                    onClick={() => setSubTab(t.id)}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>{t.label}</span>
+                    {t.id === 'updates' && updateAvail && (
+                      <span title="Update available" aria-label="Update available" style={{
+                        // intentional: 50% notification dot — squaring it looks broken
+                        display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                        background: 'var(--red)', flexShrink: 0,
+                      }} />
+                    )}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Independently-scrolling content region */}
+        <div className="settings-panel" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {subTab === 'general' && (
           <div style={grid}>
             <div style={{ ...CARD, padding: 20 }}>
@@ -1778,6 +1831,7 @@ function SettingsTab({ initialSubTab = 'general' }: { initialSubTab?: SettingsSu
         {subTab === 'about' && (
           <AboutCard titleStyle={sectionTitle} />
         )}
+        </div>
       </div>
     </div>
   );

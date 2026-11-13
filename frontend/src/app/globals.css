@@ -45,6 +45,13 @@
   --sidebar-width:  240px;
   --header-height:  72px;
 
+  /* 8px spacing rhythm (4px allowed for fine adjustment).
+     Suite standard — copied from net-vault/app/globals.css verbatim so the
+     shared chrome (settings rail, page rhythm) measures identically in every
+     NocVault app. Use these rather than a literal px gap. */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+
   /* Type scale (suite standard — sizes do not change per theme) */
   --text-xs:   11px;  /* table headers, badges, micro-labels */
   --text-sm:   12px;  /* secondary labels, captions */
@@ -547,6 +554,92 @@ option {
   color: var(--primary);
   font-weight: 600;
   border-bottom-color: var(--primary);
+}
+
+/* ── Grouped settings rail (NocVault suite standard) ──────────
+   Copied verbatim from net-vault/app/globals.css (the `settings-layout`
+   block). Every app in the suite renders its Settings sections as the same
+   grouped left rail, so this must stay byte-identical across the four repos —
+   change it in NetVault first, then copy. Below 900px the rail collapses into
+   a wrapped inline list with the group labels inline. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+.settings-nav { position: sticky; top: calc(var(--header-height) + 16px); }
+.settings-nav-group { margin-bottom: var(--space-5); }
+.settings-nav-label {
+  font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted);
+  padding: 0 10px 6px;
+}
+.settings-nav-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; margin-bottom: 1px;
+  border: none; background: none; cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-family: inherit; font-size: var(--text-md);
+  color: var(--text-secondary); text-align: left;
+}
+.settings-nav-item:hover { background: var(--surface-subtle); color: var(--text-primary); }
+.settings-nav-item[aria-current="page"] {
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 600;
+}
+.settings-nav-count {
+  font-size: var(--text-xs); color: var(--text-muted);
+  background: var(--surface-subtle); border: 1px solid var(--border);
+  border-radius: var(--radius-pill); padding: 1px 7px; flex-shrink: 0;
+}
+.settings-panel { min-width: 0; }
+
+/* The satellite apps' standing hub pointer — the line that stands above the
+   groups and says that users, sign-on, licence and mail are managed in
+   NetVault. Not in NetVault's own stylesheet (the hub has nowhere to point),
+   so it is shared verbatim between the three satellites instead. Quiet
+   chrome, not an alert. */
+.settings-nav-hub {
+  font-size: var(--text-sm); color: var(--text-muted);
+  line-height: 1.5; padding: 0 10px; margin-bottom: var(--space-5);
+}
+.settings-nav-hub a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.settings-nav-hub a:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .settings-layout { grid-template-columns: 1fr; gap: var(--space-5); }
+  .settings-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .settings-nav-group { margin-bottom: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .settings-nav-label { padding: 0 4px 0 0; }
+  .settings-nav-item { width: auto; }
+  /* The nav is a wrapping flex row here, so the pointer has to claim a whole
+     line of its own - otherwise it sits inline with the first group's buttons
+     and reads as one of them. */
+  .settings-nav-hub { flex: 0 0 100%; padding: 0; margin-bottom: var(--space-3); }
+}
+
+/* DDIVault-local modifier — ADDITIVE, it sets no property the shared block
+   above defines. NetVault's Settings scrolls with the page; DDIVault's
+   Settings owns its own scroll region (the panel scrolls, the page header and
+   the rail do not — see SettingsTab in app/page.tsx), so on the wide layout
+   the grid row has to be bounded for the panel's overflow to engage. Below
+   900px the rail stacks above the panel, so the bound is lifted and the
+   stacked pair scrolls as one.
+
+   `align-self: stretch` on the panel is load-bearing, not tidying: the shared
+   block aligns grid items to `start`, so without it the panel is only as tall
+   as its content and `overflow-y` never engages — the whole page scrolls
+   instead and the rail scrolls away with it. The nav keeps the shared
+   `start` alignment. */
+.settings-layout.settings-layout-fill { height: 100%; grid-template-rows: minmax(0, 1fr); }
+.settings-layout.settings-layout-fill > .settings-panel {
+  align-self: stretch; min-height: 0; overflow-y: auto; padding-right: 4px;
+}
+@media (max-width: 900px) {
+  .settings-layout.settings-layout-fill { height: auto; grid-template-rows: none; }
+  .settings-layout.settings-layout-fill > .settings-panel { align-self: start; overflow-y: visible; padding-right: 0; }
 }
 
 /* ── Modal overlay ─────────────────────────────────────────── */

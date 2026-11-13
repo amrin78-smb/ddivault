@@ -64,6 +64,12 @@ only within the same file are omitted, except where noted.
                  cannot be pointed at a mail server from this page.
     All three link to the hub's Settings → Notifications, built from `getHubUrl()`
     (`src/lib/hubUrl.ts`) — ⛔ NEVER a hardcoded host.
+    ⛔ **Division of labour with the settings rail (1.35.1).** The rail's standing hub
+    pointer ("Users, sign-on, licence and mail are managed in NetVault →", see pages.md)
+    now says WHERE mail is configured, so this panel says only WHICH server is carrying
+    mail right now and where to change it — the 'hub' title and the 'none' branch's
+    closing line were tightened so the two do not state the same fact in two voices on
+    one screen. Keep that split when editing this copy.
     Module-scope only: styles (`NOTE`, `NOTE_WARN`, `FACTS`, …), the `Fact` row component,
     `certText()` and `EffectiveTransport` — no component is defined inside a component.
 (c) ThemeProvider  children

@@ -176,7 +176,11 @@ function EffectiveTransport({ state, hub, legacy }: {
   if (state === 'hub' && hub) {
     return (
       <div style={NOTE}>
-        <div style={NOTE_TITLE}>Mail server managed centrally in NetVault</div>
+        {/* Title states WHAT is sending, not who owns it. The settings rail
+            already carries the standing "mail is managed in NetVault" line, and
+            two differently-worded statements of the same fact on one screen read
+            as two different facts. This panel's job is the effective transport. */}
+        <div style={NOTE_TITLE}>Sending through the NocVault suite mail server</div>
         Alerts, digests and scheduled reports are delivered through the mail server configured
         once for the whole NocVault suite.
         <div style={FACTS}>
@@ -185,8 +189,8 @@ function EffectiveTransport({ state, hub, legacy }: {
           <Fact label="Username">{hub.username || '(none — unauthenticated)'}</Fact>
           <Fact label="Certificate checking">{certText(hub.allow_self_signed)}</Fact>
         </div>
-        The mail server is changed in {link}, not here. DDIVault keeps its own sender
-        identity and its own delivery switch, below.
+        Change the server in {link}. DDIVault keeps its own sender identity and its own
+        delivery switch, below.
       </div>
     );
   }
@@ -216,9 +220,12 @@ function EffectiveTransport({ state, hub, legacy }: {
       NetVault has no suite mail server switched on, and DDIVault has none of its own. Until
       one is configured, alerts, digests and scheduled reports <strong>will not be
       delivered</strong> and Send Test Email will fail.
+      {/* The settings rail already says mail is managed in NetVault, so this
+          branch only has to say what follows from there being no server yet
+          and link to where one is set up. Restating the ownership here, in a
+          louder voice, reads as a second and different fact. */}
       <div style={{ marginTop: 10 }}>
-        The mail server for the whole NocVault suite is set up in {link}. DDIVault cannot be
-        pointed at a mail server from this page.
+        Set one up in {link}. DDIVault cannot be pointed at a mail server from this page.
       </div>
     </div>
   );

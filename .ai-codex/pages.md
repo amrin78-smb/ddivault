@@ -18,6 +18,20 @@ Do not go looking for `/app/dashboard/page.tsx` etc — they don't exist.
   SecurityOverview, DeviceDonut, dashboard/{CommandBar,PriorityActionCenter,
   PillarScorecards,InfraRedundancy,DnsAnalyticsCard,ActivityFeed}, ApiKeysSection.
 
+  Settings sub-tabs (`SettingsTab`, inside page.tsx) are NOT a horizontal strip
+  any more (1.35.1): they render as the suite-standard grouped left rail
+  (`.settings-layout` / `.settings-nav` / `.settings-panel` in globals.css,
+  byte-identical with netvault + the other satellites). Groups come from the
+  module-scope `SETTINGS_GROUPS`: System (general, integrations), Alerting
+  (notifications), Software (updates, about). Chrome only — each content block
+  keeps its own `subTab === '<id>'` guard, the `?settingsTab=` deep link is
+  unchanged, and the whole tab is still gated on `canManageSystem` (super_admin)
+  at the single render site in the app shell. Above the groups sits the standing
+  hub pointer ("Users, sign-on, licence and mail are managed in NetVault →",
+  `.settings-nav-hub`, href from `getHubUrl()` — ⛔ never a hardcoded host).
+  `.settings-layout-fill` is a DDIVault-local, additive modifier: this page owns
+  its own scroll region, so the panel scrolls while the rail stays put.
+
 [server] /layout.tsx — RootLayout — html/body shell; provider nesting order
   (outer→inner): AuthProvider -> RBACProvider -> AuditActor + IdleTimeout ->
   ThemeProvider -> ToastProvider -> FetchInterceptor -> LicenseProvider ->

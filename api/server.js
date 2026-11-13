@@ -30,6 +30,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.1': [
+    "Settings now lists its sections down the left-hand side in named groups - System, Alerting and Software - instead of a single row of tabs across the top. The sections themselves are unchanged and nothing has moved between them; they are now labelled by the kind of setting they hold, so it is clearer where to look. On a narrow screen the groups fold back into one wrapped line.",
+    "A standing line at the top of that list points out that users, single sign-on, licensing and the mail server are managed in NetVault, with a link straight there. DDIVault has no screen for any of the four, and administrators were reasonably concluding they had gone missing rather than that they live in the hub.",
+    "The read-only mail transport panel on Settings > Email Alerts no longer repeats that the mail server is managed in NetVault in different words. It now simply names what is sending your alerts and where to change it.",
+    "This release changes the Settings screen's layout and wording only. No setting, permission or default has changed, and Settings remains visible to super administrators only.",
+  ],
   '1.35.0': [
     "Settings > SMTP / Email no longer asks you to configure a mail server. The mail server for the whole NocVault suite is now set up once in NetVault, under Settings > Notifications, so the SMTP Host, Port, Use TLS / SSL, Username and Password fields have been removed from this page. In their place the page states, read only, exactly which mail server your alerts and scheduled reports will go through - its address and port, whether its certificate is being checked, and a link to where it is configured. If DDIVault still holds a mail server saved by an earlier release, the page names it and says it stays in use until one is set up in NetVault, so nothing is hidden. If there is no mail server anywhere, the page says so plainly and Send Test Email reports that rather than failing with a network error.",
     "From Email, From Name, Enable email alert delivery, and the whole Alert Recipients and Alert Rules area stay with DDIVault and are still edited on this page, so alert mail still arrives as DDIVault and you still decide whether DDIVault sends mail at all. Send Test Email stays too, and tests whichever mail server is actually in force.",
