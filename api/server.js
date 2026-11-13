@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.4': [
+    "Fixed: the link to NetVault at the top of the settings menu was brand red on a dark background, measured at about 3:1 against the 4.5:1 readability threshold. It now uses the normal text colour with an underline.",
+  ],
   '1.35.3': [
     "The settings menu now uses the same words in every application. The page that holds email recipients and alert rules is called Notifications everywhere - two of the four used to call it Email Alerts - and the sections are System, Alerting, Records and Software across the suite rather than a different set per app.",
     "NetVault's equivalent page is now called Mail server, because that is what it is: the mail server for the whole suite, and nothing else. It holds no recipients, no filters and no rules - those stay in each application. Calling it Notifications sent people there looking for settings that were never on it.",
