@@ -419,13 +419,26 @@
   stays local too: it answers "does DDIVault send mail", not "does a transport exist",
   so an admin who switched DDIVault's alert email off does not start receiving it again
   because the hub gained an SMTP server.
-- ⛔ **TLS verification is source-dependent, and the asymmetry is deliberate.**
-  `buildTransport` VERIFIES for a hub config (unless the hub's `allow_self_signed` is
-  set) and keeps the historic unconditional `rejectUnauthorized: false` for a LOCAL
-  config. Flipping the local path would break any existing customer pointing at a relay
-  with a self-signed/internal-CA certificate — a silent "alerts stopped arriving", the
-  worst failure an alerting path can have. The follow-up is an explicit checkbox on this
-  app's own SMTP form defaulting to today's behaviour, i.e. a migration, not a flag day.
+- ⛔ **TLS verification: ONE rule for both sources since 1.35.0 — the local exemption is
+  GONE.** `buildTransport` verifies unless the resolved config's `allow_self_signed` is
+  `=== true`, whether the transport is the hub's or this app's own. Until 1.35.0 the local
+  path set `rejectUnauthorized: false` UNCONDITIONALLY: DDIVault silently accepted any
+  certificate, forever, with nothing in the UI saying so, while the hub, LogVault and
+  SpanVault all verified. 1.34.0 deliberately left that alone on a continuity argument
+  (flipping a live alerting path to verify on a routine update is a silent "alerts stopped
+  arriving"). **That argument was retired on EVIDENCE, not waved away** — measured on
+  production 2026-11-13, `alert_email_log` held zero rows for all time, `smtp_config.enabled`
+  was false with no active `alert_recipients`, and the other satellites' mail was off too.
+  There was no working configuration anywhere to preserve, so the column ships
+  `DEFAULT FALSE` with no backfill. If DDIVault is ever actually sending mail, changing this
+  default again needs a migration, not a flag day.
+- ⛔ **`allow_self_signed` is compared with `=== true`, never a truthy test.** The value
+  can be NULL (a row written before the column existed) or, on the hub path, a JSON-ish
+  value where the strings `'false'` and `'0'` are BOTH truthy: a loose cast would read
+  "off" as "on" and silently stop verifying certificates. `suiteSmtp` normalizes on both
+  paths and `buildTransport` tests `=== true` at the one place that actually decides.
+  Keep both — two halves of one belt, not a duplicate. (`POST /api/smtp`'s own strict
+  coercion is GONE with the field itself — see the section below.)
 - ⛔ **A nodemailer error message is not safe to return.** It routinely embeds the host,
   the port, the configured username and the server's verbatim auth rejection.
   `POST /api/smtp/test` returned it verbatim until 1.34.0; it now goes through
@@ -439,6 +452,43 @@
   `DDIVault-API` and `DDIVault-Collector` already receive `NETVAULT_DB_HOST/PORT/NAME/
   USER/PASS` and `NEXTAUTH_SECRET` from `Install-NocVault-Suite.ps1`, and the pool uses
   the `netvault` role (the hub's own), so no grant changes either.
+
+## SMTP page: the hub owns the transport, DDIVault owns the identity — 1.35.0
+
+- ⛔ **`POST /api/smtp` no longer ACCEPTS the transport fields, and the UI no longer
+  OFFERS them.** `host`, `port`, `secure`, `username`, `password`, `allow_self_signed` are
+  not destructured by the route and are absent from its UPDATE SET list; the Settings page
+  renders a read-only statement of the effective transport instead of inputs. Rationale:
+  the hub is now the only place a mail server is configured, so a form here would own
+  nothing — and the `allow_self_signed` tickbox added EARLIER IN THE SAME RELEASE went
+  with the rest, because it only ever governed the local fallback. Measured on production
+  2026-11-13 first: `alert_email_log` empty all time, `smtp_config.enabled=false`, zero
+  active recipients — there was no working local configuration to protect.
+- ⛔ **The COLUMNS stay and the FALLBACK still reads them.** `suiteSmtp.readLocalConfig`
+  is unchanged: a customer mid-rollout may have satellites updated ahead of the hub, and
+  this repo really does carry such a row (`smtp.office365.com`, delivery off). Do NOT
+  "finish the job" by dropping the columns or blanking the row — and do not let the UI
+  stop naming that row, because a transport that sends mail while the page says nothing
+  about it is the exact failure this change removed. The page's 'legacy' state exists for
+  precisely that.
+- **With no row at all, POST INSERTs `host=''`** (`host` is `NOT NULL`). Every reader —
+  `readLocalConfig`, the Settings page's state derivation, `sendTestEmail` — treats a
+  blank host as "no local transport" rather than a server to dial, and `sendTestEmail`
+  short-circuits with a message naming the hub instead of a bare DNS/socket code.
+- **`enabled` takes a LENIENT coercion here, deliberately opposite to `allow_self_signed`'s
+  strict one.** The direction of harm decides: a flag that only ever turns delivery ON must
+  not read `'true'` as off and silently stop a customer's alert mail, whereas a flag that
+  turns a security check OFF must not read `'false'` as on.
+- **Consequence an admin can hit:** someone who had filled in a self-signed relay but never
+  switched delivery on now finds Send Test Email refused (local configs verify since
+  1.35.0) with no tickbox left to disable it. The ONLY route is to configure that relay
+  centrally on the hub and tick Allow self-signed certificate there. This is named in the
+  1.35.0 release notes on purpose — a removed control plus a tightened default is a dead
+  end unless the notes say where the new door is.
+- **The audit line no longer names the TLS state**, because this route can no longer change
+  it; it names the delivery switch and says the mail server lives in NetVault. (The
+  "a security flag belongs in the audit line" principle still holds — it now applies to the
+  hub's own route, not this one.)
 
 ## Remote agent data plane (Phase 4b — `api/ws-server.js` + `collector/writers.js`)
 - The DB-write half of the collector lives in `collector/writers.js`

@@ -73,13 +73,36 @@ Tracked npm-audit findings deliberately deferred (triaged 2026-06-26). NOT fixab
 safe `npm audit fix` — each needs a breaking change, so schedule as deliberate, tested
 work. **NEVER run `npm audit fix --force`.**
 
-- **nodemailer → v9 (root).** The current v8 line carries a high advisory
-  (GHSA-p6gq-j5cr-w38f: the message-level `raw` option bypasses
-  `disableFileAccess`/`disableUrlAccess` → file-read/SSRF). The only fix is the breaking
-  major **9.0.1**. Not currently reachable — SMTP config is super-admin-only and
-  `api/emailer.js` never uses the `raw` option — so low risk on the internal LAN. Upgrade
-  to nodemailer 9.x in a maintenance window and re-test the alert email path
-  (`createTransport`/`sendMail` in `api/alertDispatcher.js`).
+- ~~**nodemailer → v9 (root).**~~ **DONE 1.35.0** — root is on `^10.5.0`, which closes
+  **GHSA-p6gq-j5cr-w38f** (the message-level `raw` option bypassing
+  `disableFileAccess`/`disableUrlAccess` → file-read/SSRF). That advisory no longer
+  appears in `npm audit`. The three v7→v9 breaking changes were checked against this
+  repo and none applies: v7 removed the old SES SDKs (SMTP only here), v8 renamed the
+  error code `NoAuth` → `ENOAUTH` (neither string occurs anywhere — `mailErrorSummary`
+  reads `e.code`/`e.responseCode`, both still set by v9's `smtp-connection`), and v9
+  validates TLS when **fetching remote content** for a message (attachment `href`/`path`
+  URLs, OAuth2 endpoints, proxy CONNECT) — DDIVault's only attachments are in-memory
+  Buffers built in `collector/reportScheduler.js` (`{ filename, content: out.buffer }`),
+  and there is no OAuth2 and no proxy.
+- ~~**nodemailer 9.x → 10.x (root).**~~ **ALSO DONE 1.35.0.** The 9.1.1 bump was
+  found to leave the root still flagged high (`fixAvailable: 10.5.0`, semver-major) — a
+  batch of addressparser/SMTP-parse ReDoS and envelope bugs, plus GHSA-6vj9-mwq6-2f5v
+  (process-global DNS cache reusing the TLS `servername` across transports). Rather than
+  ship a bump that needed redoing immediately, this went to `^10.5.0` in the same change.
+  10.0.0's only breaking change is **Node.js >= 20**; the server runs 22. `npm audit`
+  now reports nodemailer CLEAR.
+
+**⛔ VERIFY A DEPENDENCY BUMP AS THE SERVER WILL RESOLVE IT, NOT AS THIS DEV BOX DOES.**
+The Linux dev box is node 24 / npm 11; the production server is node 22 / npm 10, and
+**npm 11 silently overrides peer conflicts npm 10 refuses**. A nodemailer bump in the
+netvault repo passed local install/test/build and then failed the production deploy with
+`ERESOLVE`. So for any dependency change: (1) check `peerDependencies` of every root
+dependency for a peer on the package you are moving, and (2) copy `package.json` +
+`package-lock.json` into an empty directory and run
+`npx -y npm@10 install --dry-run --no-audit --no-fund` there — an empty directory, because
+run in-tree it answers "up to date" without resolving anything. Zero ERESOLVE mentions, or
+stop. **Never `--legacy-peer-deps`** — a customer's installer runs a plain `npm install`
+with no flag of yours.
 - **Next.js 14 → 15 (frontend).** The frontend is on the latest 14.2.x patch (14.2.35),
   but the remaining `next` advisories (RSC/image-optimizer DoS, rewrites request-smuggling,
   CSP-nonce XSS, middleware cache-poisoning) are only patched in the 15.x/16.x line — there

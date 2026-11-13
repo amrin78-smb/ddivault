@@ -444,6 +444,40 @@ CREATE TABLE IF NOT EXISTS smtp_config (
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── smtp_config.allow_self_signed ──────────────────────────────────
+-- TLS certificate verification for outbound mail, as a visible per-config
+-- choice. Until this column existed, api/emailer.js's buildTransport() set
+-- `tls: { rejectUnauthorized: false }` UNCONDITIONALLY for a local config:
+-- DDIVault silently accepted ANY certificate, forever, with nothing in the UI
+-- saying so, while the hub, LogVault and SpanVault all verified. DEFAULT FALSE
+-- means DDIVault now verifies like the rest of the suite.
+--
+-- IMPORTANT, same release: this column is READ-ONLY from DDIVault's point of
+-- view. The SMTP settings page no longer offers a control for it and
+-- `POST /api/smtp` no longer accepts the field, because the NetVault hub is now
+-- the only place a mail server is configured. The column stays because
+-- api/suiteSmtp.js still READS this row as the FALLBACK transport for a
+-- satellite that is updated ahead of its hub. An operator with an internal-CA
+-- relay opts out on the HUB's own setting, which arrives on the hub path. Do
+-- not drop this column, and do not re-add a local writer for it without
+-- re-reading the measurement below.
+--
+-- No migration was needed to protect existing installs, and that is a measured
+-- fact rather than an oversight: checked against production on 2026-11-13,
+-- `alert_email_log` held ZERO rows for all time (DDIVault has never sent a
+-- single email), `smtp_config.enabled` was false with no active
+-- `alert_recipients`, and the other satellites' mail was off too. There was no
+-- working configuration anywhere whose behaviour a backfill could preserve, so
+-- the column simply starts correct. Had any install been sending mail through a
+-- self-signed relay, this would instead have needed a backfill to TRUE for
+-- existing rows — flipping a live alerting path to verify on a routine update
+-- is a silent "alerts stopped arriving".
+--
+-- Idempotent and safe to re-run, which matters because
+-- installer/Update-DDIVault.ps1 re-applies this whole file on every deploy
+-- (under -v ON_ERROR_STOP=1 --single-transaction).
+ALTER TABLE smtp_config ADD COLUMN IF NOT EXISTS allow_self_signed BOOLEAN DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS alert_recipients (
   id          SERIAL PRIMARY KEY,
   email       TEXT NOT NULL,
@@ -857,8 +891,18 @@ $$;
 -- smtp_config_public mirrors the app_settings_public/api_keys_public
 -- allowlist-view pattern; `username` is kept (SMTP auth username, e.g. an
 -- email address — not itself a secret, same reasoning as ddi_servers.ps_username).
+--
+-- ⛔ THIS VIEW'S COLUMN ORDER IS APPEND-ONLY. `CREATE OR REPLACE VIEW` may only
+-- ADD columns at the END of the select list: inserting one mid-list is read by
+-- PostgreSQL as RENAMING the column that already sits in that position, which
+-- errors ("cannot change name of view column ...") and — under
+-- -v ON_ERROR_STOP=1 — aborts the entire apply, silently skipping every
+-- privilege block after it. That exact failure hit production on 2026-11-05 in
+-- the netvault repo with `users_public`. `allow_self_signed` is therefore LAST,
+-- and anything added later goes after it, never between existing columns.
 CREATE OR REPLACE VIEW smtp_config_public AS
-SELECT id, host, port, secure, username, from_email, from_name, enabled, updated_at
+SELECT id, host, port, secure, username, from_email, from_name, enabled, updated_at,
+       allow_self_signed
 FROM smtp_config;
 
 DO $$

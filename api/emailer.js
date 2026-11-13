@@ -36,7 +36,10 @@ const SECRET = process.env.NEXTAUTH_SECRET;
  * owns the choice, the 5-minute cache and the fail-soft fallback. The RETURNED
  * SHAPE IS UNCHANGED (`host, port, secure, username, password, from_email,
  * from_name, enabled`), so no call site had to change; `source` and
- * `allow_self_signed` ride along for buildTransport.
+ * `allow_self_signed` ride along for buildTransport. Since 1.35.0
+ * `allow_self_signed` is carried on BOTH paths — the hub's column when the
+ * transport is hub-managed, this app's own column when it is local — and is
+ * always a real boolean by the time buildTransport sees it.
  */
 async function getSmtpConfig(db) {
   const resolved = await suiteSmtp.resolveSmtp(db);
@@ -62,28 +65,42 @@ function buildTransport(cfg) {
     auth: cfg.username ? { user: cfg.username, pass: cfg.password } : undefined,
   };
 
-  if (cfg.source === 'hub') {
-    // HUB transport: the hub owns the TLS policy, and its default is to
-    // VERIFY — matching LogVault and SpanVault. An operator who needs a
-    // self-signed relay ticks "Allow self-signed certificate" on the hub form.
-    if (cfg.allow_self_signed) opts.tls = { rejectUnauthorized: false };
-  } else {
-    // ⛔ LOCAL transport: DELIBERATE CONTINUITY, not an oversight.
-    //
-    // This app has always accepted ANY certificate here, unconditionally and
-    // invisibly, while the other two satellites verify. Flipping it for a
-    // local config would break mid-upgrade for any existing customer pointing
-    // at a relay with a self-signed or internal-CA certificate — a silent
-    // "alerts stopped arriving", which is the worst possible failure for an
-    // alerting path. So today's behaviour is preserved for the local path ONLY.
-    //
-    // Tracked as a follow-up: the fix is an explicit "Allow self-signed
-    // certificate" checkbox on THIS app's SMTP form, defaulting to the
-    // customer's current effective behaviour (on) and letting them turn it off
-    // — i.e. a migration, not a flag day. See the SMTP centralization plan
-    // §2.5 / §8.2 in the netvault repo.
-    opts.tls = { rejectUnauthorized: false };
-  }
+  // ── TLS certificate verification ──────────────────────────────────
+  // ONE rule for BOTH transports: verify, unless this config explicitly says
+  // not to. `allow_self_signed` is the hub's column when the transport is
+  // hub-managed (Phase 2, 1.34.0) and this app's own smtp_config column when it
+  // is local (Phase 5).
+  //
+  // The local path used to set `rejectUnauthorized: false` UNCONDITIONALLY —
+  // DDIVault silently accepted ANY certificate, forever, with nothing in the UI
+  // saying so, while the hub, LogVault and SpanVault all verified. Phase 2 left
+  // that alone on a continuity argument: breaking an existing customer's
+  // self-signed relay mid-upgrade would be a silent "alerts stopped arriving".
+  //
+  // ⛔ That argument was RETIRED on EVIDENCE, not waved away — do not read this
+  // as a migration someone skipped. Measured on production 2026-11-13:
+  // `alert_email_log` held zero rows for all time (DDIVault has never sent a
+  // single email), `smtp_config.enabled` was false, there were no active
+  // `alert_recipients`, and the other satellites' mail was off too. There was
+  // no working configuration anywhere to preserve, so the exemption was
+  // removed outright instead of being migrated around. If that ever stops being
+  // true, changing this default again needs a backfill, not a flag day.
+  //
+  // ⛔ `=== true`, never a truthy test. The value arrives from a database
+  // column that may be NULL (a row written before the column existed) or, on
+  // the hub path, from a JSON-ish value where the strings 'false' and '0' are
+  // both truthy — a loose test would let any of those silently DISABLE
+  // certificate verification. `suiteSmtp` normalizes on both paths; this is the
+  // second half of the same belt, at the one place that actually decides.
+  //
+  // Since 1.35.0 nothing in DDIVault can SET this: `POST /api/smtp` no longer
+  // accepts the field and the Settings page no longer offers the control, so a
+  // local row's value is whatever it already held (FALSE on every install —
+  // the column shipped `DEFAULT FALSE` with no backfill). The only way to turn
+  // certificate checking off is now the hub's own tickbox, which arrives here
+  // on the hub path. Do NOT re-add a local writer without re-reading the
+  // measurement in the paragraph above.
+  if (cfg.allow_self_signed === true) opts.tls = { rejectUnauthorized: false };
 
   return nodemailer.createTransport(opts);
 }
@@ -279,8 +296,16 @@ function fromHeader(cfg) {
 async function sendTestEmail(db, toEmail) {
   try {
     const cfg = await getSmtpConfig(db);
-    if (!cfg) {
-      return { ok: false, error: 'No SMTP configuration saved' };
+    // Since 1.35.0 a row can exist with NO transport in it: the Settings page no
+    // longer offers the server fields (the NetVault hub owns them), so the first
+    // save on a fresh install writes sender identity against an empty `host`.
+    // Dialling '' would surface as a bare DNS/socket code; say the useful thing
+    // instead, and point at the ONE place a mail server can now be configured.
+    if (!cfg || !String(cfg.host || '').trim()) {
+      return {
+        ok: false,
+        error: 'No mail server is configured. Set up the suite mail server in NetVault (Settings → Notifications).',
+      };
     }
     // For a test, allow sending even if not enabled.
     const transport = buildTransport(cfg);

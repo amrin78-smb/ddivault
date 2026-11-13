@@ -225,6 +225,13 @@ async function readLocalConfig(db) {
     from_name: row.from_name,
     enabled: row.enabled,
     source: 'local',
+    // TLS verification for the LOCAL transport (Phase 5). Normalized to a real
+    // boolean here so buildTransport's strict `=== true` test is the only rule
+    // it needs — which also means a database that has not had the
+    // scripts/schema.sql migration applied yet (column absent -> undefined)
+    // reads as FALSE, i.e. verify. That is the safe direction and matches the
+    // column's own default.
+    allow_self_signed: row.allow_self_signed === true,
   };
 }
 
@@ -240,7 +247,10 @@ async function readLocalConfig(db) {
  * enabled` — so no call site changes shape. Two additional fields ride along
  * for `buildTransport`, which only ever receives `cfg`:
  *   `source`            'hub' | 'local'
- *   `allow_self_signed` hub only; governs TLS verification
+ *   `allow_self_signed` governs TLS verification. Present on BOTH paths since
+ *                       Phase 5 — the hub's column for a hub transport, this
+ *                       app's own column for a local one — and always a real
+ *                       boolean.
  *
  * `hub` (present only when source === 'hub') is a password-free summary for the
  * Settings UI.

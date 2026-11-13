@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.0': [
+    "Settings > SMTP / Email no longer asks you to configure a mail server. The mail server for the whole NocVault suite is now set up once in NetVault, under Settings > Notifications, so the SMTP Host, Port, Use TLS / SSL, Username and Password fields have been removed from this page. In their place the page states, read only, exactly which mail server your alerts and scheduled reports will go through - its address and port, whether its certificate is being checked, and a link to where it is configured. If DDIVault still holds a mail server saved by an earlier release, the page names it and says it stays in use until one is set up in NetVault, so nothing is hidden. If there is no mail server anywhere, the page says so plainly and Send Test Email reports that rather than failing with a network error.",
+    "From Email, From Name, Enable email alert delivery, and the whole Alert Recipients and Alert Rules area stay with DDIVault and are still edited on this page, so alert mail still arrives as DDIVault and you still decide whether DDIVault sends mail at all. Send Test Email stays too, and tests whichever mail server is actually in force.",
+    "Certificate checking is now on by default for a mail server stored in DDIVault. Until now DDIVault accepted any certificate the mail server presented - including an expired or impersonated one - with nothing on the SMTP page saying so, while the other NocVault apps checked properly. DDIVault now behaves the same as the rest of the suite.",
+    "Please note if you had filled in a mail server that uses a self-signed certificate, or one issued by your own internal certificate authority, but had never switched email delivery on: Send Test Email will now be refused with a certificate error instead of sending, and there is no longer an Allow self-signed certificate tickbox in DDIVault to switch that off. The fix is to configure that relay centrally in NetVault, under Settings > Notifications, and tick Allow self-signed certificate there - DDIVault then sends through it.",
+    "Security: the email library this app sends through has been updated to its current major version, closing a published high-severity advisory affecting the version that shipped before, along with a further batch of parsing flaws found in the intermediate version. Alert, digest, scheduled report and test email were all re-tested; there is no change to how they behave.",
+  ],
   '1.34.0': [
     "SMTP can now be configured once for the whole NocVault suite. If an SMTP server is set up and switched on in NetVault, DDIVault sends its alerts, digests and scheduled reports through it automatically - nothing to fill in here. If NetVault has none, DDIVault keeps using its own SMTP settings exactly as before, so existing installs are unaffected and need no action.",
     "The From address and name stay with DDIVault, so alert mail still arrives as DDIVault rather than as a generic suite sender, and the Enable email alert delivery switch on this page still decides whether DDIVault sends mail at all.",
@@ -2324,6 +2331,10 @@ app.get('/api/smtp', requireSuperAdmin, async (req, res) => {
     if (!r.rows.length) return res.json({ data: null, source, hub });
     const row = { ...r.rows[0] };
     row.password = row.password ? '********' : '';
+    // Normalized the same way api/suiteSmtp.js's readLocalConfig does, so the
+    // checkbox the admin sees matches the TLS policy the sender will actually
+    // apply.
+    row.allow_self_signed = row.allow_self_signed === true;
     res.json({ data: row, source, hub });
   } catch (err) {
     console.error('[API] smtp get error:', err.message);
@@ -2333,34 +2344,62 @@ app.get('/api/smtp', requireSuperAdmin, async (req, res) => {
 
 app.post('/api/smtp', requireSuperAdmin, async (req, res) => {
   try {
-    const { host, port, secure, username, password, from_email, from_name, enabled } = req.body;
+    // ── TRANSPORT FIELDS ARE NOT ACCEPTED HERE (1.35.0) ─────────────
+    // host, port, secure, username, password and allow_self_signed are owned by
+    // the NetVault hub (`netvault.smtp_config`, read by api/suiteSmtp.js). This
+    // route deliberately does NOT destructure them, so a stale client — or a
+    // hand-rolled call — cannot reinstate a local relay, and in particular
+    // cannot flip certificate verification off, through a form this app no
+    // longer offers. The COLUMNS stay, untouched by the statements below,
+    // because suiteSmtp still READS this row as the fallback transport when the
+    // hub has none: a customer mid-rollout may have satellites updated ahead of
+    // the hub, and blanking the row here would stop their mail.
+    //
+    // What remains per-app (plan §3) is the sender identity and the delivery
+    // switch: "DDIVault Alerts" in a recipient's inbox is a feature, and an
+    // admin who turned DDIVault's alert mail off must keep that decision even
+    // after the hub gains a mail server.
+    const { from_email, from_name } = req.body;
+    // `enabled` only ever turns delivery ON, so it takes the lenient coercion
+    // rather than the strict one `allow_self_signed` needed: a form encoder
+    // that posts the STRING 'true' must not read as "off" and silently stop a
+    // customer's alert mail. Anything unrecognised — including an absent field
+    // — means off, which is this column's own default.
+    const enRaw = req.body.enabled;
+    const enabled =
+      typeof enRaw === 'boolean' ? enRaw
+      : typeof enRaw === 'number' ? enRaw === 1
+      : ['true', '1', 'on', 'yes'].includes(String(enRaw == null ? '' : enRaw).trim().toLowerCase());
     const existing = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
 
-    let encryptedPass;
-    if (password && password !== '********') {
-      encryptedPass = encryptCred(password);
-    } else if (existing.rows.length) {
-      encryptedPass = existing.rows[0].password; // preserve existing
-    } else {
-      encryptedPass = null;
-    }
-
     if (existing.rows.length) {
+      // Named columns only. host/port/secure/username/password/
+      // allow_self_signed are absent from this SET list on purpose — see above.
       await db.query(
-        `UPDATE smtp_config SET host=$1, port=$2, secure=$3, username=$4,
-           password=$5, from_email=$6, from_name=$7, enabled=$8, updated_at=NOW()
-         WHERE id=$9`,
-        [host, port, secure, username, encryptedPass, from_email, from_name, enabled, existing.rows[0].id]
+        `UPDATE smtp_config SET from_email=$1, from_name=$2, enabled=$3, updated_at=NOW()
+         WHERE id=$4`,
+        [from_email || '', from_name || null, enabled, existing.rows[0].id]
       );
     } else {
+      // First save on an install that never had a local relay. `host` is NOT
+      // NULL, so it is written as the empty string — which every reader
+      // (suiteSmtp.readLocalConfig, the Settings page, sendTestEmail) already
+      // treats as "no local transport", rather than as a server to dial.
       await db.query(
-        `INSERT INTO smtp_config (host, port, secure, username, password, from_email, from_name, enabled)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [host, port, secure, username, encryptedPass, from_email, from_name, enabled]
+        `INSERT INTO smtp_config (host, from_email, from_name, enabled)
+         VALUES ('', $1, $2, $3)`,
+        [from_email || '', from_name || null, enabled]
       );
     }
     emailer.invalidateSmtpCache();
-    if (req.audit) req.audit({ action: 'modify', entity_type: 'smtp_config', entity_name: 'SMTP configuration', change_summary: 'Updated SMTP configuration' });
+    if (req.audit) req.audit({
+      action: 'modify',
+      entity_type: 'smtp_config',
+      entity_name: 'SMTP configuration',
+      change_summary: 'Updated email sender identity and delivery setting (delivery: ' +
+        (enabled ? 'enabled' : 'disabled') +
+        '). The mail server itself is configured in NetVault.',
+    });
     res.json({ success: true });
   } catch (err) {
     console.error('[API] smtp post error:', err.message);

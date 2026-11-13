@@ -41,11 +41,31 @@ only within the same file are omitted, except where noted.
 (c) SecurityOverview  onViewAll, onTypeClick — default export
 (c) ServersTab  (no props) — default export; file also defines module-scope `ServerModal`, `ServerCard` (not exported)
 (c) SiteHealth  onSiteClick — default export; file also defines module-scope `ScoreBar`, `SiteTile` (not exported)
-(c) SmtpSettings  (no props) — default export. GET /api/smtp now also returns `source`
-    ('hub'|'local') + a password-free `hub` summary; on 'hub' the card shows a note that the
-    mail server is managed centrally in NetVault and tags the Server/Authentication sections
-    "Fallback". All fields stay editable — the From identity and the delivery switch remain
-    DDIVault's own even when the transport is the hub's.
+(c) SmtpSettings  (no props) — default export. ⛔ **1.35.0 REMOVED every transport field
+    from this page**: SMTP Host, Port, "Use TLS / SSL", Username, Password AND the
+    "Allow self-signed certificate" checkbox that 1.35.0's own earlier pass had just added.
+    The NetVault hub is now the only place a mail server is configured, so offering those
+    controls here would be offering a form that owns nothing. The COLUMNS and the backend
+    fallback are untouched — only the controls are gone.
+    STILL EDITABLE (genuinely per-app): From Email (required), From Name, "Enable email
+    alert delivery". Send Test Email stays and tests whichever transport resolved.
+    In place of the removed fields the card renders a READ-ONLY statement of the EFFECTIVE
+    transport, in one of three states derived from `GET /api/smtp`'s `source` + the local
+    row's `host`:
+      'hub'    — `source === 'hub'` and a `hub` summary: names `hub.host:hub.port`, the
+                 connection mode, the username, and whether certificate checking is
+                 enforced (`hub.allow_self_signed`), on the `--tint-info` panel.
+      'legacy' — no hub transport but this app's own row has a NON-EMPTY host: names it the
+                 same way, on `--tint-warn`, and says it is no longer editable here. ⛔ This
+                 state exists because `api/suiteSmtp.js` STILL READS that row as the
+                 fallback — a row that silently sends mail while the UI never mentions it is
+                 exactly what this change ends.
+      'none'   — neither: says plainly that nothing will be delivered and that DDIVault
+                 cannot be pointed at a mail server from this page.
+    All three link to the hub's Settings → Notifications, built from `getHubUrl()`
+    (`src/lib/hubUrl.ts`) — ⛔ NEVER a hardcoded host.
+    Module-scope only: styles (`NOTE`, `NOTE_WARN`, `FACTS`, …), the `Fact` row component,
+    `certText()` and `EffectiveTransport` — no component is defined inside a component.
 (c) ThemeProvider  children
 (c) ToastProvider  children
 (c) TrendChart  chart, height

@@ -55,9 +55,17 @@ emailer.js
   ackToken(alertId) — HMAC-SHA256(NEXTAUTH_SECRET) token for one-click alert acknowledge links [SENSITIVE]
   verifyAckToken(alertId, token) — timing-safe compare of an ack token against the expected HMAC [SENSITIVE]
   (module throws at load if NEXTAUTH_SECRET unset — no weak fallback secret; deliberate fail-loud)
-  (buildTransport's TLS policy is source-dependent: a HUB config verifies unless the hub's
-   allow_self_signed is set; a LOCAL config keeps the historic unconditional
-   rejectUnauthorized:false — deliberate upgrade continuity, see the comment in the file)
+  (buildTransport has ONE TLS rule for BOTH transports since 1.35.0: verify, unless the
+   resolved config's `allow_self_signed === true`. The LOCAL path's historic UNCONDITIONAL
+   `rejectUnauthorized:false` is GONE. Since the same release nothing in DDIVault can SET
+   that flag locally — POST /api/smtp refuses the field and the Settings page has no control
+   — so a local row's value is whatever it held, i.e. FALSE everywhere. The only remaining
+   way to disable certificate checking is the hub's own tickbox, which arrives on the hub path)
+  (sendTestEmail short-circuits with a plain "No mail server is configured. Set up the suite
+   mail server in NetVault (Settings → Notifications)." when cfg is null OR cfg.host is
+   blank — since 1.35.0 a row can legitimately exist with an empty host)
+  (root dependency `nodemailer` is on ^9.1.1 since 1.35.0; mailErrorSummary's `e.code` /
+   `e.responseCode` are both still set by v9's smtp-connection)
 
 suiteSmtp.js  (added 1.34.0 — Phase 2 of the suite SMTP centralization)
   resolveSmtp(db) — {source:'hub'|'local', cfg, hub?}. Reads the NetVault hub's suite-wide

@@ -138,12 +138,24 @@ POST /api/alerts/:id/acknowledge write db — ack an alert (and its grouped sibl
 POST /api/alerts/acknowledge-all write db — bulk-ack all open alerts, optional severity filter
 GET /api/alert-rules auth db — list alert_rules
 PUT /api/alert-rules/:id write db — update threshold_value/is_enabled on a rule
-GET /api/smtp super-admin db — this app's SMTP config (password masked), PLUS `source`
-  ('hub'|'local') and a password-free `hub` summary when the NetVault hub owns the transport
-  (api/suiteSmtp.js). Also reads the hub DB cross-DB; fails soft to source 'local'
-POST /api/smtp super-admin db — upsert SMTP config (encrypts password), invalidates the
-  suiteSmtp cache (hub + local). Writes ONLY this app's row — the hub transport is edited
-  in NetVault
+GET /api/smtp super-admin db — this app's SMTP config (password masked, `allow_self_signed`
+  normalized to a real boolean), PLUS `source` ('hub'|'local') and a password-free `hub`
+  summary when the NetVault hub owns the transport (api/suiteSmtp.js). Also reads the hub DB
+  cross-DB; fails soft to source 'local'. ⛔ Still returns the local row's `host`/`port`/
+  `secure`/`username`/`allow_self_signed` even though POST no longer writes them — the
+  Settings page needs them to NAME a legacy fallback transport instead of hiding it
+POST /api/smtp super-admin db — upsert ONLY the sender identity + delivery switch
+  (`from_email`, `from_name`, `enabled`), invalidates the suiteSmtp cache (hub + local).
+  ⛔ **1.35.0: the transport fields are NO LONGER ACCEPTED** — `host`, `port`, `secure`,
+  `username`, `password` and `allow_self_signed` are not destructured and are absent from
+  the UPDATE's SET list, so a stale client or a hand-rolled call cannot reinstate a local
+  relay or flip certificate verification off. Those COLUMNS are left exactly as they were,
+  because `api/suiteSmtp.js` still READS them as the fallback transport (a customer
+  mid-rollout may have satellites updated ahead of the hub). With no row at all it INSERTs
+  `host=''` (the column is NOT NULL) — every reader treats an empty host as "no local
+  transport". `enabled` takes a LENIENT coercion (`true`/`1`/`'true'`/`'1'`/`'on'`/`'yes'`),
+  the opposite of the strict one `allow_self_signed` needed, because this flag only ever
+  turns delivery ON. No password encryption happens here any more
 POST /api/smtp/test super-admin external — send a live test email through whichever transport
   is active (emailer.sendTestEmail, SMTP). ⛔ returns only a code-derived summary on failure,
   never the raw nodemailer message (which embeds host/port/username/auth rejection) — 1.34.0
