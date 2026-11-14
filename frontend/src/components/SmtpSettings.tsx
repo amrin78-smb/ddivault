@@ -124,7 +124,18 @@ const FACT_LABEL: React.CSSProperties = {
 };
 
 const FACT_VALUE: React.CSSProperties = {
-  color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all',
+  // ⛔ `overflow-wrap: anywhere`, NOT `word-break: break-all`. These four facts
+  // are a MIX: two are unbreakable tokens that must wrap mid-string on a narrow
+  // panel (a long mail-server hostname, a username), and two are prose — the
+  // connection mode, and "Certificate checking", whose value is a whole sentence
+  // ending "...including an expired or impersonated one". `break-all` breaks at
+  // the last character that fits REGARDLESS of word boundaries, so it chopped
+  // that sentence mid-word, which on the warning that certificate checking is
+  // off is precisely the line that must not look like a rendering glitch.
+  // `anywhere` prefers word boundaries and only breaks inside a word when a
+  // single word genuinely cannot fit — the hostname case — so both kinds of
+  // value come out right. Changed in all three apps at once.
+  color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere',
 };
 
 // ⛔ INHERITS THE PANEL'S OWN FOREGROUND, AND IS MARKED BY WEIGHT + UNDERLINE

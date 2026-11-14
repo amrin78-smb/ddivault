@@ -353,9 +353,13 @@ function renderReportHtml(reportTitle, intro, meta) {
 // Send a scheduled report email with an attachment (PDF or CSV). Safe to call from
 // the collector process — getSmtpConfig resolves the hub's suite transport or this
 // app's own row (api/suiteSmtp.js) and decrypts via credStore (NEXTAUTH_SECRET).
-// Returns { ok, error?, skipped? }. `error` here is the RAW message on purpose:
-// its only consumer is report_email_log.error_msg, a server-side audit row. Do not
-// forward it to an HTTP response without mailErrorSummary().
+// Returns { ok, error?, skipped? }. `error` is the SUMMARY, never the raw message:
+// it lands in report_email_log.error_msg, and a nodemailer message routinely
+// embeds the mail server's host, port, username and verbatim auth rejection. The
+// table is not served over HTTP today, but it IS readable by the suite's readonly
+// diagnostic role and by anyone with a database dump, and "not reachable yet" has
+// been the wrong thing to rely on twice in this suite already. The raw text goes
+// to the service log, where an operator can read it and nothing persists it.
 async function sendReport(db, toEmail, subject, html, attachments) {
   try {
     const cfg = await getSmtpConfig(db);
@@ -372,7 +376,8 @@ async function sendReport(db, toEmail, subject, html, attachments) {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err.message };
+    console.error('[Emailer] scheduled report send failed:', err && err.message);
+    return { ok: false, error: mailErrorSummary(err) };
   }
 }
 
@@ -410,7 +415,10 @@ async function sendAlert(db, alert, recipients) {
       sent++;
     } catch (err) {
       status = 'failed';
-      errorMsg = err.message;
+      // Summary into alert_email_log, raw detail into the service log — see the
+      // note on sendReport above for why the table does not get the raw text.
+      console.error('[Emailer] alert email send failed:', err && err.message);
+      errorMsg = mailErrorSummary(err);
       failed++;
     }
 
@@ -512,9 +520,12 @@ async function sendDigest(db, alerts, recipient) {
       html,
     });
   } catch (err) {
-    // Send failed — log as 'failed' (not 'sent') so alerts stay eligible.
-    await logDigest(db, alerts, recipient, subject, 'failed', err.message);
-    return { ok: false, error: err.message };
+    // Send failed — log as 'failed' (not 'sent') so alerts stay eligible. The
+    // summary is what persists; the raw message stays in the service log.
+    console.error('[Emailer] digest send failed:', err && err.message);
+    const safe = mailErrorSummary(err);
+    await logDigest(db, alerts, recipient, subject, 'failed', safe);
+    return { ok: false, error: safe };
   }
 
   // Send succeeded — now log as 'sent'. A logging failure here is swallowed

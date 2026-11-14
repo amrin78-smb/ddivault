@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.5': [
+    "Fixed: on a new installation that had never set up email, the mail panel showed Disabled while DDIVault was in fact clear to send - the switch said one thing and the behaviour was another. Email is now off until you switch it on, which is what the panel was already showing.",
+    "Fixed: saving one field on the mail panel could blank the others. Sending only the delivery switch cleared the From address and From name; sending only the From address switched delivery off. A field you did not change is now left as it was, matching how the same form behaves in NetVault.",
+    "Fixed: when a burst of alerts went out at once, each email looked up the suite mail server separately, and on a cold start those lookups competed, timed out, and were each read as \"there is no suite mail server\" - remembered for five minutes. One lookup is now shared by everything sending at that moment.",
+    "Three of the four places that send email recorded the mail server's own error text in the database, which quotes its address, port, sign-in name and refusal. All four now record a short code instead and keep the detail in the service log.",
+    "Fixed: on the mail panel, the sentence explaining that certificate checking is switched off could break mid-word.",
+  ],
   '1.35.4': [
     "Fixed: the link to NetVault at the top of the settings menu was brand red on a dark background, measured at about 3:1 against the 4.5:1 readability threshold. It now uses the normal text colour with an underline.",
   ],
@@ -2377,26 +2384,47 @@ app.post('/api/smtp', requireSuperAdmin, async (req, res) => {
     // switch: "DDIVault Alerts" in a recipient's inbox is a feature, and an
     // admin who turned DDIVault's alert mail off must keep that decision even
     // after the hub gains a mail server.
-    const { from_email, from_name } = req.body;
-    // `enabled` only ever turns delivery ON, so it takes the lenient coercion
-    // rather than the strict one `allow_self_signed` needed: a form encoder
-    // that posts the STRING 'true' must not read as "off" and silently stop a
-    // customer's alert mail. Anything unrecognised — including an absent field
-    // — means off, which is this column's own default.
+    const existing = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
+    const prev = existing.rows[0] || null;
+
+    // ── ABSENT MEANS "KEEP", NEVER "CLEAR" ──────────────────────────────
+    // This route used to coerce whatever arrived into a value and write all
+    // three columns unconditionally, so a body naming one field blanked the
+    // other two: `{"enabled":true}` wiped the From address and the From name,
+    // and `{"from_email":"x@y"}` switched delivery off. The hub's own
+    // PUT /api/suite/smtp merges for exactly this reason ("a field the body
+    // does not mention is not a field the admin cleared") and this is the same
+    // contract, so a partial call now behaves the same way in both places.
+    //
+    // The distinction is `undefined` vs everything else: '' IS a value here,
+    // because clearing the From address is a thing an admin may legitimately
+    // want, and it is the only way they can express it.
+    const from_email = req.body.from_email === undefined
+      ? (prev ? prev.from_email || '' : '')
+      : String(req.body.from_email || '');
+    const from_name = req.body.from_name === undefined
+      ? (prev ? prev.from_name : null)
+      : (req.body.from_name || null);
+
+    // `enabled` takes the lenient coercion rather than the strict one
+    // `allow_self_signed` needed: a form encoder that posts the STRING 'true'
+    // must not read as "off" and silently stop a customer's alert mail.
+    // Anything unrecognised means off — but an ABSENT field means keep, per the
+    // merge contract above, and off is the column's default on a first save.
     const enRaw = req.body.enabled;
-    const enabled =
-      typeof enRaw === 'boolean' ? enRaw
+    const enabled = enRaw === undefined
+      ? (prev ? !!prev.enabled : false)
+      : typeof enRaw === 'boolean' ? enRaw
       : typeof enRaw === 'number' ? enRaw === 1
       : ['true', '1', 'on', 'yes'].includes(String(enRaw == null ? '' : enRaw).trim().toLowerCase());
-    const existing = await db.query('SELECT * FROM smtp_config ORDER BY id LIMIT 1');
 
-    if (existing.rows.length) {
+    if (prev) {
       // Named columns only. host/port/secure/username/password/
       // allow_self_signed are absent from this SET list on purpose — see above.
       await db.query(
         `UPDATE smtp_config SET from_email=$1, from_name=$2, enabled=$3, updated_at=NOW()
          WHERE id=$4`,
-        [from_email || '', from_name || null, enabled, existing.rows[0].id]
+        [from_email, from_name, enabled, prev.id]
       );
     } else {
       // First save on an install that never had a local relay. `host` is NOT
@@ -2406,7 +2434,7 @@ app.post('/api/smtp', requireSuperAdmin, async (req, res) => {
       await db.query(
         `INSERT INTO smtp_config (host, from_email, from_name, enabled)
          VALUES ('', $1, $2, $3)`,
-        [from_email || '', from_name || null, enabled]
+        [from_email, from_name, enabled]
       );
     }
     emailer.invalidateSmtpCache();

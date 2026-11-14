@@ -48,6 +48,24 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches the cache this repl
 // { result, ts } — the whole resolution (local row + hub row + the choice).
 let _cache = null;
 
+// ⛔ ONE RESOLUTION AT A TIME, SHARED BY EVERY CONCURRENT CALLER.
+//
+// The TTL above bounds how OFTEN the hub is asked; it does nothing about how
+// many callers ask AT ONCE, because it is only written once an answer exists.
+// Every alert email, digest and scheduled report comes through here, and a
+// burst of alerts lands in one tick — so a cold cache meant N simultaneous
+// cross-DB lookups against a small pool with a short connect timeout. The ones
+// that timed out each resolved to "the hub has no mail server", and the last to
+// finish wrote that into the cache, holding this app on its local row for the
+// next five minutes. The burst produced the fallback.
+//
+// Callers that arrive while a resolution is open await the SAME promise, and a
+// rejection is not cached at all. `_generation` lets a save win a race with a
+// resolution already in the air: invalidateSuiteSmtpCache() bumps it, and the
+// stale resolution is handed to its waiters but may not become the cached one.
+let _inflight = null;
+let _generation = 0;
+
 // ---------------------------------------------------------------------------
 // Warn-once
 // ---------------------------------------------------------------------------
@@ -257,7 +275,20 @@ async function readLocalConfig(db) {
  */
 async function resolveSmtp(db) {
   if (_cache && (Date.now() - _cache.ts) < CACHE_TTL_MS) return _cache.result;
+  if (_inflight) return _inflight;
 
+  const gen = _generation;
+  const p = computeResolution(db)
+    .then((result) => {
+      if (gen === _generation) _cache = { result, ts: Date.now() };
+      return result;
+    })
+    .finally(() => { if (_inflight === p) _inflight = null; });
+  _inflight = p;
+  return p;
+}
+
+async function computeResolution(db) {
   const local = await readLocalConfig(db);
   const hub = await readHubConfig(); // never throws
 
@@ -284,9 +315,19 @@ async function resolveSmtp(db) {
         // `enabled` here answers "does DDIVault send mail", not "does a
         // transport exist". An admin who deliberately turned DDIVault's alert
         // email OFF must not start receiving it again merely because the hub
-        // gained an SMTP server. With no local row there is no such decision
-        // to respect, so the hub's own enabled flag stands.
-        enabled: local ? !!local.enabled : true,
+        // gained an SMTP server.
+        //
+        // ⛔ NO LOCAL ROW MEANS OFF, NOT ON. This used to fall back to the
+        // hub's own `enabled` flag on the reasoning that an install with no row
+        // has expressed no preference to respect. But the Settings page draws
+        // its switch from `EMPTY_SENDER` (`enabled: false`) in exactly that
+        // state — so a fresh install whose hub had a mail server showed the
+        // admin a panel reading "Disabled" while this resolver told every sender
+        // to go ahead. A control that says off while mail is being sent is worse
+        // than either answer on its own, and between the two it is the UI that
+        // is right: nobody has switched DDIVault's email on yet. Ticking the box
+        // writes the row, and from then on the row decides.
+        enabled: local ? !!local.enabled : false,
         source: 'hub',
         allow_self_signed: hub.allow_self_signed,
       },
@@ -304,7 +345,6 @@ async function resolveSmtp(db) {
     result = { source: 'local', cfg: local };
   }
 
-  _cache = { result, ts: Date.now() };
   return result;
 }
 
@@ -315,6 +355,10 @@ async function resolveSmtp(db) {
  */
 function invalidateSuiteSmtpCache() {
   _cache = null;
+  // Bumping the generation is what stops a resolution already in flight from
+  // writing its pre-save answer over the one the next caller will compute.
+  _inflight = null;
+  _generation += 1;
 }
 
 /** Close the hub pool on shutdown. No-op if it was never created. */
