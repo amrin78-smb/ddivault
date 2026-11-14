@@ -30,6 +30,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.35.6': [
+    "An update now installs the exact dependency versions this release was built and tested against. Before, an update could resolve newer compatible versions instead, so two servers on the same NocVault release could end up running subtly different software with no way to tell them apart. This takes effect from your next update onwards, because an update always runs the previous release's own update script."
+  ],
   '1.35.5': [
     "Fixed: on a new installation that had never set up email, the mail panel showed Disabled while DDIVault was in fact clear to send - the switch said one thing and the behaviour was another. Email is now off until you switch it on, which is what the panel was already showing.",
     "Fixed: saving one field on the mail panel could blank the others. Sending only the delivery switch cleared the From address and From name; sending only the From address switched delivery off. A field you did not change is now left as it was, matching how the same form behaves in NetVault.",

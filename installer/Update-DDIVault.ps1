@@ -1394,14 +1394,31 @@ $$;
 Write-Step "Installing root dependencies..."
 $currentStage = 'npm-install-root'
 $rootNpmLog = "$LogDir\npm-install-root.log"
-$proc = Start-Process "npm.cmd" -ArgumentList "install" -WorkingDirectory $AppDir `
+# ⛔ npm ci, NOT npm install. Two load-bearing reasons:
+#   1. Reproducibility. npm install is free to resolve newer transitive versions
+#      that still satisfy package.json's semver ranges, so two updates to the SAME
+#      NocVault tag can ship different dependency trees - and the one that breaks
+#      is the customer's, weeks later, with nothing to diff. npm ci installs
+#      package-lock.json exactly and fails loudly if the lock and package.json
+#      disagree. All four repos track their locks (root + frontend).
+#   2. npm install REWRITES the tracked package-lock.json on every run. That write
+#      is precisely why this script can never use 'git pull' - a dirty tree
+#      refuses the merge - and must 'git reset --hard' instead. npm ci never
+#      writes the lock, so it removes the cause rather than working around it.
+# ⛔ And it costs nothing here, contrary to the old rationale ("the updaters keep
+# npm install to stay incremental and preserve node_modules"): the snapshot step
+# above has ALREADY renamed node_modules to node_modules.lastgood before this
+# line runs, so npm was installing into an empty directory either way. The
+# incremental saving was imaginary. A failure is covered - Fail-Update restores
+# the .lastgood snapshots.
+$proc = Start-Process "npm.cmd" -ArgumentList "ci" -WorkingDirectory $AppDir `
     -RedirectStandardOutput $rootNpmLog -RedirectStandardError "$rootNpmLog.err" `
     -Wait -PassThru -NoNewWindow
 if ($proc.ExitCode -ne 0) {
     # Previously this only warned and kept going, deploying the API/Collector
     # against a possibly-broken root node_modules. Root deps failing to install
     # is exactly the class of failure the rollback exists for.
-    Fail-Update -Stage 'npm-install-root' -Message "Root npm install failed (exit $($proc.ExitCode)) - check $rootNpmLog"
+    Fail-Update -Stage 'npm-install-root' -Message "Root npm ci failed (exit $($proc.ExitCode)) - check $rootNpmLog"
 }
 Write-OK "Root dependencies installed"
 
@@ -1409,11 +1426,12 @@ Write-OK "Root dependencies installed"
 Write-Step "Installing frontend dependencies..."
 $currentStage = 'npm-install-frontend'
 $frontendNpmLog = "$LogDir\npm-install-frontend.log"
-$proc = Start-Process "npm.cmd" -ArgumentList "install" -WorkingDirectory $FrontendDir `
+# npm ci, not npm install - see the note at the root install above.
+$proc = Start-Process "npm.cmd" -ArgumentList "ci" -WorkingDirectory $FrontendDir `
     -RedirectStandardOutput $frontendNpmLog -RedirectStandardError "$frontendNpmLog.err" `
     -Wait -PassThru -NoNewWindow
 if ($proc.ExitCode -ne 0) {
-    Fail-Update -Stage 'npm-install-frontend' -Message "Frontend npm install failed (exit $($proc.ExitCode)) - check $frontendNpmLog"
+    Fail-Update -Stage 'npm-install-frontend' -Message "Frontend npm ci failed (exit $($proc.ExitCode)) - check $frontendNpmLog"
 }
 Write-OK "Frontend dependencies installed"
 
