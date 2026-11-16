@@ -19,3 +19,8 @@ dns_insights.png
 # local demo-seed script (superseded by the bundled suite seeder in netvault/installer/seeds)
 frontend/demo-seed.js
 demo-seed.js
+
+# OUI catalogue synced from the EOL hub at runtime (api/ouiFeed.js).
+# On Windows this lives under C:\ProgramData\NocVault; on a dev box it lands
+# here. Never commit it — data/oui-seed.json is the copy that ships.
+data/cache/

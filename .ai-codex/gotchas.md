@@ -622,3 +622,81 @@ Found by the SpanVault port, which hit it first and measured it; LogVault had th
 ⛔ The tempting "fix" later is to reach for a brand colour again so the link "looks like a
 link". It will fail the same way. On a tinted surface, carry the affordance with weight and an
 underline.
+
+## ⛔ MAC vendor lookup: longest prefix first, or the richer feed makes it WORSE (1.36.0)
+
+IEEE assigns MAC blocks at **three** lengths — MA-L /24 (40,497), MA-M /28 (6,688),
+MA-S /36 (7,281) — and **443 blocks belong to "IEEE Registration Authority" itself**,
+with **13,841** real assignments underneath them. `lookupMac` therefore tries **9, then
+7, then 6** hex characters and stops at the first hit.
+
+⛔ **THE OLD FAILURE AND THE NEW RISK ARE DIFFERENT FAILURES, AND THE DIFFERENCE IS THE
+WHOLE POINT.** The old `data/oui.json` was built from Wireshark's `manuf`, which carries
+**none** of the 442 registrar /24 rows (measured: 0 of 442 present), and `update-oui.js`
+discarded every /28 and /36 row outright — `// skip /28, /36 longer assignments —
+ambiguous for a 3-octet lookup`. So those 13,841 devices resolved to **"Unknown"**. A
+miss: visibly nothing, and it invites a look.
+
+The hub's feed **does** carry all 443. Reading it 24 bits at a time would turn every one
+of those misses into a **confident wrong answer** — `001BC5000` is Converging Systems
+Inc. and a /24 lookup reports "IEEE Registration Authority", which reads as a vendor and
+gets believed. **Adopting a better catalogue with the old lookup would have been a
+regression.** `is_registry_block` is checked on whatever row matched, at any length: 442
+of those rows are /24 but **`70B3D59F3` is a /36**, so "registry blocks are /24" is false.
+
+⛔ **FOUR IEEE OUTCOMES, FOUR STRINGS, PLUS A FIFTH THAT IS ABOUT US.** `known` /
+`private` / `registry_block` / `unassigned`, and `unreadable`. They are not shades of
+one answer: **"Private" is IEEE's own recorded value** (217 rows) meaning the assignee
+asked to be withheld, so no amount of searching produces a name; **unassigned** on a live
+device is itself a signal (randomised or spoofed MAC); a **registry block** means the
+real owner is one of the longer blocks beneath, and the prefix travels in the label
+because it is the evidence. Collapsing them into "Unknown" — which is what the old code
+did — loses the only actionable one.
+
+⛔ **"WE COULD NOT READ THE CATALOGUE" IS NOT A PROPERTY OF THE DEVICE.** If both the
+synced feed and the bundled seed are unreadable, `risk_level` is **`unknown`**, never
+`high`. Rating it as an unidentified vendor would re-rate the entire estate upward at
+once — thousands of identical findings produced by our own outage, with no bad device
+anywhere. For the same reason the catalogue never loads as an **empty** table: that would
+answer every MAC "unassigned", which is a claim about what IEEE has issued that we have
+no basis for.
+
+⛔ **A SHORT READ PARSES PERFECTLY.** A download truncated at a row boundary is still
+valid JSON and yields a catalogue that is merely *smaller* — every lookup past the cut
+reads as a quiet network full of unknown devices rather than as a failure. Both the
+loader and the fetch assert `entries.length === row_count`. (This is not hypothetical:
+building the fixture for this feature, an IEEE CSV arrived truncated at 2,277,116 of
+3,875,121 bytes and produced a plausible 37,847-row catalogue.)
+
+⛔ **THE CACHE CANNOT LIVE IN THE REPO.** `Update-DDIVault.ps1` runs `git clean -fd` with
+only `.env.local`, `node_modules` and `*.lastgood` excluded, so **every other untracked
+file is deleted on every deploy**. The synced catalogue lives at
+`C:\ProgramData\NocVault\ddivault\oui-feed.json` (override: `DDIVAULT_OUI_CACHE`), beside
+the agent TLS pins and `secrets.env`. `data/oui-seed.json` is the committed floor — a new
+install resolves vendors before it has ever reached the network, and an install that can
+never reach the hub keeps working.
+
+⛔ **THE COMMITTED SEED SHIPS WITH ITS DETACHED SIGNATURE** (`data/oui-seed.json.sig`) and
+`tests/oui.test.js` re-verifies it on every run. 54,466 rows is far past what anyone
+reviews in a diff, so "it looked fine" is not available as a check. Regenerate **both**
+with `node scripts/build-oui-seed.js`; editing the JSON by hand fails the suite.
+
+⛔ **`match_version` IS A COMPATIBILITY GATE, NOT A LABEL.** The hub publishes it so a
+consumer can tell the ALGORITHM no longer matches the data. A mismatch **refuses** the
+feed and falls back to the seed rather than "mostly working", because running fixed
+[9,7,6] steps against a feed built for different ones produces wrong vendors silently.
+If it ever bumps, `api/ouiLookup.js` must be updated in the same change.
+
+⛔ **THE SYNC RUNS IN THE API PROCESS; THE COLLECTOR IS A DIFFERENT PROCESS.** Both read
+the same cache file, so the loader re-`stat`s it at most once a minute and reloads on an
+mtime change. Without that the collector — the component doing the actual scanning —
+would hold its start-up catalogue for as long as it runs, which is weeks, and a refresh
+would appear to have no effect on exactly the thing that matters.
+
+⛔ **THE FEED IS UNLICENSED ON PURPOSE AND THE 401 WAS REAL.** It shipped metered by the
+hub's `CVE_FEED_KEYS` and the first thing the suite's own apps got from it was a 401;
+the hub ungated it (`ab9d77e`) because "the consumer was never a paying customer". A key
+is sent only if `NOCVAULT_EOL_LICENSE_KEY` is set, so re-gating upstream needs no change
+here. ⛔ Do not go hunting for a key: there isn't one, and the response header
+`X-Feed-License: not-required` is the authority on that, not any code that mentions
+licences.

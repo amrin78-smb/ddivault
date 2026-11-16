@@ -33,8 +33,12 @@ queryScope.js
   Unit tested in tests/siteScoping.test.js (no DB required).
 
 deviceClassifier.js
-  classifyDevice(mac, hostname) — best-effort device type/os/icon/vendor/risk from OUI + hostname pattern
+  classifyDevice(mac, hostname) — best-effort {type,os,icon,vendor,vendor_state,oui_prefix,risk_level} from OUI + hostname pattern
   isMacRandomized(mac) — checks locally-administered bit on MAC first octet
+  vendorLabel(info) — the display string for a lookupOUI() result; four IEEE outcomes must render as four
+    different strings. ⛔ A registry block renders "Unknown (IEEE block <prefix>)", NEVER the registrar's name.
+    ⛔ vendor_state='unreadable' means WE could not read the catalogue; risk_level is then 'unknown', never
+    'high' — rating it as an unidentifiable vendor would re-rate the whole estate upward on our own outage.
 
 emailer.js
   getSmtpConfig(db) — THE single SMTP resolution point for every sender below. Delegates to
@@ -92,7 +96,25 @@ licenseCheck.js
   (hubUrl fallback 'http://localhost:3000' is a URL default, not a secret — no weak-fallback-secret pattern found)
 
 ouiLookup.js
-  lookupOUI(mac) — look up vendor/type by MAC OUI prefix in bundled data/oui.json
+  lookupOUI(mac) — {state,vendor,prefix,bits,type}; state ∈ known|private|registry_block|unassigned|unreadable.
+    ⛔ vendor is non-null ONLY for state='known'. ⛔ LONGEST PREFIX FIRST (9, then 7, then 6 hex chars): IEEE
+    assigns at /24, /28 and /36, and 443 blocks are the registrar's own with 13,841 real assignments beneath.
+  lookupMac(mac) — the raw contract; the matching feed row or null. ⛔ <12 hex chars returns null (a prefix is
+    not a MAC: "00:00:0C" would otherwise match the Cisco /24 exactly and answer confidently)
+  normalize(s) — strip every non-hex character, uppercase
+  catalogueStatus() — provenance {state, source: hub-feed|bundled-seed, feed_version, row_count, errors[]}
+  deviceTypeFor(vendor) — coarse device type derived from the vendor NAME (the feed carries none); memoised
+  cachePath() / seedPath() — env-overridable (DDIVAULT_OUI_CACHE / DDIVAULT_OUI_SEED), for tests
+  reload() — drop cached catalogue state; MATCH_VERSION — the contract this build implements
+  Unit tested in tests/oui.test.js (26 assertions, no DB and no network required).
+
+ouiFeed.js
+  syncOuiFeed({force}) — fetch+verify the hub's signed OUI catalogue; resolves {action: updated|unchanged|failed}
+    and NEVER throws. ⛔ A failed sync leaves the existing catalogue byte-identical; it never clears or truncates.
+    ⛔ Skips the 2.2 MB body when /latest reports the feed_version already held.
+  fetchVerifiedFeed() — {body,feed,sha256,signature}; throws unless sha256 + Ed25519 + row_count + match_version
+    all pass. Mirrors net-vault/lib/eolFeed.ts — same host, same signing key, same headers.
+  fetchLatest() / localPointer() / sigPathFor(seed) / FEED_PUBLIC_KEY_B64 / DEFAULT_FEED_URL
 
 pdfCharts.js
   renderTrendChart(doc, opts) — draw a utilization-over-time line/area chart into a pdfkit doc within a given box

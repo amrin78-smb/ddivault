@@ -30,6 +30,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.36.0': [
+    "MAC address vendor lookup now comes from the NocVault intelligence hub and refreshes itself daily, instead of a file that had to be rebuilt by hand. The copy DDIVault was shipping had not been updated since 5 June and was missing 15,293 address blocks, so devices from those manufacturers showed as Unknown.",
+    "Devices whose manufacturer sits in one of IEEE's smaller address blocks are now identified. IEEE hands out address ranges in three sizes and DDIVault only ever read the largest, so 13,841 smaller assignments — the ranges most small and specialist manufacturers get — could never be matched at all.",
+    "\"Unknown manufacturer\" is no longer one answer covering four different situations. DDIVault now tells apart a manufacturer who asked IEEE to withhold their name, an address range IEEE has not issued to anyone (worth a look — it can mean a spoofed or randomised address), a range that resolves only to IEEE's own registry, and DDIVault being unable to read its vendor list at all.",
+    "If the hub cannot be reached, DDIVault keeps using the vendor list it already has rather than losing manufacturer names entirely, and says so on the admin status page. A refresh that fails verification is discarded and changes nothing.",
+    "Around 8,146 manufacturer names now read as the company registered them with IEEE rather than as an abbreviation — for example \"Cisco Systems, Inc\" instead of a shortened form."
+  ],
   '1.35.6': [
     "An update now installs the exact dependency versions this release was built and tested against. Before, an update could resolve newer compatible versions instead, so two servers on the same NocVault release could end up running subtly different software with no way to tell them apart. This takes effect from your next update onwards, because an update always runs the previous release's own update script."
   ],
@@ -1239,6 +1246,34 @@ app.get('/api/system/last-update-status', requireRole('admin'), (_req, res) => {
 
 checkForUpdates();
 setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
+
+// ── MAC vendor catalogue (OUI) ────────────────────────────────────────────
+// Pulls the hub's signed IEEE catalogue and verifies it before use. Daily, not
+// hourly: IEEE assigns a few blocks a week against a catalogue of 54,466, and
+// the hub itself only refreshes weekly. Almost every run costs one small
+// version-pointer request because the 2.2 MB body is skipped when unchanged.
+//
+// ⛔ Fire-and-forget on purpose. syncOuiFeed() resolves a verdict instead of
+// throwing, and a failed sync leaves the existing catalogue in place — the app
+// must start and serve whether or not the hub is reachable.
+const { syncOuiFeed } = require('./ouiFeed');
+syncOuiFeed().catch(() => {});
+setInterval(() => syncOuiFeed().catch(() => {}), 24 * 60 * 60 * 1000);
+
+// Which catalogue is actually in use, and how stale it is.
+//
+// ⛔ ADMIN-GATED, NOT ON /api/health. /api/health is public and unauthenticated;
+// this reports on-disk paths and provenance. The staleness that made this whole
+// change necessary (a bundled file five months old) was invisible precisely
+// because nothing reported it, so it is reported — just not to the internet.
+app.get('/api/system/oui-status', requireRole('admin'), (_req, res) => {
+  try {
+    const { catalogueStatus } = require('./ouiLookup');
+    res.json(catalogueStatus());
+  } catch (e) {
+    res.status(500).json({ state: 'unreadable', error: 'could not read catalogue status' });
+  }
+});
 
 app.post('/api/system/update', requireSuperAdmin, async (_req, res) => {
   // Check license before allowing update
