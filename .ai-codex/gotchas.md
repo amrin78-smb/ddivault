@@ -700,3 +700,17 @@ is sent only if `NOCVAULT_EOL_LICENSE_KEY` is set, so re-gating upstream needs n
 here. ⛔ Do not go hunting for a key: there isn't one, and the response header
 `X-Feed-License: not-required` is the authority on that, not any code that mentions
 licences.
+
+⛔ **MEASURED ON THE REAL ESTATE, THE WIN IS CORRECTED NAMES — NOT MORE DEVICES.**
+Verified against production after the 1.36.0 deploy (2026-11-16), over the 2,467 distinct
+MACs DHCP has actually seen: **1,513 named by the new catalogue and 1,513 by the old
+file — identical coverage. 0 newly identified, 0 registry-block wrong answers prevented,
+1,513 vendor strings corrected** (the core router reads `Hewlett Packard Enterprise`, not
+`HP`). The 954 unresolved are *correct*: 953 are locally-administered randomised MACs,
+which have no IEEE owner by definition, and one is a 36-character string that is not a
+MAC. So the catalogue-wide figures — 15,293 newly resolvable prefixes, 13,841 shadowed
+assignments — are properties of the **feed**, not of this network, and quoting them as
+deployment impact overstates it. The longest-prefix and registry-block machinery did not
+fire once here. **It is still a precondition, not an optimisation:** it is what makes the
+richer feed safe to adopt the day a /28 or /36 device does appear. Keep both facts
+together — the safety argument is load-bearing, the impact claim is not.
