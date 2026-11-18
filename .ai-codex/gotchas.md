@@ -976,7 +976,15 @@ psql -U ddivault_user -d ddivault -f scripts/schema-dns-platform.sql
 ```
 
 It is `ADD COLUMN IF NOT EXISTS` plus a GRANT — idempotent, safe to re-run, safe on a
-server that already has it. Then run the updater as usual. Fresh installs are unaffected:
+server that already has it. Then run the updater as usual.
+
+**Production was pre-applied on 2026-11-18** (over WinRM, while prod was still running
+1.36.0 — the file is additive and 1.36.0 code never reads those columns), so this
+particular upgrade no longer needs two runs. Verified afterwards: 11 `dns_*` columns and
+the 4 `dns_query_stats.cumulative_*` present, 5 `ddi_servers` rows unchanged, every row
+`dns_platform = 'windows'`, `claude_readonly` still refused `tsig_secret`, all three
+services Running on 1.36.0. **The rule itself still applies to the next new schema
+file.** Fresh installs are unaffected:
 `../netvault/installer/Install-NocVault-Suite.ps1` applies all five files explicitly, and
 `Test-NocVault-Suite.ps1` now asserts `ddivault_user` can read both columns so a
 provisioning path that skips the file fails loudly instead of at the first poll.
