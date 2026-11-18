@@ -32,6 +32,7 @@ interface Server {
   site_name: string | null;
   // DNS platform (1.37.0). 'windows' for every pre-existing server.
   dns_platform?: string;
+  dns_zone_list?: string | null;
   dns_host?: string | null;
   dns_port?: number | null;
   tsig_key_name?: string | null;
@@ -62,6 +63,11 @@ const DNS_PLATFORM_INFO: Record<string, { label: string; color: string; desc: st
     label: 'PowerDNS',
     color: 'var(--purple)',
     desc: 'Zones, records and statistics over the Authoritative REST API using an API key. No zone transfer required.',
+  },
+  generic: {
+    label: 'Knot, NSD or other standards-compliant DNS',
+    color: 'var(--amber)',
+    desc: 'Records over AXFR with a TSIG key, exactly as for BIND. These servers expose no remote way to list their zones, so you enter the zone names yourself.',
   },
 };
 
@@ -152,6 +158,7 @@ function ServerModal({ server, sites, onClose, onDone }: {
     dns_api_url:   server?.dns_api_url   || '',
     dns_api_key:   '',
     dns_api_server_id: server?.dns_api_server_id || 'localhost',
+    dns_zone_list: server?.dns_zone_list || '',
   });
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
@@ -343,6 +350,73 @@ zone "example.com" {
                 </details>
                 <div style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginTop: 8 }}>
                   🔒 The TSIG secret is encrypted with AES-256-GCM before storage. DDIVault only ever reads — it never writes to your DNS.
+                </div>
+              </>
+            )}
+
+            {form.dns_platform === 'generic' && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label style={LABEL}>TSIG key name</label>
+                    <input value={form.tsig_key_name} onChange={e => setForm(p => ({ ...p, tsig_key_name: e.target.value }))}
+                      style={INPUT} placeholder="ddivault" />
+                  </div>
+                  <div>
+                    <label style={LABEL}>TSIG algorithm</label>
+                    <select value={form.tsig_algorithm} onChange={e => setForm(p => ({ ...p, tsig_algorithm: e.target.value }))} style={INPUT}>
+                      <option value="hmac-sha256">hmac-sha256</option>
+                      <option value="hmac-sha512">hmac-sha512</option>
+                      <option value="hmac-sha384">hmac-sha384</option>
+                      <option value="hmac-sha224">hmac-sha224</option>
+                      <option value="hmac-sha1">hmac-sha1</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={LABEL}>TSIG secret {server?.has_tsig_secret ? '(leave blank to keep)' : ''}</label>
+                    <input type="password" value={form.tsig_secret}
+                      onChange={e => setForm(p => ({ ...p, tsig_secret: e.target.value }))}
+                      style={INPUT} placeholder={server?.has_tsig_secret ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : 'base64 secret'} />
+                  </div>
+                </div>
+                <div>
+                  <label style={LABEL}>Zones (one per line)</label>
+                  <textarea value={form.dns_zone_list}
+                    onChange={e => setForm(p => ({ ...p, dns_zone_list: e.target.value }))}
+                    style={{ ...INPUT, minHeight: 84, fontFamily: 'var(--font-mono)', resize: 'vertical' }}
+                    placeholder={'example.com\n10.in-addr.arpa'} />
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+                    Knot and NSD provide no remote way to list their zones &mdash; Knot&apos;s control interface is a
+                    local socket and NSD&apos;s needs client certificates &mdash; so DDIVault has to be told which
+                    zones to read. Everything else works exactly as it does for BIND.
+                  </div>
+                </div>
+                <details style={{ marginTop: 10 }}>
+                  <summary style={{ fontSize: 'var(--text-sm)', color: 'var(--amber)', cursor: 'pointer', fontWeight: 600 }}>
+                    &#9654; Knot configuration this needs
+                  </summary>
+                  <pre style={{ fontSize: 'var(--text-xs)', background: 'var(--navy)', color: '#e2e8f0', padding: 12, borderRadius: 'var(--radius-sm)', marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
+{`key:
+  - id: ${form.tsig_key_name || 'ddivault'}
+    algorithm: ${form.tsig_algorithm}
+    secret: <the base64 secret entered above>
+
+acl:
+  - id: xfr-ddivault
+    key: ${form.tsig_key_name || 'ddivault'}
+    action: transfer
+
+zone:
+  - domain: example.com
+    acl: xfr-ddivault
+
+# NSD: add a matching key: stanza and
+#   provide-xfr: <NOCVAULT-IP> ${form.tsig_key_name || 'ddivault'}
+# to each zone.`}
+                  </pre>
+                </details>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--amber)', marginTop: 8 }}>
+                  &#128274; The TSIG secret is encrypted with AES-256-GCM before storage. DDIVault only ever reads.
                 </div>
               </>
             )}

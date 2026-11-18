@@ -34,7 +34,14 @@ ALTER TABLE ddi_servers
   ADD COLUMN IF NOT EXISTS dns_api_key        TEXT,   -- SECRET: AES-256-GCM, credStore.js
   ADD COLUMN IF NOT EXISTS dns_api_server_id  TEXT DEFAULT 'localhost',
   ADD COLUMN IF NOT EXISTS dns_last_error     TEXT,
-  ADD COLUMN IF NOT EXISTS dns_capabilities   JSONB;
+  ADD COLUMN IF NOT EXISTS dns_capabilities   JSONB,
+  ADD COLUMN IF NOT EXISTS dns_zone_list      TEXT;
+  -- Operator-supplied zone names for the 'generic' platform (Knot, NSD, any
+  -- appliance that speaks AXFR). ⛔ NOT a shortcoming of those servers: they
+  -- simply expose no REMOTE channel that can enumerate zones — Knot's control
+  -- interface is a UNIX socket, NSD's needs client certificates — and requiring
+  -- shell access on a customer's DNS server is the dependency this whole design
+  -- exists to avoid. Everything else (records, SOA, TSIG) is identical.
   -- The capability verdict last computed for this server (see
   -- collector/dns/capabilities.js). Persisted so the UI can render
   -- "not applicable on this platform" without re-deriving the matrix, and so a
@@ -92,7 +99,7 @@ BEGIN
       agent_hub_id,
       dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
       dns_stats_url, dns_api_url, dns_api_server_id, dns_last_error,
-      dns_capabilities)
+      dns_capabilities, dns_zone_list)
       ON ddi_servers TO nocvault_readonly;
   END IF;
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
@@ -104,7 +111,7 @@ BEGIN
       agent_hub_id,
       dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
       dns_stats_url, dns_api_url, dns_api_server_id, dns_last_error,
-      dns_capabilities)
+      dns_capabilities, dns_zone_list)
       ON ddi_servers TO claude_readonly;
   END IF;
 END

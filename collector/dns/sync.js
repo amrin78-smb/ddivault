@@ -59,9 +59,20 @@ async function syncProtocolDns(db, row, writers, ctx) {
   try {
     zones = await provider.listZones(server);
   } catch (e) {
-    out.error = `zone list failed: ${e.message}`;
-    await recordOutcome(db, row.id, server, out);
-    return out;
+    // ⛔ A PARTIALLY GOOD ZONE LIST IS NOT A FAILED POLL. The 'generic' platform
+    // takes its zones from a hand-typed list, so one typo'd entry is the normal
+    // case — and discarding the other fifty because of it would turn a
+    // correctable mistake into a total outage of that server's data. Collect
+    // what answered, report what did not.
+    if (e.isPartial && Array.isArray(e.partial) && e.partial.length) {
+      zones = e.partial;
+      out.error = e.message;
+      warn(ctx, `[DNS/${server.dns_platform}] ${e.message}`);
+    } else {
+      out.error = `zone list failed: ${e.message}`;
+      await recordOutcome(db, row.id, server, out);
+      return out;
+    }
   }
   out.zones = zones.length;
 

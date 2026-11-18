@@ -909,3 +909,43 @@ exists and nothing calls it. Wiring it means writing untested code into the
 production-critical Windows path, and there is no Windows DNS server available to test
 against (staging is Windows 11 **Home**, which cannot run the DNS Server role). Left as
 a known gap rather than shipped unverified.
+
+## ⛔ Knot and NSD do not need their own providers (1.39.0)
+
+Verified against real daemons, not documentation. Knot 3.6.2 collects **with zero code
+changes**: AXFR refused without a key (NOTAUTH), 12 records transferred with TSIG and the
+response verified, SOA probe clean, a wrong key rejected as BADSIG — and the normalised
+rows are byte-identical to BIND's (there is a test asserting exactly that, because a
+spelling that matched across only two implementations could be coincidence).
+
+What they lack is a remote way to **enumerate** zones. BIND has its statistics-channel and
+PowerDNS its REST API; Knot's control interface is a **UNIX socket** (`knotc -s <path>`)
+and NSD's needs `nsd-control` over TLS with client certificates. Requiring shell access on
+a customer's DNS server is the dependency this whole design exists to avoid.
+
+So there is one `generic` platform, and the operator supplies the zone list
+(`ddi_servers.dns_zone_list`). That covers Knot, NSD, appliances and managed services —
+a better answer than a vendor list that is always one name out of date.
+
+⛔ **A CONFIGURED ZONE THAT DOES NOT ANSWER IS NAMED, NOT DROPPED.** Silently omitting it
+is indistinguishable from the operator never having typed it, and a typo in that very
+field is the likeliest cause. `listZones` throws with `isPartial` + `partial`, and
+`sync.js` collects what answered while reporting what did not — one typo must not cost the
+other fifty zones.
+
+⛔ **`getQueryStats()` THROWS RATHER THAN RETURNING ZEROES.** There is no vendor-neutral
+counter interface, and a zeroed sample written into `dns_query_stats` renders as "this
+server served no queries" — a measurement never made. The capability matrix says
+`query_stats: not_available`.
+
+⛔ **`zone_type` IS not_available HERE, NOT GUESSED.** Primary vs Secondary is not
+discoverable over the protocol. Every zone we can transfer is one the server answers
+authoritatively for, which is what the rest of the app means by Primary — but claiming to
+*know* the distinction would be a guess dressed as a fact.
+
+## ⛔ `podman rm -f a b c` removes NOTHING if one name is absent
+
+`lab.sh down()` reported "lab down" over a lab that was still running: podman validates
+every name first and aborts the whole command when one container does not exist, and the
+`|| true` turned that into apparent success. Fixed with `--ignore`. General shape: a
+cleanup that swallows its own failure will eventually report success over a mess.

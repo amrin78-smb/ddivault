@@ -32,6 +32,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.39.0': [
+    "New: DDIVault can now monitor Knot DNS, NSD and any other standards-compliant DNS server, not just BIND and PowerDNS. Records are read the same way as for BIND, using a zone transfer protected by a TSIG key.",
+    "These servers provide no remote way to list the zones they hold - Knot's control interface is local-only and NSD's requires client certificates - so you enter the zone names yourself when adding the server. Everything after that works exactly as it does for BIND, and the add-server screen shows the Knot and NSD configuration it needs.",
+    "A zone name that is entered but does not answer is reported by name rather than quietly ignored, since a typo in that list is the most likely reason. The other zones on the same server are still collected.",
+  ],
   '1.38.0': [
     "Fixed: a BIND or PowerDNS server was shown as degraded, and as offline once its connection was tested, even while DDIVault was reading its zones and records perfectly well. Its health was being judged by whether it answered Windows remote management, which a Linux server never will. Health for those servers is now measured by the DNS service itself - whether it answers, how quickly, and whether we can still read its zone list.",
     "Fixed: the routine Windows DNS checks were also being run against Linux servers every twenty minutes - around eight remote-management attempts per server, each waiting for a timeout, none of which could ever succeed. They are now only run against Windows servers.",
@@ -2953,7 +2958,7 @@ app.get('/api/servers', attachSiteFilter, async (req, res) => {
               winrm_test_ok, winrm_tested_at, notes, site_id, agent_hub_id,
               created_at, updated_at,
               dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
-              dns_stats_url, dns_api_url, dns_api_server_id,
+              dns_stats_url, dns_api_url, dns_api_server_id, dns_zone_list,
               dns_last_error, dns_capabilities,
               -- ⛔ The SECRETS themselves are never selected. The UI needs to
               -- know whether one is stored (to show "configured" and to leave
@@ -2992,7 +2997,7 @@ app.post('/api/servers', requireWrite, async (req, res) => {
       auth_mode, ps_username, ps_password,
       winrm_port, winrm_https, notes, site_id,
       dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm, tsig_secret,
-      dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id,
+      dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id, dns_zone_list,
     } = req.body;
     if (!hostname && !ip_address) return res.status(400).json({ error: 'hostname or ip_address required' });
 
@@ -3012,8 +3017,8 @@ app.post('/api/servers', requireWrite, async (req, res) => {
          (hostname, ip_address, role, description, auth_mode, ps_username, ps_password,
           winrm_port, winrm_https, notes, site_id,
           dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm, tsig_secret,
-          dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+          dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id, dns_zone_list)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        RETURNING id, hostname, ip_address::text, role, description,
                  auth_mode, ps_username, winrm_port, winrm_https, notes, site_id, is_active, created_at,
                  dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
@@ -3028,7 +3033,7 @@ app.post('/api/servers', requireWrite, async (req, res) => {
         platform, dns_host || null, parseInt(dns_port || '53'),
         tsig_key_name || null, tsig_algorithm || 'hmac-sha256', encryptedTsig,
         dns_stats_url || null, dns_api_url || null, encryptedApiKey,
-        dns_api_server_id || 'localhost',
+        dns_api_server_id || 'localhost', dns_zone_list || null,
       ]
     );
     if (req.audit) req.audit({ action: 'create', entity_type: 'server', entity_id: result.rows[0].id, entity_name: hostname || ip_address, server_id: result.rows[0].id, new_value: { hostname, ip_address, role, auth_mode } });
@@ -3084,6 +3089,7 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
     set('dns_stats_url', b.dns_stats_url || null);
     set('dns_api_url', b.dns_api_url || null);
     set('dns_api_server_id', b.dns_api_server_id || 'localhost');
+    set('dns_zone_list', b.dns_zone_list || null);
 
     // ⛔ A SECRET IS ONLY REWRITTEN WHEN A REAL NEW VALUE ARRIVES. The UI shows
     // a mask for a stored secret, so saving any other field round-trips that
@@ -3104,7 +3110,7 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
       ' auth_mode, ps_username, winrm_port, winrm_https,' +
       ' winrm_test_ok, winrm_tested_at, notes, is_active, site_id,' +
       ' dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,' +
-      ' dns_stats_url, dns_api_url, dns_api_server_id,' +
+      ' dns_stats_url, dns_api_url, dns_api_server_id, dns_zone_list,' +
       ' (tsig_secret IS NOT NULL) AS has_tsig_secret,' +
       ' (dns_api_key IS NOT NULL) AS has_dns_api_key',
       vals

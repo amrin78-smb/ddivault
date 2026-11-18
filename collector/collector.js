@@ -132,7 +132,8 @@ async function getActiveServers() {
     `SELECT id, hostname, ip_address::text as ip_address, role,
             auth_mode, ps_username, ps_password, winrm_port, winrm_https,
             dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
-            tsig_secret, dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id
+            tsig_secret, dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id,
+            dns_zone_list
      FROM ddi_servers WHERE is_active = TRUE AND agent_hub_id IS NULL ORDER BY id`
   );
   // Decrypt passwords. tsig_secret and dns_api_key are stored the same way as

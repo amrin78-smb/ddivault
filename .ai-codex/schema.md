@@ -224,3 +224,7 @@ BIND and PowerDNS report totals since boot, so each sample is a delta against th
 raw reading — which has to be stored to subtract from. A `cumulative_total` lower than the
 row before it is a server restart, and that row's interval columns are NULL because the
 interval across a restart cannot be computed.
+
+### ddi_servers.dns_zone_list (1.39.0)
+TEXT, newline/comma separated. Zones for the `generic` platform, which cannot discover
+them. Non-secret, so it IS in the readonly column grant in schema-dns-platform.sql.

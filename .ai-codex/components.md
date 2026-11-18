@@ -162,3 +162,8 @@ Not counted as a violation.
   gaps as what they are: *not applicable on this platform* (grey) vs *not readable from this server* (amber).
   ⛔ These must stay visually distinct — collapsing them is how a missing config step hides behind a feature
   that was never going to exist.
+
+### 1.39.0
+`ServersTab` gains a fourth DNS platform, "Knot, NSD or other standards-compliant DNS",
+with a zone-list textarea and a copyable Knot/NSD config snippet. The field explains WHY
+the list is needed rather than just demanding it.

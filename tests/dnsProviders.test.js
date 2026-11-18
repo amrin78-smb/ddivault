@@ -44,7 +44,12 @@ function reachable(port) {
   });
 }
 let LAB = null;
-async function labUp() {
+const PORT_UP = new Map();
+async function labUp(port) {
+  if (port !== undefined) {
+    if (!PORT_UP.has(port)) PORT_UP.set(port, await reachable(port));
+    return PORT_UP.get(port);
+  }
   if (LAB === null) LAB = (await reachable(5354)) && (await reachable(5355)) && (await reachable(8653)) && (await reachable(8081));
   if (!LAB) console.log('    (lab not running — start it with tests/dnslab/lab.sh up)');
   return LAB;
@@ -276,6 +281,102 @@ test('a server with no DNS host is rejected before any network call', async (t) 
   const r = await testProtocolServer({ dns_platform: 'bind', dns_host: '' });
   assert.strictEqual(r.ok, false);
   assert.match(r.summary, /No DNS host/);
+});
+
+// ── the generic platform: Knot, NSD, anything that speaks AXFR ───────────────
+
+const KNOT = dns.serverContext({
+  id: 3, hostname: 'knot-lab', dns_platform: 'generic',
+  dns_host: '127.0.0.1', dns_port: 5356,
+  tsig_key_name: 'ddivault', tsig_algorithm: 'hmac-sha256',
+  tsig_secret: 'c3BhbnZhdWx0LXRlc3Qta2V5LWRvLW5vdC11c2U9PQ==',
+  dns_zone_list: 'knot.example',
+});
+
+test('Knot is collected by the generic provider with no vendor code', async (t) => {
+  if (!await labUp(5356)) return t.skip('knot not running');
+  const p = dns.providerFor('generic');
+  const zones = await p.listZones(KNOT);
+  assert.strictEqual(zones.length, 1);
+  assert.strictEqual(zones[0].zone_name, 'knot.example');
+  assert.ok(Number.isFinite(zones[0].serial), 'serial confirmed by a live SOA query');
+
+  const r = await p.getZoneRecords(KNOT, 'knot.example');
+  assert.strictEqual(r.verified, true, 'TSIG-verified against Knot');
+  assert.strictEqual(r.records.filter((x) => x.hostname === 'web' && x.record_type === 'A').length, 2);
+});
+
+test('Knot records are spelt exactly like BIND records', async (t) => {
+  if (!await labUp(5356) || !await labUp()) return t.skip('lab down');
+  // ⛔ A third implementation is the real test of the normalisation: if the
+  // spelling only matched between two, it could be coincidence.
+  const b = await dns.providerFor('bind').getZoneRecords(BIND, 'lab.example');
+  const k = await dns.providerFor('generic').getZoneRecords(KNOT, 'knot.example');
+  const canon = (rows, zone) => rows
+    .map((r) => `${r.hostname}|${r.record_type}|${r.record_data.split(zone).join('<ZONE>')}`)
+    .sort();
+  assert.deepStrictEqual(canon(b.records, 'lab.example'), canon(k.records, 'knot.example'));
+});
+
+test('generic: AXFR without the key is refused by Knot too', async (t) => {
+  if (!await labUp(5356)) return t.skip('knot not running');
+  await assert.rejects(
+    client.axfr({ host: '127.0.0.1', port: 5356, zone: 'knot.example' }),
+    /NOTAUTH|REFUSED/);
+});
+
+test('generic: a zone in the list that does not answer is NAMED, not dropped', async (t) => {
+  if (!await labUp(5356)) return t.skip('knot not running');
+  const p = dns.providerFor('generic');
+  const typo = { ...KNOT, dns_zone_list: 'knot.example\nknott.example' };
+  // ⛔ Silently omitting it would look identical to the operator never having
+  // typed it — and a typo in this very field is the likeliest cause.
+  await assert.rejects(
+    async () => { await p.listZones(typo); },
+    (e) => {
+      assert.match(e.message, /knott\.example/, 'the bad name is in the message');
+      assert.ok(e.isPartial, 'flagged as partial so the sync keeps the good ones');
+      assert.strictEqual(e.partial.length, 1, 'the zone that DID answer is preserved');
+      return true;
+    });
+});
+
+test('generic: no zones configured is a clear refusal, not an empty success', async (t) => {
+  const p = dns.providerFor('generic');
+  await assert.rejects(async () => { await p.listZones({ ...KNOT, dns_zone_list: '' }); },
+    /No zones configured/);
+  const t2 = await p.testConnection({ ...KNOT, dns_zone_list: '' });
+  assert.strictEqual(t2.ok, false);
+  assert.match(t2.detail, /cannot discover them/);
+});
+
+test('generic: the zone list is parsed tolerantly', () => {
+  const { parseZoneList } = require('../collector/dns/providers/generic');
+  // Hand-typed into a textarea: trailing dots, blank lines, comments, commas.
+  assert.deepStrictEqual(
+    parseZoneList('Example.COM.\n\n10.in-addr.arpa  # reverse\n,foo.test,\n'),
+    ['example.com', '10.in-addr.arpa', 'foo.test']);
+  assert.deepStrictEqual(parseZoneList(''), []);
+  assert.deepStrictEqual(parseZoneList('bad zone name!'), [], 'nonsense is dropped, not passed to the wire');
+});
+
+test('generic: query stats throw rather than returning zeroes', async () => {
+  // ⛔ A zeroed sample would be written into dns_query_stats and render as
+  // "this server served no queries" — a measurement we never made.
+  await assert.rejects(async () => { await dns.providerFor('generic').getQueryStats(KNOT); },
+    /not available/);
+  const c = require('../collector/dns/capabilities');
+  assert.strictEqual(c.capabilityFor({ dns_platform: 'generic', dns_zone_list: 'x.test' }, 'query_stats'),
+    c.NOT_AVAILABLE);
+});
+
+test('generic: with no zone list, zones/records report not_available', () => {
+  const c = require('../collector/dns/capabilities');
+  for (const cap of ['zones', 'records', 'soa']) {
+    assert.strictEqual(c.capabilityFor({ dns_platform: 'generic' }, cap), c.NOT_AVAILABLE, cap);
+    assert.strictEqual(c.capabilityFor({ dns_platform: 'generic', dns_zone_list: 'a.test' }, cap),
+      c.SUPPORTED, cap + ' with a list');
+  }
 });
 
 // ── capability honesty ───────────────────────────────────────────────────────

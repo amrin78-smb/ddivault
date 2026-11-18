@@ -12,7 +12,7 @@
  */
 
 /** Platforms this build can actually collect. */
-const DNS_PLATFORMS = new Set(['windows', 'bind', 'powerdns']);
+const DNS_PLATFORMS = new Set(['windows', 'bind', 'powerdns', 'generic']);
 
 /**
  * @returns {string|null} the canonical platform, or null meaning "reject".

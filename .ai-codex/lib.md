@@ -213,3 +213,11 @@ destructively.
   interval is recorded as NULL (unknowable), never negative, 0, or the raw new value.
 - `wire.js` — gained `tsigErrorText()`: "TSIG error 16" is a wrong secret and 17 a wrong
   key name, two different one-line fixes.
+
+### collector/dns/providers/generic.js (1.39.0)
+Knot, NSD and anything else that speaks AXFR. ⛔ NOT a lesser provider — verified against
+Knot 3.6.2, records/SOA/TSIG behave identically to BIND with zero code changes. The only
+thing missing is zone ENUMERATION: Knot's control interface is a UNIX socket and NSD's
+needs client certificates, so the operator supplies the list (`ddi_servers.dns_zone_list`,
+parsed tolerantly by `parseZoneList()`). A configured zone that does not answer is named
+in an `isPartial` error carrying `partial` — sync keeps what worked.

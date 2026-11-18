@@ -13,9 +13,10 @@
 
 const bind = require('./providers/bind');
 const powerdns = require('./providers/powerdns');
+const generic = require('./providers/generic');
 const capabilities = require('./capabilities');
 
-const PROVIDERS = { bind, powerdns };
+const PROVIDERS = { bind, powerdns, generic };
 
 /** Platforms this build can collect over the DNS-protocol path. */
 const PROTOCOL_PLATFORMS = Object.keys(PROVIDERS);
@@ -48,6 +49,7 @@ function serverContext(row) {
     dns_api_url: row.dns_api_url || null,
     dns_api_key: row.dns_api_key || null,     // already decrypted by the caller
     dns_api_server_id: row.dns_api_server_id || 'localhost',
+    dns_zone_list: row.dns_zone_list || null,
   };
 }
 

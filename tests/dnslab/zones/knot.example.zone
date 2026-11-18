@@ -1,0 +1,12 @@
+$TTL 3600
+@   IN SOA ns1.knot.example. admin.knot.example. ( 2026111801 7200 3600 1209600 3600 )
+@   IN NS  ns1.knot.example.
+ns1 IN A   10.0.0.1
+web IN A   10.0.0.10
+web IN A   10.0.0.12
+db  IN A   10.0.0.11
+app IN CNAME web.knot.example.
+@   IN MX  10 mail.knot.example.
+mail IN A  10.0.0.20
+_sip._tcp IN SRV 10 20 5060 sip.knot.example.
+@   IN TXT "v=spf1 -all"

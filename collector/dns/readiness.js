@@ -149,6 +149,72 @@ async function checkPowerDns(server) {
 }
 
 /**
+ * Knot, NSD and anything else that speaks AXFR but cannot be asked for its zone
+ * list remotely. The checks mirror BIND's minus the statistics channel, because
+ * that is precisely the difference between the two platforms.
+ */
+async function checkGeneric(server) {
+  const checks = [];
+  const provider = providerFor('generic');
+  const names = provider.parseZoneList(server.dns_zone_list);
+
+  if (!names.length) {
+    checks.push(check('Zone list', false,
+      'No zones configured, and this platform cannot be asked for them',
+      'Enter the zone names this server is authoritative for, one per line. Knot and NSD\n' +
+      'expose no remote way to enumerate them (Knot\'s control socket is local-only and\n' +
+      'NSD\'s needs client certificates), so DDIVault has to be told.'));
+    return checks;
+  }
+  checks.push(check('Zone list', true, `${names.length} zone(s) configured`));
+
+  let answered = 0;
+  const silent = [];
+  for (const n of names) {
+    try {
+      const soa = await client.querySoa(server.dns_host, server.dns_port || 53, n, { timeoutMs: 5000 });
+      answered++;
+      if (answered === 1) checks.push(check('DNS query', true, `SOA for ${n} (serial ${soa.serial})`));
+    } catch (e) {
+      silent.push(`${n}: ${e.message}`);
+    }
+  }
+  if (!answered) {
+    checks.push(check('DNS query', false, silent.join('; '),
+      `No configured zone answered. Check the name is spelt correctly and that the service is\nlistening on ${server.dns_host}:${server.dns_port || 53}.`));
+    return checks;
+  }
+  if (silent.length) {
+    // ⛔ Named individually: the likeliest cause is a typo in the list, and
+    // "some zones failed" does not tell anyone which to correct.
+    checks.push(check('Configured zones', false, silent.join('; '),
+      'These zone names are configured here but the server does not answer for them. Check for\na typo, or remove them from the list.'));
+  }
+
+  const probe = names.find((n) => !/\.(in-addr|ip6)\.arpa$/i.test(n)) || names[0];
+  try {
+    const r = await client.axfr({
+      host: server.dns_host, port: server.dns_port || 53, zone: probe,
+      tsig: server.tsig_key_name && server.tsig_secret
+        ? { keyName: server.tsig_key_name, algorithm: server.tsig_algorithm || 'hmac-sha256', secret: server.tsig_secret }
+        : null,
+      timeoutMs: 15000,
+    });
+    checks.push(check('Zone transfer (AXFR)', true,
+      `${r.records.length} records from ${probe}` + (r.signed ? ', TSIG verified' : ' — NOT TSIG-signed (IP allow-list)')));
+  } catch (e) {
+    const key = server.tsig_key_name || 'ddivault';
+    checks.push(check('Zone transfer (AXFR)', false, e.message,
+      `The server must allow a zone transfer to this host. For Knot:\n\n` +
+      `key:\n  - id: ${key}\n    algorithm: ${server.tsig_algorithm || 'hmac-sha256'}\n    secret: <the secret configured in DDIVault>\n\n` +
+      `acl:\n  - id: xfr-ddivault\n    key: ${key}\n    action: transfer\n\n` +
+      `zone:\n  - domain: ${probe}\n    acl: xfr-ddivault\n\n` +
+      `For NSD, add a provide-xfr: entry with the same key to the zone's stanza.`));
+  }
+  return checks;
+}
+
+/**
  * @returns {Promise<{ok, summary, platform, checks: Array}>}
  */
 async function testProtocolServer(server) {
@@ -161,6 +227,7 @@ async function testProtocolServer(server) {
   try {
     checks = platform === 'bind' ? await checkBind(server)
       : platform === 'powerdns' ? await checkPowerDns(server)
+      : platform === 'generic' ? await checkGeneric(server)
       : [check('Platform', false, `No readiness check for platform "${platform}"`, null)];
   } catch (e) {
     checks = [check('Readiness check', false, e.message, null)];
@@ -168,4 +235,4 @@ async function testProtocolServer(server) {
   return { platform, checks, ...summarise(checks) };
 }
 
-module.exports = { testProtocolServer, checkBind, checkPowerDns };
+module.exports = { testProtocolServer, checkBind, checkPowerDns, checkGeneric };

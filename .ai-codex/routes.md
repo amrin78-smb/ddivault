@@ -327,3 +327,7 @@ silently cached if they did need it — confirms the omission is correct, not an
 - `GET /api/dns/query-stats` — unchanged, but `dns_query_stats` is now actually POPULATED
   for protocol platforms. It was read here and in `api/reports.js` and written by nothing;
   production held zero rows.
+
+### 1.39.0
+- `POST`/`PUT /api/servers` and `GET /api/servers` carry `dns_zone_list`.
+- `normaliseDnsPlatform` accepts `generic` (still rejects anything unknown with 400).

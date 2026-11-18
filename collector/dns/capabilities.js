@@ -71,6 +71,24 @@ const MATRIX = {
     dnssec: NOT_AVAILABLE,
     writes: NOT_APPLICABLE,    // RFC 2136 is Phase 4; nothing is wired yet
   },
+  /**
+   * Knot, NSD, appliances — anything that speaks AXFR but offers no remote way
+   * to ENUMERATE its zones. Verified against Knot 3.6.2: records, SOA and TSIG
+   * all behave identically to BIND; only the zone list has to be supplied.
+   */
+  generic: {
+    zones: SUPPORTED,            // from the operator-supplied list, SOA-confirmed
+    records: SUPPORTED,          // AXFR
+    soa: SUPPORTED,
+    zone_type: NOT_AVAILABLE,    // not discoverable over the protocol
+    query_stats: NOT_AVAILABLE,  // no vendor-neutral counter interface
+    forwarders: NOT_AVAILABLE,
+    scavenging: NOT_APPLICABLE,
+    ad_integration: NOT_APPLICABLE,
+    stale_records: NOT_APPLICABLE,
+    dnssec: NOT_AVAILABLE,
+    writes: NOT_APPLICABLE,
+  },
   powerdns: {
     zones: SUPPORTED, records: SUPPORTED, soa: SUPPORTED, zone_type: SUPPORTED,
     query_stats: SUPPORTED,    // REST /statistics
@@ -103,6 +121,12 @@ function capabilityFor(server, cap) {
     return NOT_AVAILABLE;
   }
   if (p === 'powerdns' && !server.dns_api_url) return NOT_AVAILABLE;
+  // ⛔ This platform cannot discover its own zones. With none configured there
+  // is nothing to collect, and saying so is more useful than an empty list.
+  if (p === 'generic' && (cap === 'zones' || cap === 'records' || cap === 'soa')
+      && !String(server.dns_zone_list || '').trim()) {
+    return NOT_AVAILABLE;
+  }
   if (p === 'bind' && cap === 'records' && !server.tsig_key_name) {
     // A transfer without TSIG can still work via an IP allow-list, so this is
     // not a hard no — but it is worth surfacing that nothing authenticates it.
