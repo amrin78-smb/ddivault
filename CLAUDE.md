@@ -156,7 +156,8 @@ ddivault/
 │   ├── schema.sql             # Main schema (run first)
 │   ├── schema-ipam.sql        # IPAM tables (run second)
 │   ├── schema-server-auth.sql # Per-server auth columns (run third)
-│   └── schema-sites.sql       # Sites integration columns (run fourth)
+│   ├── schema-sites.sql       # Sites integration columns (run fourth)
+│   └── schema-dns-platform.sql # DNS-platform columns (run FIFTH and LAST)
 ├── installer/
 │   └── Update-DDIVault.ps1    # Windows update/deploy script
 ├── frontend/
@@ -318,6 +319,7 @@ psql -U ddivault_user -d ddivault -f scripts/schema.sql
 psql -U ddivault_user -d ddivault -f scripts/schema-ipam.sql
 psql -U ddivault_user -d ddivault -f scripts/schema-server-auth.sql
 psql -U ddivault_user -d ddivault -f scripts/schema-sites.sql
+psql -U ddivault_user -d ddivault -f scripts/schema-dns-platform.sql
 ```
 
 ### ⚠️ Upgrade note — alert auto-resolve (v1.11.0+)
@@ -556,7 +558,7 @@ request describes. A gate that only blocks the UI is not a security control.
 
 ## DNS platforms: Windows (PowerShell) and Linux (protocol) — 1.37.0
 
-DDIVault collects DNS from three platforms, chosen per server by
+DDIVault collects DNS from four platforms, chosen per server by
 `ddi_servers.dns_platform`:
 
 | Platform | How | Module |
@@ -564,11 +566,40 @@ DDIVault collects DNS from three platforms, chosen per server by
 | `windows` (default) | `Get-DnsServer*` over WinRM | `collector/dnsMonitor.js` + `powershellRunner.js` — **unchanged** |
 | `bind` | AXFR + TSIG for records, statistics-channel for zones/stats | `collector/dns/providers/bind.js` |
 | `powerdns` | Authoritative REST API | `collector/dns/providers/powerdns.js` |
+| `generic` (1.39.0) | AXFR + TSIG, over an operator-supplied zone list | `collector/dns/providers/generic.js` |
 
 The Linux path is **protocol-first**: it speaks the DNS protocol itself (AXFR, SOA, RFC 8945
 TSIG) and uses a vendor channel only for what the protocol cannot express. It never SSHes
 in, never reads `named.conf`, and needs no agent on the customer's DNS server — they grant
 `allow-transfer { key "ddivault"; };` and nothing else.
+
+⛔ **`generic` IS A CAPABILITY BOUNDARY, NOT A VENDOR.** Knot 3.6.2 was tested against the
+real daemon and collects with ZERO code changes — its records come back byte-identical to
+BIND's. What Knot and NSD lack is remote zone *enumeration* (Knot's control interface is a
+local UNIX socket; NSD's needs client certificates), so the one thing they cannot provide is
+the zone list, and `ddi_servers.dns_zone_list` supplies it. That is why there is no
+`knot.js` and no `nsd.js`: adding a provider per vendor would have been a list that goes
+stale, and the honest answer to "what do you support" is "BIND, PowerDNS, and any
+standards-compliant DNS server". A configured zone that does not answer is **named** in the
+error, never silently dropped — a typo in that field is the likeliest cause, and one typo
+must not cost the other fifty zones (`listZones` throws with `isPartial`/`partial`, and
+`sync.js` collects the zones that did answer).
+
+⛔ **DEPLOYING THIS TO A SERVER BELOW 1.37.0 TAKES TWO UPDATER RUNS — AND THE FIRST RUN
+REPORTS SUCCESS.** `scripts/schema-dns-platform.sql` is new in 1.37.0, and the `$schemas`
+list that applies it lives in `installer/Update-DDIVault.ps1`. PowerShell parses the whole
+script before executing a line, so the list in force is the one from the copy ON DISK AT
+LAUNCH — i.e. the OLD release's — while `git reset --hard` only lands the new one for next
+time (the general "an installer change takes effect one release later" rule). Meanwhile
+`getActiveServers()` in `collector/collector.js` selects `dns_platform` and `dns_zone_list`
+in the SINGLE query that feeds every poll, so a missing column stops DHCP, DNS *and* IPAM
+collection, not just DNS. And the updater's mandatory final gate is `/api/health`, which
+runs `SELECT NOW()` and never touches `ddi_servers` — so it passes, prints
+`API health check passed`, and the collector crash-loops behind a green deploy.
+**Before upgrading a server from 1.36.0 or earlier, apply the file by hand first:**
+`psql -U ddivault_user -d ddivault -f scripts/schema-dns-platform.sql` (idempotent,
+`ADD COLUMN IF NOT EXISTS` only), then run the updater. Fresh installs are unaffected —
+`../netvault/installer/Install-NocVault-Suite.ps1` applies all five files explicitly.
 
 ⛔ **WINDOWS STAYS ON POWERSHELL AND THAT IS NOT AN OVERSIGHT.** Windows DNS speaks AXFR, so
 routing it through the new path would look like a tidy unification. It would also silently
@@ -652,7 +683,7 @@ Progress is written to DB every 50 IPs — frontend polls `/api/ipam/scan-status
 - Always stop DDIVault-App before `npm run build` — running service locks `.next` files
 
 ### Database
-- Schema must run in order: `schema.sql` → `schema-ipam.sql` → `schema-server-auth.sql` → `schema-sites.sql`
+- Schema must run in order: `schema.sql` → `schema-ipam.sql` → `schema-server-auth.sql` → `schema-sites.sql` → `schema-dns-platform.sql`
 - All schema files use `IF NOT EXISTS` — safe to re-run
 - `uuid-ossp` extension requires superuser to install
 
@@ -840,7 +871,7 @@ $env:PGPASSWORD = "<postgres-password>"
 
 ```bash
 # In Claude Code — check what's in schema files
-grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-server-auth.sql scripts/schema-sites.sql
+grep -n "column_name" scripts/schema*.sql
 ```
 
 ### Current schema file responsibilities
@@ -850,6 +881,7 @@ grep -n "column_name" scripts/schema.sql scripts/schema-ipam.sql scripts/schema-
 | `scripts/schema-ipam.sql` | IPAM Phase A+B tables + columns added to existing tables |
 | `scripts/schema-server-auth.sql` | Per-server auth columns on `ddi_servers` |
 | `scripts/schema-sites.sql` | `site_id` columns on `ddi_servers`, `ipam_supernets`, `ipam_subnets` |
+| `scripts/schema-dns-platform.sql` | DNS-platform columns on `ddi_servers` (1.37.0+). **Applied LAST** — it carries the `ddi_servers` column-level GRANT, which must be the final statement touching those privileges |
 
 ## Adding New API Routes
 

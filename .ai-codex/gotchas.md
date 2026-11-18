@@ -949,3 +949,38 @@ authoritatively for, which is what the rest of the app means by Primary — but 
 every name first and aborts the whole command when one container does not exist, and the
 `|| true` turned that into apparent success. Fixed with `--ignore`. General shape: a
 cleanup that swallows its own failure will eventually report success over a mess.
+
+## ⛔ Upgrading a server from ≤1.36.0 needs TWO updater runs, and the FIRST one reports success
+
+Three separate mechanisms line up to hide this, which is why it needs writing down.
+
+1. `scripts/schema-dns-platform.sql` is the 5th schema file, new in 1.37.0. The list that
+   applies it (`$schemas`) lives in `installer/Update-DDIVault.ps1`. **PowerShell parses the
+   whole script before executing line 1**, so the list in force is the one from the copy on
+   disk at launch — the OLD release's. `git reset --hard origin/main` (line ~783) only lands
+   the new list for next time. The updater does not re-exec itself. This is the general
+   "an installer change takes effect one release later" rule, with teeth.
+2. `getActiveServers()` in `collector/collector.js` selects `dns_platform` AND
+   `dns_zone_list` in the **single** query that feeds every poll. So the missing column does
+   not degrade DNS — it stops DHCP, DNS and IPAM collection together.
+3. The updater's mandatory final gate is `/api/health`, which runs `SELECT NOW()` and never
+   touches `ddi_servers`. It passes, prints `API health check passed - DB connected -
+   version <new> confirmed`, and the collector crash-loops behind a green deploy. Compare
+   the "prod deploy health-probe trap": a probe that does not touch the thing you changed
+   is not evidence about the thing you changed.
+
+**Before upgrading a server at 1.36.0 or earlier, apply the file by hand first:**
+
+```
+psql -U ddivault_user -d ddivault -f scripts/schema-dns-platform.sql
+```
+
+It is `ADD COLUMN IF NOT EXISTS` plus a GRANT — idempotent, safe to re-run, safe on a
+server that already has it. Then run the updater as usual. Fresh installs are unaffected:
+`../netvault/installer/Install-NocVault-Suite.ps1` applies all five files explicitly, and
+`Test-NocVault-Suite.ps1` now asserts `ddivault_user` can read both columns so a
+provisioning path that skips the file fails loudly instead of at the first poll.
+
+**The general rule:** any NEW schema file — not a new column in an existing file — carries
+this hazard, because only a new *file* requires the updater's own list to change. Adding a
+column to a file already in the list is safe on the first run.
