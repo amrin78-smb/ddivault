@@ -186,10 +186,29 @@ function readName(buf, off) {
  * envelope chains over the request MAC (so a replayed capture does not verify);
  * later envelopes chain over the previous MAC with timers-only variables.
  */
+/**
+ * RFC 8945 TSIG error codes in words.
+ *
+ * ⛔ THE RAW NUMBER IS USELESS TO THE PERSON WHO HITS IT. "TSIG error 17" is
+ * what a server returns when the key NAME does not match, and "16" when the
+ * SECRET does not — two different one-line fixes. Reporting the integer sends
+ * someone to a search engine at exactly the moment the readiness check exists
+ * to help them.
+ */
+function tsigErrorText(code) {
+  const map = {
+    16: 'BADSIG — the server rejected our signature; the TSIG secret does not match',
+    17: 'BADKEY — the server does not know a key by that name',
+    18: 'BADTIME — the clocks differ by more than the fudge; check time sync on both hosts',
+    22: 'BADTRUNC — the server rejected the MAC length',
+  };
+  return map[code] || `server TSIG error ${code}`;
+}
+
 function verifyEnvelope(msg, tsigKey, priorMac, isFirst) {
   const { body, tsig } = splitTsig(msg);
   if (!tsig) return { ok: true, signed: false, body, mac: priorMac };
-  if (tsig.error !== 0) return { ok: false, reason: `server TSIG error ${tsig.error}`, body };
+  if (tsig.error !== 0) return { ok: false, reason: tsigErrorText(tsig.error), body };
 
   const algo = normaliseAlgo(tsig.algorithm);
   const secret = Buffer.from(String(tsigKey.secret || ''), 'base64');
@@ -210,6 +229,7 @@ function verifyEnvelope(msg, tsigKey, priorMac, isFirst) {
 }
 
 module.exports = {
+  tsigErrorText,
   nameToWire, signMessage, splitTsig, verifyEnvelope, normaliseAlgo, hmacAlgoFor,
   MAX_MESSAGE_BYTES, MAX_ZONE_BYTES, DEFAULT_TIMEOUT_MS, u16,
 };

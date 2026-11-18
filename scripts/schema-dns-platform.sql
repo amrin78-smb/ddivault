@@ -51,6 +51,21 @@ COMMENT ON COLUMN ddi_servers.tsig_secret IS
 COMMENT ON COLUMN ddi_servers.dns_api_key IS
   'AES-256-GCM encrypted vendor API key (PowerDNS X-API-Key). Key = NEXTAUTH_SECRET.';
 
+-- dns_query_stats: keep the RAW cumulative reading beside each interval row.
+--
+-- ⛔ BIND AND POWERDNS REPORT TOTALS SINCE BOOT, NOT RATES. The existing columns
+-- (total_queries, queries_per_sec, ...) describe an INTERVAL, so each sample has
+-- to be a delta against the previous one — which means the previous raw reading
+-- has to be stored somewhere. Keeping it on the row is simpler than a separate
+-- state table and makes a counter reset visible in the data: a cumulative_total
+-- LOWER than the row before it is a server restart, and that row's interval
+-- columns are NULL because the interval genuinely cannot be computed across it.
+ALTER TABLE dns_query_stats
+  ADD COLUMN IF NOT EXISTS cumulative_total     BIGINT,
+  ADD COLUMN IF NOT EXISTS cumulative_success   BIGINT,
+  ADD COLUMN IF NOT EXISTS cumulative_nxdomain  BIGINT,
+  ADD COLUMN IF NOT EXISTS cumulative_failed    BIGINT;
+
 -- ── ddi_servers readonly column grant — RELOCATED HERE from schema-sites.sql ──
 --
 -- ⛔ THIS MUST BE THE LAST STATEMENT TOUCHING THESE ROLES' PRIVILEGES ON

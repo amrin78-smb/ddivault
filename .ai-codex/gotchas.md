@@ -829,3 +829,83 @@ seed row with the priority in both (`'10 20 5060 target'` + `prio=10`) makes pdn
 `trailing data was not parsed` and **500 the whole zone endpoint** — the zone list still
 works, so it looks like a provider bug rather than bad fixture data. Content carries
 `weight port target` for SRV and just the exchange for MX.
+
+## ⛔ A Linux DNS server was scored by whether it answers WinRM (fixed 1.38.0)
+
+`haMonitor.pollHealth()` starts every server at 100 and subtracts 50 when
+`testWinRM` fails. A BIND or PowerDNS host has no WinRM and never will, so a server
+whose zones and records we were **successfully transferring** scored 50 and rendered
+DEGRADED — and OFFLINE outright once anyone pressed Test Connection, because that
+writes `winrm_test_ok=false` and `dnsServerStatus()` treats that as decisive
+(`if (winrmOk === false) return 'offline'`).
+
+Three products, three weeks, the same mistake: judging a thing by a measurement that
+does not apply to it (MAC vendors, AP "offline vs gone", and now this). **The fix is
+never to soften the threshold — it is to measure what health means for THIS thing.**
+`collector/dns/health.js` scores on the DNS protocol: does it answer a SOA for a zone
+we know it serves, how fast, is the management channel still up, did the last
+collection error, are its zones replication-lagged.
+
+⛔ **`winrm_ok` IS WRITTEN AS NULL FOR THESE SERVERS, NOT false.** NULL is "we never
+asked"; false is a fault report about a question that does not apply — and the UI
+treats false as decisive. Same rule in the Test Connection route: it does not touch
+`winrm_test_ok` for a protocol platform.
+
+⛔ **PROBE A ZONE WE KNOW THE SERVER SERVES, NOT ITS OWN HOSTNAME.** A BIND server
+authoritative for `example.com` has no reason to resolve its own A record and usually
+has recursion off, so a generic lookup reports a perfectly healthy server as dead.
+And a server with NO zones yet is not penalised — that means "not collected yet", not
+"sick", and scoring it down would make every newly added server look unhealthy on its
+first cycle.
+
+⛔ **THE POWERSHELL DNS PASSES MUST BE FILTERED, NOT JUST THE SYNC.** 1.37.0 routed
+`syncDns` by platform and stopped there. `dnsMonitor.runDnsMonitor`,
+`detectStaleRecords` and `haMonitor.pollDnsSoa` had **zero** platform awareness and
+kept driving `Get-DnsServer*` at Linux hosts — roughly eight WinRM calls per server
+per 20-minute cycle, each waiting out `PS_TIMEOUT_MS`, every one guaranteed to fail.
+Fixing one caller is not fixing the class; grep for every pass that iterates
+`getActiveServers()`.
+
+## ⛔ "Test Connection" was a WinRM test for every platform (fixed 1.38.0)
+
+It is the first button anyone presses after adding a server, and on a Linux DNS server
+it failed AND wrote `winrm_test_ok=false` — one click from a correctly configured BIND
+server looking broken.
+
+⛔ **A BOOLEAN IS NOT A USEFUL ANSWER FOR THESE.** Windows has one thing to check.
+BIND needs three configured by hand in `named.conf`: the service reachable, a
+statistics-channel we may query, and `allow-transfer` keyed to a TSIG secret matching
+ours. Any one missing has a different fix, so `collector/dns/readiness.js` returns a
+per-check breakdown where each failure carries **the literal configuration that fixes
+it**. The aim is that the person adding the server can finish without reading our docs.
+
+⛔ **THE SUMMARY REPORTS THE FIRST FAILURE, NOT A COUNT.** The checks are
+dependency-ordered — the statistics channel cannot be reached if the host is
+unreachable — so "3 checks failed" is one problem reported three times.
+
+⛔ **TSIG ERROR CODES ARE TRANSLATED.** "TSIG error 16" sends the operator to a search
+engine at exactly the moment this check exists to help them. 16 is a wrong *secret*,
+17 is a wrong key *name* — two different one-line fixes.
+
+## ⛔ dns_query_stats was READ by two places and WRITTEN by nothing (1.38.0)
+
+`GET /api/dns/query-stats` and the DNS report both select from it; production held
+**zero rows**. The panel has always been empty — for Windows too. `collector/dns/stats.js`
+now populates it for the protocol platforms.
+
+⛔ **BIND AND POWERDNS REPORT TOTALS SINCE BOOT, NOT RATES**, while the table's columns
+describe an interval. Stored raw, a server up for a year reads as impossibly busy and
+the number only ever climbs. Each sample is a delta against the previous raw reading,
+which is why `cumulative_*` columns sit beside the interval ones.
+
+⛔ **A COUNTER THAT WENT DOWN IS A RESTART, NOT NEGATIVE TRAFFIC.** `12 - 1500` is
+`-1488`; clamping it to 0 claims no traffic, and taking 12 as the interval is a
+different lie. That row's interval columns are NULL — the interval across a restart
+genuinely cannot be computed — and the new baseline is stored so the next sample
+recovers normally.
+
+⛔ **WINDOWS STILL HAS NO QUERY STATS, DELIBERATELY.** `powershellRunner.getDnsQueryStats()`
+exists and nothing calls it. Wiring it means writing untested code into the
+production-critical Windows path, and there is no Windows DNS server available to test
+against (staging is Windows 11 **Home**, which cannot run the DNS Server role). Left as
+a known gap rather than shipped unverified.

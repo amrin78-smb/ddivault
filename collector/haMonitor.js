@@ -1,5 +1,7 @@
 'use strict';
 
+const dnsProviders = require('./dns');
+
 /**
  * haMonitor.js — HA & infrastructure health collection for DDIVault
  *
@@ -164,6 +166,10 @@ async function pollFailover(db, ps, server, auth) {
 
 // ── DNS SOA / replication lag ─────────────────────────────────
 async function pollDnsSoa(db, ps, server, auth) {
+  // ⛔ PowerShell cannot read a BIND server's SOA. collector/dns/sync.js
+  // already records the serial for these from the protocol path, so running
+  // this pass against them would only produce WinRM failures for data we have.
+  if (dnsProviders.isProtocolPlatform(server.dns_platform)) return;
   if (server.role === 'dhcp') return;
   const ip = cleanIp(server.ip_address);
   const zones = await db.query(
@@ -221,7 +227,52 @@ async function pollDnsSoa(db, ps, server, auth) {
 }
 
 // ── Per-server health score ───────────────────────────────────
+/**
+ * Health for a protocol-collected DNS server (bind/powerdns).
+ *
+ * ⛔ `winrm_ok` IS WRITTEN AS NULL, NOT FALSE. The history table and the DNS
+ * tab both read it, and the tab treats `false` as decisively offline. False
+ * would be a measurement we never made; NULL is the honest "not applicable to
+ * this server", and it is also what keeps the existing UI check correct.
+ */
+async function pollProtocolDnsHealth(db, server) {
+  const { probeProtocolHealth } = require('./dns/health');
+  let r;
+  try {
+    r = await probeProtocolHealth(db, server);
+  } catch (e) {
+    r = { score: 0, query_ms: null, reachable: false, detail: `health probe failed: ${e.message}`, factors: [] };
+  }
+
+  await db.query(
+    'UPDATE ddi_servers SET health_score=$2, health_checked_at=NOW(), query_ms=$3 WHERE id=$1',
+    [server.id, r.score, r.query_ms]).catch(() => {});
+
+  const counts = await db.query(
+    `SELECT (SELECT COUNT(*) FROM dns_zones WHERE server_id=$1) AS zones,
+            (SELECT COALESCE(SUM(record_count),0) FROM dns_zones WHERE server_id=$1) AS records`,
+    [server.id]).catch(() => ({ rows: [{}] }));
+  const c = counts.rows[0] || {};
+
+  await db.query(
+    `INSERT INTO server_health_history
+       (server_id, health_score, winrm_ok, scope_count, lease_count, zone_count, record_count, query_ms, soa_in_sync)
+     VALUES ($1,$2,NULL,0,0,$3,$4,$5,NULL)`,
+    [server.id, r.score, c.zones || 0, c.records || 0, r.query_ms]).catch(() => {});
+
+  return { score: r.score, query_ms: r.query_ms, detail: r.detail };
+}
+
 async function pollHealth(db, ps, server, auth) {
+  // ⛔ A SERVER WE DO NOT REACH OVER WinRM MUST NOT BE SCORED BY WinRM.
+  // Everything below starts at 100 and subtracts 50 when `testWinRM` fails. A
+  // BIND or PowerDNS host has no WinRM and never will, so a server whose zones
+  // we are successfully transferring scored 50 and rendered DEGRADED. Health
+  // for those is measured by what health actually means for them -- see
+  // collector/dns/health.js.
+  if (dnsProviders.isProtocolPlatform(server.dns_platform)) {
+    return pollProtocolDnsHealth(db, server);
+  }
   const ip = cleanIp(server.ip_address);
   let score = 100;
   const isDns = server.role !== 'dhcp';

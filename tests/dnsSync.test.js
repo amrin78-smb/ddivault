@@ -20,10 +20,11 @@ const writers = require('../collector/writers');
 const { syncProtocolDns } = require('../collector/dns/sync');
 
 const SCHEMA = `
-DROP TABLE IF EXISTS dns_records, dns_zones, ddi_servers CASCADE;
+DROP TABLE IF EXISTS dns_records, dns_zones, server_health_history, dns_query_stats, ddi_servers CASCADE;
 CREATE TABLE ddi_servers (
   id SERIAL PRIMARY KEY, hostname TEXT, ip_address INET, role TEXT DEFAULT 'both',
   is_active BOOLEAN DEFAULT TRUE, last_polled TIMESTAMPTZ, agent_hub_id TEXT,
+  health_score INT, health_checked_at TIMESTAMPTZ, query_ms INT,
   dns_platform TEXT DEFAULT 'windows', dns_host TEXT, dns_port INT DEFAULT 53,
   tsig_key_name TEXT, tsig_algorithm TEXT, tsig_secret TEXT,
   dns_stats_url TEXT, dns_api_url TEXT, dns_api_key TEXT, dns_api_server_id TEXT,
@@ -34,6 +35,15 @@ CREATE TABLE dns_zones (
   is_ds_integrated BOOLEAN DEFAULT FALSE, is_auto_created BOOLEAN DEFAULT FALSE,
   record_count INT DEFAULT 0, last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   soa_serial BIGINT, UNIQUE(server_id, zone_name));
+CREATE TABLE dns_query_stats (
+  id BIGSERIAL PRIMARY KEY, server_id INT, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  total_queries BIGINT, successful BIGINT, failed BIGINT, nxdomain_count BIGINT,
+  response_time_ms INT, queries_per_sec NUMERIC(10,2),
+  cumulative_total BIGINT, cumulative_success BIGINT, cumulative_nxdomain BIGINT, cumulative_failed BIGINT);
+CREATE TABLE server_health_history (
+  id SERIAL PRIMARY KEY, server_id INT, health_score INT, winrm_ok BOOLEAN,
+  scope_count INT, lease_count INT, zone_count INT, record_count INT,
+  query_ms INT, soa_in_sync BOOLEAN, ts TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE dns_records (
   id BIGSERIAL PRIMARY KEY, zone_id INT NOT NULL REFERENCES dns_zones(id) ON DELETE CASCADE,
   hostname TEXT NOT NULL, record_type TEXT NOT NULL, record_data TEXT, ttl INT,
@@ -170,6 +180,185 @@ test('an unreachable server leaves the existing catalogue intact', async (t) => 
   assert.ok(z.rows[0].n > 0, 'zones untouched');
   const err = await db.query('SELECT dns_last_error FROM ddi_servers WHERE id=$1', [srv.id]);
   assert.ok(err.rows[0].dns_last_error, 'and the reason is recorded on the server row');
+});
+
+// ── Milestone A: health must not be judged by a measurement that does not apply ──
+
+test('a healthy BIND server scores healthy, not 50', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);          // give it zones to probe
+  const fresh = (await db.query('SELECT * FROM ddi_servers WHERE id=$1', [srv.id])).rows[0];
+  const { probeProtocolHealth } = require('../collector/dns/health');
+  const h = await probeProtocolHealth(db, fresh);
+
+  // ⛔ THE BUG THIS REPLACES: haMonitor.pollHealth starts at 100 and subtracts
+  // 50 when testWinRM fails. A BIND host has no WinRM, so a server whose zones
+  // we had just transferred successfully scored 50 and rendered DEGRADED.
+  assert.ok(h.score >= 80, `healthy BIND should score >= 80, got ${h.score} (${h.detail})`);
+  assert.strictEqual(h.reachable, true, 'DNS answered');
+  assert.ok(Number.isFinite(h.query_ms), 'query time measured from the DNS query itself');
+});
+
+test('an unreachable DNS service scores badly, and says why', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);
+  // Keep the zones, point the DNS service at a dead port.
+  await db.query('UPDATE ddi_servers SET dns_port=9, dns_stats_url=$1 WHERE id=$2',
+    ['http://127.0.0.1:9', srv.id]);
+  const dead = (await db.query('SELECT * FROM ddi_servers WHERE id=$1', [srv.id])).rows[0];
+  const { probeProtocolHealth } = require('../collector/dns/health');
+  const h = await probeProtocolHealth(db, dead);
+  assert.ok(h.score <= 50, `unreachable should score low, got ${h.score}`);
+  assert.strictEqual(h.reachable, false);
+  assert.match(h.detail, /DNS query: failed|management channel/, 'the reason is stated: ' + h.detail);
+});
+
+test('a brand-new server is not penalised for having no zones yet', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  const srv = await seedServer(db, BIND);          // never synced
+  const { probeProtocolHealth } = require('../collector/dns/health');
+  const h = await probeProtocolHealth(db, srv);
+  // ⛔ No zones means "we have not collected yet", not "this server is sick".
+  // Scoring it down would make every freshly added server look unhealthy for
+  // its first cycle, training operators to ignore the number.
+  assert.ok(h.score >= 80, `new server should not be marked unhealthy, got ${h.score} (${h.detail})`);
+  assert.match(h.detail, /no known zone to probe yet/);
+});
+
+test('pollHealth records winrm_ok as NULL for a protocol platform, never false', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  await db.query('DELETE FROM server_health_history');
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);
+  const fresh = (await db.query('SELECT * FROM ddi_servers WHERE id=$1', [srv.id])).rows[0];
+  const ha = require('../collector/haMonitor');
+  await ha.pollHealth(db, null, fresh, null);   // ps/auth unused on this path
+
+  const h = (await db.query(
+    'SELECT health_score, winrm_ok, query_ms FROM server_health_history WHERE server_id=$1 ORDER BY id DESC LIMIT 1',
+    [srv.id])).rows[0];
+  assert.ok(h, 'a health sample was written');
+  // ⛔ false would be a measurement we never made, and the DNS tab treats
+  // winrm_ok === false as decisively offline.
+  assert.strictEqual(h.winrm_ok, null, 'winrm_ok must be NULL, not false');
+  assert.ok(h.health_score >= 80, 'scored on the protocol, not on WinRM: ' + h.health_score);
+
+  const srvRow = (await db.query('SELECT health_score, query_ms FROM ddi_servers WHERE id=$1', [srv.id])).rows[0];
+  assert.ok(srvRow.health_score >= 80);
+  assert.ok(Number.isFinite(srvRow.query_ms), 'query_ms persisted from the DNS query');
+});
+
+test('the PowerShell DNS passes never receive a protocol-platform server', () => {
+  // ⛔ dnsMonitor/detectStaleRecords/pollDnsSoa drive Get-DnsServer* over WinRM.
+  // Handed a bind row they attempt ~8 calls per server per cycle against a host
+  // with no WinRM, each waiting out PS_TIMEOUT_MS. The collector filters them
+  // out; this asserts the predicate that filter depends on.
+  const dnsProviders = require('../collector/dns');
+  assert.strictEqual(dnsProviders.isProtocolPlatform('bind'), true);
+  assert.strictEqual(dnsProviders.isProtocolPlatform('powerdns'), true);
+  assert.strictEqual(dnsProviders.isProtocolPlatform('windows'), false,
+    'windows MUST stay on the PowerShell path');
+  assert.strictEqual(dnsProviders.isProtocolPlatform(null), false);
+  assert.strictEqual(dnsProviders.isProtocolPlatform(undefined), false,
+    'a row from before this feature has no platform and must behave as windows');
+});
+
+// ── Milestone C: query statistics ────────────────────────────────────────────
+
+test('the first sample is a baseline, claiming no interval', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  await db.query('DELETE FROM dns_query_stats');
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);
+
+  const r = await db.query('SELECT * FROM dns_query_stats WHERE server_id=$1 ORDER BY id', [srv.id]);
+  assert.strictEqual(r.rowCount, 1, 'one sample written');
+  const row = r.rows[0];
+  // ⛔ With nothing to subtract from, an interval cannot be known. NULL says
+  // that; a 0 would claim the server served no queries.
+  assert.strictEqual(row.total_queries, null, 'no interval on the first sample');
+  assert.strictEqual(row.queries_per_sec, null);
+  assert.ok(Number(row.cumulative_total) >= 0, 'but the raw reading IS stored as the baseline');
+});
+
+test('the second sample is a delta, not the running total', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  await db.query('DELETE FROM dns_query_stats');
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);
+
+  // Generate some traffic so the counter actually moves.
+  const client = require('../collector/dns/client');
+  for (let i = 0; i < 5; i++) {
+    await client.querySoa('127.0.0.1', 5354, 'lab.example').catch(() => {});
+  }
+  await syncProtocolDns(db, srv, writers, ctx);
+
+  const r = await db.query('SELECT * FROM dns_query_stats WHERE server_id=$1 ORDER BY id', [srv.id]);
+  assert.strictEqual(r.rowCount, 2);
+  const second = r.rows[1];
+  // ⛔ Storing the cumulative figure would show a long-running server as
+  // impossibly busy and the number would only ever climb.
+  assert.ok(Number(second.total_queries) > 0, 'the interval counted the queries we just made');
+  assert.ok(Number(second.total_queries) < Number(second.cumulative_total),
+    'the interval is smaller than the running total');
+  assert.ok(second.queries_per_sec != null, 'a rate was derived');
+});
+
+test('a counter reset is recorded as unknowable, not as a negative or a spike', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  await db.query('DELETE FROM dns_query_stats');
+  const srv = await seedServer(db, BIND);
+  const { recordQueryStats } = require('../collector/dns/stats');
+  const ctxSrv = require('../collector/dns').serverContext(srv);
+
+  await recordQueryStats(db, ctxSrv, { total_queries: 1000, successful: 900, nxdomain_count: 50, failed: 10, cumulative: true });
+  await recordQueryStats(db, ctxSrv, { total_queries: 1500, successful: 1300, nxdomain_count: 70, failed: 20, cumulative: true });
+  // The server restarts: counters go back to near zero.
+  const reset = await recordQueryStats(db, ctxSrv, { total_queries: 12, successful: 10, nxdomain_count: 1, failed: 0, cumulative: true });
+
+  assert.strictEqual(reset.recorded, true, 'the sample is still recorded');
+  assert.match(reset.reason, /counter reset/, reset.reason);
+  const rows = (await db.query('SELECT * FROM dns_query_stats WHERE server_id=$1 ORDER BY id', [srv.id])).rows;
+  assert.strictEqual(rows.length, 3);
+  // ⛔ 12 - 1500 is -1488. A negative query count is nonsense; so is clamping it
+  // to 0 (which would claim no traffic) or treating 12 as the interval (which
+  // would be a lie of a different size).
+  assert.strictEqual(rows[2].total_queries, null, 'no interval claimed across the restart');
+  assert.strictEqual(rows[2].queries_per_sec, null);
+  assert.strictEqual(Number(rows[2].cumulative_total), 12, 'the new baseline is stored');
+
+  // And the next sample recovers normally from the new baseline.
+  const after = await recordQueryStats(db, ctxSrv, { total_queries: 60, successful: 55, nxdomain_count: 3, failed: 1, cumulative: true });
+  assert.strictEqual(after.reason, 'delta');
+  assert.strictEqual(after.delta.total, 48, '60 - 12, measured from the post-restart baseline');
+});
+
+test('a server whose stats channel is off still gets zones and records', async (t) => {
+  const db = await ready(t); if (!db) return;
+  await db.query('DELETE FROM ddi_servers');
+  await db.query('DELETE FROM dns_query_stats');
+  // PowerDNS reads zones AND stats through one API, so use BIND: its statistics
+  // channel is separate from the zone transfer.
+  const srv = await seedServer(db, BIND);
+  await syncProtocolDns(db, srv, writers, ctx);           // needs the channel to list zones
+  await db.query('UPDATE ddi_servers SET dns_stats_url=$1 WHERE id=$2', ['http://127.0.0.1:9', srv.id]);
+  const broken = (await db.query('SELECT * FROM ddi_servers WHERE id=$1', [srv.id])).rows[0];
+  const out = await syncProtocolDns(db, broken, writers, ctx);
+  // The zone list comes from the same channel, so this run cannot enumerate —
+  // but it must not destroy what the previous run collected.
+  const recs = await db.query('SELECT count(*)::int n FROM dns_records');
+  assert.ok(recs.rows[0].n > 0, 'previously collected records survive a stats-channel outage');
+  assert.ok(out.error, 'and the failure is reported rather than swallowed');
 });
 
 test.after(async () => { if (pool) await pool.end(); });

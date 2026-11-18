@@ -20,6 +20,9 @@ interface DnsServer {
   last_polled: string;
   health_score?: number | null;
   winrm_test_ok?: boolean | null;
+  // Needed so dnsServerStatus() can tell whether winrm_test_ok is even a
+  // meaningful question for this server. Served by GET /api/dns/servers.
+  dns_platform?: string | null;
 }
 
 interface DnsZone {
@@ -199,8 +202,19 @@ function shortTime(iso?: string | null): string {
 // failed. Deliberately independent of poll_status (whether the DNS monitor has
 // successfully polled yet) — a healthy, reachable server must not read OFFLINE.
 type DnsServerStatus = 'online' | 'degraded' | 'offline';
-function dnsServerStatus(healthScore?: number | null, winrmOk?: boolean | null): DnsServerStatus {
-  if (winrmOk === false) return 'offline';
+function dnsServerStatus(
+  healthScore?: number | null,
+  winrmOk?: boolean | null,
+  platform?: string | null,
+): DnsServerStatus {
+  // ⛔ A WinRM RESULT SAYS NOTHING ABOUT A BIND OR POWERDNS SERVER. Those
+  // hosts have no WinRM and never will, so `winrm_test_ok === false` there is
+  // not a fault report -- it is the record of a question that does not apply.
+  // Letting it decide made a server whose zones we were successfully
+  // transferring render OFFLINE. Their health comes from the DNS protocol
+  // itself (collector/dns/health.js).
+  const isWindows = !platform || platform.toLowerCase() === 'windows';
+  if (isWindows && winrmOk === false) return 'offline';
   const h = healthScore ?? 0;
   if (h < 50) return 'offline';
   if (h < 70) return 'degraded';
@@ -483,7 +497,7 @@ function AddZoneModal({ servers, onClose, onDone }: {
 function ServerPill({ server, active, onClick }: {
   server: DnsServer; active: boolean; onClick: () => void;
 }) {
-  const status = dnsServerStatus(server.health_score, server.winrm_test_ok);
+  const status = dnsServerStatus(server.health_score, server.winrm_test_ok, server.dns_platform);
   return (
     <button onClick={onClick} style={{
       padding: '7px 14px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontSize: 'var(--text-sm)',
@@ -735,7 +749,7 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
               {srv.is_dns_primary ? 'PRIMARY' : 'SECONDARY'}
             </span>
             {(() => {
-              const st = dnsServerStatus(srv.health_score, srv.winrm_test_ok);
+              const st = dnsServerStatus(srv.health_score, srv.winrm_test_ok, srv.dns_platform);
               if (st === 'online') return null;
               return <span className="badge badge-gray" style={{ fontSize: 'var(--text-xs)', color: dnsStatusColor(st) }}>{st === 'degraded' ? 'DEGRADED' : 'OFFLINE'}</span>;
             })()}

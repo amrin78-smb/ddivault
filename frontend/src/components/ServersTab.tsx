@@ -67,7 +67,13 @@ const DNS_PLATFORM_INFO: Record<string, { label: string; color: string; desc: st
 
 interface Site { id: number; name: string; code: string; city: string }
 
-interface TestResult { ok: boolean; latency_ms: number | null; error: string | null; auth_mode?: string }
+interface ReadinessCheck { name: string; ok: boolean; detail: string | null; fix: string | null }
+interface TestResult {
+  ok: boolean; latency_ms: number | null; error: string | null; auth_mode?: string;
+  // Present only for bind/powerdns: a per-check breakdown with the literal
+  // configuration that would fix each failure.
+  platform?: string; checks?: ReadinessCheck[];
+}
 
 // ════════════════════════════════════════════════════════════
 // API helper
@@ -589,7 +595,33 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
           color: testResult.ok ? 'var(--green)' : 'var(--red)',
           fontWeight: 600,
         }}>
-          {testResult.ok
+          {/* ⛔ A Linux DNS server needs three separate things configured by
+              hand, and "Connection failed" sends the operator to check all
+              three. When the server reports per-check results, show them — and
+              the exact configuration that fixes each failure. */}
+          {testResult.checks && testResult.checks.length ? (
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                {testResult.ok
+                  ? `✓ ${testResult.platform || 'DNS'} server ready`
+                  : `✗ ${testResult.error}`}
+              </div>
+              {testResult.checks.map((c, i) => (
+                <div key={i} style={{ marginBottom: c.fix ? 6 : 2 }}>
+                  <div style={{ color: c.ok ? 'var(--green)' : 'var(--red)' }}>
+                    {c.ok ? '✓' : '✗'} {c.name}{c.detail ? `: ${c.detail}` : ''}
+                  </div>
+                  {c.fix && (
+                    <pre style={{
+                      margin: '4px 0 0 16px', padding: 8, borderRadius: 'var(--radius-sm)',
+                      background: 'var(--navy)', color: '#e2e8f0', fontSize: 'var(--text-xs)',
+                      whiteSpace: 'pre-wrap', overflow: 'auto', lineHeight: 1.5,
+                    }}>{c.fix}</pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : testResult.ok
             ? `✓ WinRM connected successfully${testResult.latency_ms != null ? ` (${testResult.latency_ms}ms)` : ''}`
             : `✗ Connection failed: ${testResult.error}`}
         </div>

@@ -316,3 +316,14 @@ silently cached if they did need it — confirms the omission is correct, not an
   the whole form with blank secret fields, so the other reading would wipe credentials during an unrelated edit.
 - `GET /api/dns/topology` — now also returns `dns_platform`, `dns_capabilities`, `dns_last_error` so the DNS tab
   can render "not applicable" / "not readable" instead of implying a value.
+
+### 1.38.0
+- `POST /api/servers/:id/test-connection` — platform-aware. For `bind`/`powerdns` it runs
+  the readiness check and returns `{ok, platform, checks:[{name, ok, detail, fix}]}`.
+  ⛔ It does NOT write `winrm_test_ok` for those platforms: that would record the answer
+  to a question never asked, and the DNS tab treats `false` as decisively offline.
+- `GET /api/dns/servers` — now also returns `dns_platform`, so `dnsServerStatus()` can tell
+  whether a WinRM result is even meaningful for the row.
+- `GET /api/dns/query-stats` — unchanged, but `dns_query_stats` is now actually POPULATED
+  for protocol platforms. It was read here and in `api/reports.js` and written by nothing;
+  production held zero rows.

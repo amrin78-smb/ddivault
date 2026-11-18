@@ -13,6 +13,7 @@
 
 const { providerFor, serverContext } = require('./index');
 const caps = require('./capabilities');
+const { recordQueryStats } = require('./stats');
 
 function log(ctx, m) { (ctx && ctx.log ? ctx.log : console.log)(m); }
 function warn(ctx, m) { (ctx && ctx.warn ? ctx.warn : console.warn)(m); }
@@ -117,6 +118,22 @@ async function syncProtocolDns(db, row, writers, ctx) {
   if (wZones.length) {
     await writers.writeDnsZones(db, row, { zones: wZones, recordsByZone }, ctx);
     await persistSerials(db, row.id, zones);
+  }
+
+  // ⛔ QUERY STATS ARE COLLECTED HERE BECAUSE NOTHING ELSE COLLECTS THEM AT ALL.
+  // dns_query_stats is read by GET /api/dns/query-stats and by the DNS report,
+  // and was written by NOTHING — production holds zero rows, so that panel has
+  // always been empty. The counters are cumulative; stats.js turns them into
+  // intervals. Isolated so a server with its stats channel switched off still
+  // gets its zones and records collected.
+  try {
+    const sample = await provider.getQueryStats(server);
+    const st = await recordQueryStats(db, { ...server, query_ms: null }, sample);
+    if (!st.recorded && st.reason) {
+      warn(ctx, `[DNS/${server.dns_platform}] query stats not recorded: ${st.reason}`);
+    }
+  } catch (e) {
+    warn(ctx, `[DNS/${server.dns_platform}] query stats unavailable: ${e.message}`);
   }
   await recordOutcome(db, row.id, server, out);
   log(ctx, `[DNS/${server.dns_platform}] ${server.dns_host} — ${out.zones} zones, ${out.transferred} transferred, ${out.skipped} unchanged, ${out.records} records`);

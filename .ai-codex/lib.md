@@ -198,3 +198,18 @@ express. No SSH, no agent and no config parsing on the customer's DNS server.
 `normaliseDnsPlatform()` (unknown -> null -> HTTP 400, never defaulted) and `shouldReplaceSecret()`
 (empty/mask -> false). Extracted from server.js purely so both can be unit-tested: each fails silently and
 destructively.
+
+### collector/dns/ additions (1.38.0)
+- `health.js` — `probeProtocolHealth(db, server)`. ⛔ Exists because scoring every server
+  by `testWinRM` is a category error: a BIND host has no WinRM, so a server we were
+  successfully collecting scored 50 and rendered DEGRADED. Scores on the DNS protocol
+  instead. A server with no zones yet is NOT penalised.
+- `readiness.js` — `testProtocolServer(server)`. The platform-aware "Test Connection".
+  Returns a per-check breakdown; every failure carries the literal `named.conf`/`pdns.conf`
+  that fixes it. ⛔ The summary names the FIRST failure — the checks are
+  dependency-ordered, so a count reports one problem several times.
+- `stats.js` — `recordQueryStats(db, server, sample)`. Turns cumulative counters into the
+  interval rows `dns_query_stats` expects. ⛔ A counter that went DOWN is a restart: the
+  interval is recorded as NULL (unknowable), never negative, 0, or the raw new value.
+- `wire.js` — gained `tsigErrorText()`: "TSIG error 16" is a wrong secret and 17 a wrong
+  key name, two different one-line fixes.

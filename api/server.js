@@ -1,5 +1,6 @@
 'use strict';
 const { normaliseDnsPlatform, shouldReplaceSecret } = require('./serverFields');
+const dnsProviders = require('../collector/dns');
 
 /**
  * server.js — DDIVault REST API
@@ -31,6 +32,12 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.38.0': [
+    "Fixed: a BIND or PowerDNS server was shown as degraded, and as offline once its connection was tested, even while DDIVault was reading its zones and records perfectly well. Its health was being judged by whether it answered Windows remote management, which a Linux server never will. Health for those servers is now measured by the DNS service itself - whether it answers, how quickly, and whether we can still read its zone list.",
+    "Fixed: the routine Windows DNS checks were also being run against Linux servers every twenty minutes - around eight remote-management attempts per server, each waiting for a timeout, none of which could ever succeed. They are now only run against Windows servers.",
+    "Test Connection now works for a Linux DNS server, and reports each check separately - the DNS service, the statistics channel or API, and the zone transfer. Anything that fails comes with the exact named.conf or pdns.conf lines that fix it, so the server can be finished without looking anything up.",
+    "New: DNS query statistics are now recorded for BIND and PowerDNS servers, so the query panel and the DNS report have figures in them. They are stored per interval rather than as a running total, and a server restart is recorded as an unknown interval rather than a false spike.",
+  ],
   '1.37.1': [
     "Fixed: a DNS record read from PowerDNS was stored with a slightly different spelling than the same record read from BIND - a trailing dot on names, and quotes around TXT values. Because a record is identified partly by its value, the same record collected from two different servers would have been stored twice instead of recognised as one. Found during staging verification.",
   ],
@@ -3132,6 +3139,41 @@ app.post('/api/servers/:id/test-connection', requireWrite, async (req, res) => {
     if (!serverData) return res.status(404).json({ error: 'Server not found' });
     const { ip, auth } = serverData;
 
+    // ⛔ A BIND SERVER HAS NO WinRM, SO TESTING WinRM AGAINST IT IS NOT A TEST.
+    // This is the first button anyone presses after adding a server. Run
+    // unchanged it fails on every Linux DNS server, and — worse — writes
+    // winrm_test_ok=false, which the DNS tab treats as decisively OFFLINE. So
+    // a brand-new, correctly configured BIND server was one click away from
+    // looking broken.
+    const row = await db.query(
+      `SELECT dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm, tsig_secret,
+              dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id, ip_address::text AS ip_address
+         FROM ddi_servers WHERE id = $1`, [id]);
+    const srv = row.rows[0] || {};
+    if (dnsProviders.isProtocolPlatform(srv.dns_platform)) {
+      const { testProtocolServer } = require('../collector/dns/readiness');
+      const ctx = dnsProviders.serverContext({
+        ...srv,
+        tsig_secret: srv.tsig_secret ? decryptCred(srv.tsig_secret) : null,
+        dns_api_key: srv.dns_api_key ? decryptCred(srv.dns_api_key) : null,
+      });
+      const r = await testProtocolServer(ctx);
+      // ⛔ winrm_test_ok is deliberately NOT written: it would record the answer
+      // to a question we never asked. dns_last_error carries the real outcome.
+      await db.query('UPDATE ddi_servers SET dns_last_error=$2 WHERE id=$1',
+        [id, r.ok ? null : r.summary]).catch(() => {});
+      if (req.audit) req.audit({ action: 'test', entity_type: 'server', entity_id: id, entity_name: srv.hostname || ctx.dns_host, server_id: id, result: r.ok ? 'success' : 'failure', error_message: r.ok ? null : r.summary, change_summary: `${r.platform} readiness check ${r.ok ? 'passed' : 'failed'}` });
+      return res.json({
+        ok: r.ok,
+        latency_ms: null,
+        error: r.ok ? null : r.summary,
+        server_ip: ctx.dns_host,
+        auth_mode: r.platform,
+        platform: r.platform,
+        checks: r.checks,
+      });
+    }
+
     // Add to TrustedHosts before testing — ensures the test can succeed for stored creds.
     await psWrite.addToTrustedHosts(ip);
 
@@ -3965,7 +4007,7 @@ app.get('/api/dns/servers', attachSiteFilter, async (req, res) => {
     const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
       `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled,
-              health_score, winrm_test_ok
+              health_score, winrm_test_ok, dns_platform
        FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ${siteFilter} ORDER BY hostname`,
       params
     );

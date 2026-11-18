@@ -216,3 +216,11 @@ schema-dns-platform.sql 1.37.0) for the same reason each time: it must be the FI
 privileges on the table, and each new file adds columns after it. **A new ddivault schema file goes BEFORE
 schema-dns-platform.sql, or the grant must move again.** Secrets excluded from the grant: `ps_username`,
 `ps_password`, `tsig_secret`, `dns_api_key` (verified: those are the only columns `claude_readonly` cannot read).
+
+### dns_query_stats (1.38.0)
+Gained `cumulative_total`/`cumulative_success`/`cumulative_nxdomain`/`cumulative_failed`
+(BIGINT) in `schema-dns-platform.sql`. The pre-existing columns describe an INTERVAL;
+BIND and PowerDNS report totals since boot, so each sample is a delta against the previous
+raw reading — which has to be stored to subtract from. A `cumulative_total` lower than the
+row before it is a server restart, and that row's interval columns are NULL because the
+interval across a restart cannot be computed.

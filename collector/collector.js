@@ -382,7 +382,14 @@ async function runDnsMonitor() {
   }
   _dnsMonitorRunning = true;
   try {
-    const servers = await getActiveServers().catch(() => []);
+    // ⛔ WINDOWS SERVERS ONLY. dnsMonitor drives Get-DnsServer* over WinRM for
+    // roles, per-zone SOA, record counts, forwarders and scavenging. Handed a
+    // bind/powerdns row it attempts roughly eight WinRM calls per server per
+    // cycle against a host that has no WinRM, each waiting out PS_TIMEOUT_MS --
+    // slow, noisy, and every one of them guaranteed to fail. The capability
+    // matrix already reports these as not_applicable for those platforms.
+    const servers = (await getActiveServers().catch(() => []))
+      .filter((s) => !dnsProviders.isProtocolPlatform(s.dns_platform));
     if (!servers.length) return;
     await dnsMonitor.runDnsMonitor(db, ps, servers, serverAuth);
   } catch (e) {
@@ -392,7 +399,10 @@ async function runDnsMonitor() {
   }
 }
 async function runDnsStale() {
-  const servers = await getActiveServers().catch(() => []);
+  // Same reason as runDnsMonitor: stale-record detection reads Windows aging
+  // timestamps, which BIND and PowerDNS do not keep at all.
+  const servers = (await getActiveServers().catch(() => []))
+    .filter((s) => !dnsProviders.isProtocolPlatform(s.dns_platform));
   if (!servers.length) return;
   try { await dnsMonitor.detectStaleRecords(db, ps, servers, serverAuth); }
   catch (e) { console.error('[DNS-Stale] error:', e.message); }

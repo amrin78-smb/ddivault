@@ -199,6 +199,85 @@ test('no record_data carries a trailing dot or surrounding quotes', async (t) =>
   }
 });
 
+// ── readiness ("Test Connection") ────────────────────────────────────────────
+
+const { testProtocolServer } = require('../collector/dns/readiness');
+
+test('a correctly configured BIND server passes every check', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer(BIND);
+  assert.strictEqual(r.ok, true, r.summary);
+  const names = r.checks.map((c) => c.name);
+  assert.ok(names.includes('Statistics channel'));
+  assert.ok(names.includes('Zone transfer (AXFR)'));
+  const axfr = r.checks.find((c) => c.name === 'Zone transfer (AXFR)');
+  assert.match(axfr.detail, /TSIG verified/, 'the transfer is authenticated: ' + axfr.detail);
+});
+
+test('a missing TSIG key reports the named.conf that fixes it', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer({ ...BIND, tsig_key_name: null, tsig_secret: null });
+  assert.strictEqual(r.ok, false);
+  const axfr = r.checks.find((c) => c.name === 'Zone transfer (AXFR)');
+  assert.ok(axfr && !axfr.ok, 'the transfer check failed');
+  // ⛔ The whole point: the operator can finish the job from this message,
+  // without reading our documentation.
+  assert.match(axfr.fix, /allow-transfer \{ key/, 'fix names allow-transfer: ' + axfr.fix);
+  assert.match(axfr.fix, /key "ddivault"/, 'fix uses the key name they configured');
+});
+
+test('a wrong TSIG secret says BADSIG in words, not a number', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer({ ...BIND, tsig_secret: Buffer.from('nope').toString('base64') });
+  assert.strictEqual(r.ok, false);
+  // ⛔ "TSIG error 16" is what a search engine is for. 16 is a wrong SECRET and
+  // 17 is a wrong key NAME — two different one-line fixes.
+  assert.match(r.summary, /BADSIG/, r.summary);
+  assert.match(r.summary, /secret does not match/, r.summary);
+  assert.ok(!/error 16/.test(r.summary), 'the raw code is not what is shown');
+});
+
+test('a missing statistics channel is reported as its own fix', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer({ ...BIND, dns_stats_url: null });
+  assert.strictEqual(r.ok, false);
+  const c = r.checks.find((x) => x.name === 'Statistics channel');
+  assert.ok(c && !c.ok);
+  assert.match(c.fix, /statistics-channels/, c.fix);
+});
+
+test('the summary reports the FIRST failure, not a count', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  // With no statistics channel, everything downstream of it is unavailable too.
+  const r = await testProtocolServer({ ...BIND, dns_stats_url: null });
+  assert.ok(!/\d+ checks? failed/.test(r.summary),
+    'the checks are dependency-ordered; a count reports one problem several times');
+  assert.match(r.summary, /statistics channel/i, r.summary);
+});
+
+test('PowerDNS: a rejected API key is named as a key problem', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer({ ...PDNS, dns_api_key: 'definitely-wrong' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.summary, /rejected the API key/, r.summary);
+  const c = r.checks.find((x) => x.name === 'API');
+  assert.match(c.fix, /api-key=/, 'fix points at the right pdns.conf line: ' + c.fix);
+});
+
+test('PowerDNS: a correct config passes and reads records', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  const r = await testProtocolServer(PDNS);
+  assert.strictEqual(r.ok, true, r.summary);
+  const rec = r.checks.find((c) => c.name === 'Records');
+  assert.ok(rec && rec.ok, 'records readable');
+});
+
+test('a server with no DNS host is rejected before any network call', async (t) => {
+  const r = await testProtocolServer({ dns_platform: 'bind', dns_host: '' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.summary, /No DNS host/);
+});
+
 // ── capability honesty ───────────────────────────────────────────────────────
 
 test('a platform that lacks a concept reports not_applicable, not false', () => {
