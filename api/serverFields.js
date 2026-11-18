@@ -1,8 +1,8 @@
 'use strict';
 /**
- * serverFields.js — the two decisions the /api/servers write routes make that
- * are worth testing on their own: which DNS platform is acceptable, and when a
- * stored secret may be overwritten.
+ * serverFields.js — the decisions the /api/servers write routes make that are
+ * worth testing on their own: which DNS platform is acceptable, when a stored
+ * secret may be overwritten, and which servers an agent may be handed.
  *
  * ⛔ EXTRACTED SO THEY CAN BE TESTED, because both fail silently and
  * destructively. A platform that falls through to a default polls a Linux box
@@ -46,4 +46,51 @@ function shouldReplaceSecret(val) {
   return !!val && val !== SECRET_MASK;
 }
 
-module.exports = { DNS_PLATFORMS, normaliseDnsPlatform, SECRET_MASK, shouldReplaceSecret };
+/**
+ * Which of the requested servers may actually be handed to an agent?
+ *
+ * ⛔ A PROTOCOL-COLLECTED SERVER PLUS AN AGENT OWNER IS A SERVER NOBODY
+ * COLLECTS. `getActiveServers()` skips every row whose `agent_hub_id` is set
+ * (an agent owns it), and the config pushed to an agent carries only the WinRM
+ * fields — no `dns_platform`, no `dns_host`, no TSIG key. So the pair is
+ * accepted and then collected by neither side, with nothing logged anywhere.
+ * Before 1.37.0 the combination could not arise, because every server was
+ * 'windows'; the Linux DNS work created it and this is the guard.
+ *
+ * ⛔ TWO DIFFERENT ANSWERS, MATCHING WHAT WAS ACTUALLY ASKED FOR. An id the
+ * operator TYPED is refused outright — they meant that server, so tell them no.
+ * A server pulled in by `assign_site_id` is SKIPPED and named — they meant the
+ * site, and one Linux resolver in it must not fail the other twenty servers.
+ * What neither path may do is drop a server without saying which: silence there
+ * is indistinguishable from having worked.
+ *
+ * @param rows            {{id, hostname, dns_platform}[]} the referenced servers
+ * @param assignIds       number[] every id to assign (after any site sweep)
+ * @param explicitAssign  number[] only the ids the operator typed
+ * @param isProtocol      (platform) => boolean
+ * @returns {{refuse: string|null, skipped: Array, assignIds: number[]}}
+ */
+function planAgentAssignment(rows, assignIds, explicitAssign, isProtocol) {
+  const bad = rows.filter((r) => assignIds.includes(r.id) && isProtocol(r.dns_platform));
+  if (!bad.length) return { refuse: null, skipped: [], assignIds };
+
+  const named = bad.filter((r) => explicitAssign.includes(r.id));
+  if (named.length) {
+    return {
+      refuse: `${named.map((r) => `${r.hostname} (${r.dns_platform})`).join(', ')} `
+            + 'is collected over the DNS protocol, which an agent cannot do yet. '
+            + 'Leave it on central polling.',
+      skipped: [], assignIds,
+    };
+  }
+  const skipIds = new Set(bad.map((r) => r.id));
+  return {
+    refuse: null,
+    skipped: bad.map((r) => ({ id: r.id, hostname: r.hostname, dns_platform: r.dns_platform })),
+    assignIds: assignIds.filter((id) => !skipIds.has(id)),
+  };
+}
+
+module.exports = {
+  DNS_PLATFORMS, normaliseDnsPlatform, SECRET_MASK, shouldReplaceSecret, planAgentAssignment,
+};

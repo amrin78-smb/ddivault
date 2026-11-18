@@ -331,3 +331,13 @@ silently cached if they did need it — confirms the omission is correct, not an
 ### 1.39.0
 - `POST`/`PUT /api/servers` and `GET /api/servers` carry `dns_zone_list`.
 - `normaliseDnsPlatform` accepts `generic` (still rejects anything unknown with 400).
+
+## Agent assignment vs DNS platform (1.39.1)
+
+- `POST /api/ddi-agents/:hubId/servers` — rejects (400) an explicitly named server
+  whose `dns_platform` is protocol-collected, and on an `assign_site_id` sweep
+  skips them and returns them in `skipped: [{id, hostname, dns_platform}]` on the
+  SUCCESS response. Decision in `api/serverFields.js#planAgentAssignment`.
+- `PUT /api/servers/:id` — rejects (400) setting a protocol platform on a server
+  that currently has `agent_hub_id` set, naming the owning agent. Refused rather
+  than silently clearing ownership: that is the operator's decision.

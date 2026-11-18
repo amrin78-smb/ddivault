@@ -32,7 +32,16 @@ interface Server {
   site_id: number | null;
   site_name?: string | null;
   agent_hub_id: string | null;
+  dns_platform?: string | null;
 }
+
+// Platforms collected over the DNS protocol rather than WinRM. An agent cannot
+// collect these yet (the config it receives carries only the WinRM fields), and
+// a server an agent owns is skipped by the central collector — so the pair would
+// be collected by nobody. The API refuses it; this list is only here to disable
+// the checkbox, so the refusal is never reached from the UI.
+const PROTOCOL_PLATFORMS = new Set(['bind', 'powerdns', 'generic']);
+const isProtocolPlatform = (p?: string | null) => !!p && PROTOCOL_PLATFORMS.has(String(p).toLowerCase());
 
 interface Site { id: number; name: string; code: string; city: string }
 
@@ -177,25 +186,34 @@ function AssignModal({ agent, servers, agentNames, canWrite, onClose, onDone }: 
                     const checked = !!sel[s.id];
                     const owner = s.agent_hub_id;
                     const ownedElsewhere = owner && owner !== agent.hub_agent_id;
+                    const protocolDns = isProtocolPlatform(s.dns_platform);
                     return (
                       <label key={s.id}
                         style={{
-                          display: 'flex', alignItems: 'center', gap: 10, cursor: canWrite ? 'pointer' : 'default',
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          cursor: canWrite && !protocolDns ? 'pointer' : 'default',
                           padding: '9px 12px', borderRadius: 'var(--radius-sm)',
                           border: `1px solid ${checked ? 'var(--primary)' : 'var(--border)'}`,
                           background: checked ? 'var(--primary-light)' : 'var(--bg-primary)',
+                          opacity: protocolDns ? 0.6 : 1,
                           transition: 'all 0.12s',
                         }}
+                        title={protocolDns
+                          ? `${s.dns_platform} is collected over the DNS protocol, which an agent cannot do yet — this server stays on central polling`
+                          : undefined}
                       >
-                        <input type="checkbox" checked={checked} disabled={!canWrite} onChange={() => toggle(s.id)} />
+                        <input type="checkbox" checked={checked} disabled={!canWrite || protocolDns} onChange={() => toggle(s.id)} />
                         <span style={{ fontWeight: 600, fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
                           {s.hostname || s.ip_address}
                         </span>
                         <code className="mono" style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}>{s.ip_address}</code>
                         <span className={`badge ${s.role === 'both' ? 'badge-blue' : 'badge-gray'}`}>{s.role}</span>
                         {!s.is_active && <span className="badge badge-gray">disabled</span>}
+                        {protocolDns && <span className="badge badge-gray">{s.dns_platform}</span>}
                         <span style={{ marginLeft: 'auto', fontSize: 'var(--text-xs)' }}>
-                          {ownedElsewhere
+                          {protocolDns
+                            ? <span style={{ color: 'var(--text-muted)' }}>central only</span>
+                            : ownedElsewhere
                             ? <span style={{ color: 'var(--tint-warn-fg)' }}>on {agentNames[owner!] || owner}</span>
                             : owner
                               ? <span style={{ color: 'var(--green)' }}>this agent</span>

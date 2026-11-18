@@ -167,3 +167,13 @@ Not counted as a violation.
 `ServersTab` gains a fourth DNS platform, "Knot, NSD or other standards-compliant DNS",
 with a zone-list textarea and a copyable Knot/NSD config snippet. The field explains WHY
 the list is needed rather than just demanding it.
+
+## AgentsTab.tsx — protocol-DNS servers are not assignable (1.39.1)
+
+`Server` gained `dns_platform?`. The assign modal disables the checkbox for a
+protocol-collected server, dims the row, badges the platform and labels it
+"central only", with a `title` explaining why. The API refuses the combination
+anyway; this exists so the refusal is never reached from the UI. The module-scope
+`PROTOCOL_PLATFORMS` set is a deliberate duplicate of the collector's list — the
+frontend cannot import from `collector/` — so **adding a platform means editing
+both**.

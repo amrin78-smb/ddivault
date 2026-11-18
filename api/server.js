@@ -1,5 +1,5 @@
 'use strict';
-const { normaliseDnsPlatform, shouldReplaceSecret } = require('./serverFields');
+const { normaliseDnsPlatform, shouldReplaceSecret, planAgentAssignment } = require('./serverFields');
 const dnsProviders = require('../collector/dns');
 
 /**
@@ -32,6 +32,11 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.39.1': [
+    "Fixed: a BIND, PowerDNS, Knot or NSD server could be assigned to a remote collector agent, and would then be collected by nothing at all. An agent receives only the Windows remote-management details for the servers it owns, and a server owned by an agent is skipped by the central collector - so the server simply stopped being read, with no error anywhere. Those servers are now shown as central-only and cannot be assigned to an agent.",
+    "The same applies in reverse: a server already assigned to an agent can no longer be switched to a Linux DNS platform without first returning it to central polling, which the message now says.",
+    "Assigning a whole site to an agent still works - any Linux DNS servers in that site are left on central polling and listed by name in the result, rather than being dropped silently.",
+  ],
   '1.39.0': [
     "New: DDIVault can now monitor Knot DNS, NSD and any other standards-compliant DNS server, not just BIND and PowerDNS. Records are read the same way as for BIND, using a zone transfer protected by a TSIG key.",
     "These servers provide no remote way to list the zones they hold - Knot's control interface is local-only and NSD's requires client certificates - so you enter the zone names yourself when adding the server. Everything after that works exactly as it does for BIND, and the add-server screen shows the Knot and NSD configuration it needs.",
@@ -3058,6 +3063,24 @@ app.put('/api/servers/:id', requireWrite, async (req, res) => {
     const platform = normaliseDnsPlatform(b.dns_platform);
     if (platform === null) return res.status(400).json({ error: 'unsupported dns_platform' });
 
+    // ⛔ A PROTOCOL PLATFORM AND AN AGENT OWNER IS A SERVER NOBODY COLLECTS.
+    // getActiveServers() skips every row with agent_hub_id set (that agent owns
+    // it), and the config pushed to an agent carries only the WinRM fields —
+    // dns_platform, dns_host and the TSIG key are not in it. So the pair would
+    // be accepted, and then collected by neither side, silently. Before 1.37.0
+    // the combination could not exist because every server was 'windows'.
+    // Refused rather than silently cleared: ownership is the operator's
+    // decision, not something a platform change should quietly undo.
+    if (dnsProviders.isProtocolPlatform(platform)) {
+      const owned = await db.query('SELECT agent_hub_id FROM ddi_servers WHERE id = $1', [id]);
+      if (owned.rows.length && owned.rows[0].agent_hub_id) {
+        return res.status(400).json({
+          error: `This server is collected by agent ${owned.rows[0].agent_hub_id}, which cannot collect ${platform}. `
+               + 'Return it to central polling first (Agents tab, Unassign), then set the DNS platform.',
+        });
+      }
+    }
+
     // ⛔ BUILT DYNAMICALLY ON PURPOSE. This used to interpolate parameter
     // NUMBERS into the SQL string ("winrm_port=$10" or "$9" depending on whether
     // a password was supplied) and then pass one of two hand-built argument
@@ -3293,6 +3316,9 @@ app.post('/api/ddi-agents/:hubId/servers', requireWrite, async (req, res) => {
     const body = req.body || {};
     let assignIds   = Array.isArray(body.assign)   ? body.assign.map(Number).filter(Number.isInteger)   : [];
     const unassignIds = Array.isArray(body.unassign) ? body.unassign.map(Number).filter(Number.isInteger) : [];
+    // Captured before assign_site_id widens assignIds: an id the operator typed
+    // and an id a site sweep pulled in deserve different answers below.
+    const explicitAssign = [...assignIds];
 
     // Optional: assign every server of a site to this agent.
     if (body.assign_site_id != null) {
@@ -3309,11 +3335,26 @@ app.post('/api/ddi-agents/:hubId/servers', requireWrite, async (req, res) => {
 
     // Validate every referenced server exists; capture prior ownership.
     const allIds = [...new Set([...assignIds, ...unassignIds])];
-    const existing = await db.query('SELECT id, agent_hub_id FROM ddi_servers WHERE id = ANY($1::int[])', [allIds]);
+    const existing = await db.query('SELECT id, hostname, agent_hub_id, dns_platform FROM ddi_servers WHERE id = ANY($1::int[])', [allIds]);
     if (existing.rows.length !== allIds.length) {
       const found = new Set(existing.rows.map(r => r.id));
       const missing = allIds.filter(id => !found.has(id));
       return res.status(400).json({ error: `Unknown server id(s): ${missing.join(', ')}` });
+    }
+
+    // ⛔ A BIND/PowerDNS/generic SERVER CANNOT BE AGENT-COLLECTED YET — and the
+    // pair would be collected by NEITHER side, silently. The decision lives in
+    // api/serverFields.js (planAgentAssignment) so it can be tested directly;
+    // the reasoning for the two different answers is written out there.
+    const plan = planAgentAssignment(existing.rows, assignIds, explicitAssign, dnsProviders.isProtocolPlatform);
+    if (plan.refuse) return res.status(400).json({ error: plan.refuse });
+    const skippedProtocol = plan.skipped;
+    assignIds = plan.assignIds;
+    if (!assignIds.length && !unassignIds.length) {
+      return res.status(400).json({
+        error: 'Every server in that site is collected over the DNS protocol, which an agent cannot do yet.',
+        skipped: skippedProtocol,
+      });
     }
 
     // Agents that LOSE a server (a reassigned server's prior owner) also need a
@@ -3347,7 +3388,13 @@ app.post('/api/ddi-agents/:hubId/servers', requireWrite, async (req, res) => {
       catch (e) { reconfigured[hid] = false; console.error(`[API] reconfigureAgent(${hid}) failed:`, e.message); }
     }
 
-    res.json({ success: true, assigned: assignIds.length, unassigned: unassignIds.length, reconfigured });
+    // skipped is only present when a site sweep passed over a protocol-collected
+    // server. It is in the SUCCESS response on purpose: the assignment did work,
+    // and the operator still has to be told which servers it did not cover.
+    res.json({
+      success: true, assigned: assignIds.length, unassigned: unassignIds.length, reconfigured,
+      ...(skippedProtocol.length ? { skipped: skippedProtocol } : {}),
+    });
   } catch (err) {
     console.error('[API] ddi-agent assign error:', err.message);
     res.status(500).json({ error: 'Internal server error' });

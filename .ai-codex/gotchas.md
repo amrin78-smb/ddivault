@@ -984,3 +984,32 @@ provisioning path that skips the file fails loudly instead of at the first poll.
 **The general rule:** any NEW schema file — not a new column in an existing file — carries
 this hazard, because only a new *file* requires the updater's own list to change. Adding a
 column to a file already in the list is safe on the first run.
+
+## ⛔ An agent-owned server with a protocol DNS platform is collected by NOBODY
+
+Found 2026-11-18, introduced by the Linux DNS work itself (1.37.0) and fixed in
+1.39.1. The two halves each look correct alone:
+
+- `getActiveServers()` filters `agent_hub_id IS NULL` — an agent owns that server,
+  so the central collector must not also poll it. Right.
+- the config pushed to an agent (`POST /api/ddi-agents/:hubId/servers` → the
+  `SELECT id, hostname, ip_address, role, is_active, site_id` query) carries only
+  WinRM-shaped fields. Right too, when every server was Windows.
+
+Set `dns_platform='bind'` and assign that server to an agent and it falls between
+them: the collector skips it, the agent never learns it is a BIND server, and
+nothing logs anything. Before 1.37.0 the combination could not exist.
+
+**This is the same mistake as 1.38.0's, one layer out.** 1.38.0 fixed
+"a Linux DNS server judged by whether it answers WinRM" in `pollHealth`,
+`dnsMonitor`, `detectStaleRecords` and `pollDnsSoa` — and the agent assignment
+path, which has zero platform awareness, was not among them. Fixing the callers
+I had found was not fixing the class. When a feature adds a new *kind* of a thing,
+grep for every place that assumed the old kind was the only one — including the
+paths that merely *route* the thing rather than measure it.
+
+Guarded in three places, deliberately: `planAgentAssignment` (the decision,
+tested), `PUT /api/servers/:id` (the reverse direction — platform changed on an
+already-assigned server), and `AgentsTab` (checkbox disabled, so the refusal is
+not reachable from the UI). Agent-side protocol DNS collection is Milestone F and
+is not built; until it is, these servers are central-only.

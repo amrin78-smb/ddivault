@@ -221,3 +221,21 @@ thing missing is zone ENUMERATION: Knot's control interface is a UNIX socket and
 needs client certificates, so the operator supplies the list (`ddi_servers.dns_zone_list`,
 parsed tolerantly by `parseZoneList()`). A configured zone that does not answer is named
 in an `isPartial` error carrying `partial` — sync keeps what worked.
+
+## api/serverFields.js — planAgentAssignment (1.39.1)
+
+`planAgentAssignment(rows, assignIds, explicitAssign, isProtocol)` →
+`{ refuse: string|null, skipped: Array, assignIds: number[] }`.
+
+Decides which servers `POST /api/ddi-agents/:hubId/servers` may hand to an agent.
+Extracted so it can be tested, because the bug it prevents produces **no error on
+either side**: `getActiveServers()` skips every row with `agent_hub_id` set, and the
+config pushed to an agent carries only the WinRM fields (no `dns_platform`,
+`dns_host` or TSIG key), so a protocol-collected server assigned to an agent is
+read by nobody.
+
+Two answers on purpose: an id in `explicitAssign` (the operator typed it) is
+**refused**; one that only arrived via `assign_site_id` is **skipped and named**.
+Takes `isProtocol` as a parameter so it uses `collector/dns`'s real
+`isProtocolPlatform` rather than a second copy of the platform list — a local copy
+would have silently missed `generic`.
