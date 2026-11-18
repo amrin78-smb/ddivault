@@ -812,3 +812,20 @@ and podman, both innocent. Diagnose with a raw query or the app's own client.
 `for i in 1..30; do probe; done` burns every attempt in milliseconds and reports a server
 "not ready" that had simply not finished booting. This bit twice. `lab.sh` paces with
 `dig +timeout=1 +tries=1`.
+
+⛔ **THE TWO PROVIDERS MUST SPELL A RECORD THE SAME WAY, NOT JUST SHAPE IT THE SAME
+(1.37.1).** AXFR yields parsed values (`ns1.lab.example`, `v=spf1 -all`); PowerDNS's API
+yields zone-file text (`ns1.pdns.example.`, `"v=spf1 -all"`). The original unit test
+compared `Object.keys()` — the row *shape* — which matched, so it passed while the values
+differed. `dns_records`' unique key includes `record_data`, so two spellings of one record
+**duplicate instead of colliding**, and a zone migrated from BIND to PowerDNS silently
+doubles. `records.js` `normalisePresentation()` now canonicalises the API path, and the
+fixtures are deliberate MIRRORS of each other (same records, same values, only the zone
+name differs) so the parity assertion means something. **This was caught by the staging
+run, not by the unit tests** — which is the argument for doing the staging run.
+
+⛔ **PowerDNS takes SRV and MX priority from the `prio` COLUMN, not from `content`.** A
+seed row with the priority in both (`'10 20 5060 target'` + `prio=10`) makes pdns throw
+`trailing data was not parsed` and **500 the whole zone endpoint** — the zone list still
+works, so it looks like a provider bug rather than bad fixture data. Content carries
+`weight port target` for SRV and just the exchange for MX.

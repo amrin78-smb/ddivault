@@ -166,6 +166,39 @@ test('both providers produce the same ROW SHAPE', async (t) => {
   assert.strictEqual(keys(b.records[0]), 'hostname,record_data,record_type,ttl');
 });
 
+test('both providers spell the same record the SAME WAY', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  // ⛔ THE SHAPE TEST ABOVE WAS NOT ENOUGH, AND THIS IS THE TEST THAT CAUGHT IT.
+  // It compared Object.keys(), which matched, while the VALUES differed: AXFR
+  // gave `ns1.lab.example` and `v=spf1 -all`, the PowerDNS API gave
+  // `ns1.pdns.example.` and `"v=spf1 -all"`. dns_records' unique key includes
+  // record_data, so two spellings of one record DUPLICATE instead of colliding,
+  // and a zone migrated between platforms silently doubles. Found on a real
+  // staging run, not here — hence this test.
+  const b = await dns.providerFor('bind').getZoneRecords(BIND, 'lab.example');
+  const p = await dns.providerFor('powerdns').getZoneRecords(PDNS, 'pdns.example');
+
+  // The fixtures are deliberately the same zone with a different name, so after
+  // swapping the zone name the two sets must be byte-identical.
+  const canon = (rows, zone) => rows
+    .map((r) => `${r.hostname}|${r.record_type}|${r.record_data.split(zone).join('<ZONE>')}`)
+    .sort();
+  assert.deepStrictEqual(canon(b.records, 'lab.example'), canon(p.records, 'pdns.example'));
+});
+
+test('no record_data carries a trailing dot or surrounding quotes', async (t) => {
+  if (!await labUp()) return t.skip('lab down');
+  for (const [name, srv, zone] of [['bind', BIND, 'lab.example'], ['powerdns', PDNS, 'pdns.example']]) {
+    const r = await dns.providerFor(name).getZoneRecords(srv, zone);
+    for (const row of r.records) {
+      assert.ok(!/\.$/.test(row.record_data),
+        `${name} ${row.hostname} ${row.record_type} has a trailing dot: ${row.record_data}`);
+      assert.ok(!/^".*"$/.test(row.record_data),
+        `${name} ${row.hostname} ${row.record_type} is quoted: ${row.record_data}`);
+    }
+  }
+});
+
 // ── capability honesty ───────────────────────────────────────────────────────
 
 test('a platform that lacks a concept reports not_applicable, not false', () => {

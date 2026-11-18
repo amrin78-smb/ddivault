@@ -31,6 +31,9 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.37.1': [
+    "Fixed: a DNS record read from PowerDNS was stored with a slightly different spelling than the same record read from BIND - a trailing dot on names, and quotes around TXT values. Because a record is identified partly by its value, the same record collected from two different servers would have been stored twice instead of recognised as one. Found during staging verification.",
+  ],
   '1.37.0': [
     "New: DDIVault can now monitor Linux DNS servers. A server can be set to BIND 9 or PowerDNS instead of Windows DNS, and its zones and records are collected into the same screens as everything else. Nothing changes for your existing Windows DNS servers - they keep working exactly as before.",
     "Nothing is installed on the DNS server and no shell account is needed. BIND is read with a standard zone transfer protected by a TSIG key, plus its statistics channel; PowerDNS is read through its own API with an API key. Both credentials are encrypted before storage, and DDIVault only ever reads - it never writes to your DNS.",

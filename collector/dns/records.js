@@ -92,9 +92,55 @@ function normaliseZone(records, zoneName) {
   return { records: out, counts };
 }
 
+/**
+ * Normalise a PRESENTATION-FORMAT rdata string to the same spelling the wire
+ * path produces.
+ *
+ * ⛔ THIS EXISTS BECAUSE THE TWO SOURCES DISAGREE ON SPELLING, NOT MEANING.
+ * AXFR hands us parsed values, so `normaliseRecord` writes `ns1.lab.example`
+ * and `v=spf1 -all`. PowerDNS's API hands us zone-file text, so the same records
+ * arrive as `ns1.pdns.example.` and `"v=spf1 -all"`. Caught on the staging run,
+ * not by the unit tests — those asserted the same row SHAPE (the keys), which
+ * was true, while the VALUES differed.
+ *
+ * It matters because dns_records' unique key includes record_data: the same
+ * record collected from two platforms would not collide, it would DUPLICATE,
+ * and a zone migrated from BIND to PowerDNS would silently double.
+ */
+function normalisePresentation(type, content) {
+  const t = String(type || '').toUpperCase();
+  let v = String(content == null ? '' : content).trim();
+  if (!v) return v;
+  switch (t) {
+    case 'CNAME': case 'NS': case 'PTR': case 'DNAME':
+      return stripDot(v);
+    case 'MX': {
+      // "10 mail.example.com." -> "10 mail.example.com"
+      const m = v.match(/^(\d+)\s+(.*)$/);
+      return m ? `${m[1]} ${stripDot(m[2])}` : stripDot(v);
+    }
+    case 'SRV': {
+      const m = v.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/);
+      return m ? `${m[1]} ${m[2]} ${m[3]} ${stripDot(m[4])}` : v;
+    }
+    case 'TXT': {
+      // Zone-file TXT is quoted and may be split into several quoted chunks;
+      // the wire path yields the joined, unquoted text.
+      const chunks = v.match(/"((?:[^"\\]|\\.)*)"/g);
+      if (chunks) return chunks.map((c) => c.slice(1, -1).replace(/\\(.)/g, '$1')).join('');
+      return v;
+    }
+    default:
+      return v;
+  }
+}
+
 /** A reverse zone by name — same test the Windows path's IsReverseLookupZone makes. */
 function isReverseZone(zoneName) {
   return /\.(in-addr|ip6)\.arpa\.?$/i.test(String(zoneName || ''));
 }
 
-module.exports = { relativise, normaliseRecord, normaliseZone, txtToString, isReverseZone, SKIP_TYPES };
+module.exports = {
+  relativise, normaliseRecord, normaliseZone, txtToString,
+  normalisePresentation, isReverseZone, SKIP_TYPES,
+};

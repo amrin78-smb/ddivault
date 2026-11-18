@@ -101,15 +101,20 @@ async function getZoneRecords(server, zoneName) {
       });
     }
   }
-  // The API hands back presentation-format strings, already in the shape
-  // dns_records stores, so only the relativising and skip-list are applied.
+  // ⛔ THE API HANDS BACK ZONE-FILE TEXT, NOT THE SAME SPELLING AS THE WIRE.
+  // `ns1.example.com.` with a trailing dot, TXT wrapped in quotes. The AXFR path
+  // yields `ns1.example.com` and the bare text. Passing this through raw put two
+  // spellings of the same record in one table — and since dns_records' unique
+  // key includes record_data, the same record from two platforms would DUPLICATE
+  // rather than collide. Found on the staging run; the unit tests had compared
+  // row shape (keys), which matched, not values.
   const out = []; const counts = {};
   for (const r of flat) {
     if (R.SKIP_TYPES.has(r.type)) continue;
     const row = {
       hostname: R.relativise(r.name, zoneName),
       record_type: r.type,
-      record_data: r._raw,
+      record_data: R.normalisePresentation(r.type, r._raw),
       ttl: r.ttl,
     };
     if (!row.record_data) continue;
