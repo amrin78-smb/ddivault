@@ -776,6 +776,37 @@ ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS agent_hub_id TEXT;
 ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dhcp_log_path TEXT;
 CREATE INDEX IF NOT EXISTS idx_ddi_servers_agent_hub ON ddi_servers(agent_hub_id);
 
+-- ── DNS collection outcome, separate from the DHCP one ──────────────────────
+--
+-- ⛔ `poll_status`/`last_polled`/`poll_error` DESCRIBE THE DHCP SCOPE POLL ONLY.
+-- `writers.js#writeScopeStats` is the single writer, and `collectScopeStats`
+-- returns early for a `role='dns'` server — so for a DNS-only server those three
+-- columns are never written at all and keep the INSERT default forever. Every
+-- consumer read them as "is this server being collected", which produced two
+-- wrong answers in opposite directions:
+--
+--   * a DNS-only server reads "pending"/"Never polled" while its zones and
+--     records are being collected on schedule, and
+--   * a `role='both'` server whose DNS collection fails completely still reads
+--     'ok', because the DHCP half succeeded. That is a false all-clear, which is
+--     the more dangerous of the two.
+--
+-- One scalar cannot describe two capabilities that succeed and fail
+-- independently. These columns record the DNS half; `api/serverStatus.js`
+-- derives what each consumer should display, and a capability the server does
+-- not have is NOT APPLICABLE rather than a failure or a zero.
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_poll_status TEXT;
+ALTER TABLE ddi_servers ADD COLUMN IF NOT EXISTS dns_polled_at   TIMESTAMPTZ;
+
+-- ⛔ DELIBERATELY IN schema.sql, NOT schema-dns-platform.sql. The updater's
+-- $schemas list is read from the copy on disk when it STARTS, so a server
+-- upgrading from <=1.36.0 runs the old four-file list on its first pass --
+-- schema-dns-platform.sql would not be applied and the collector would crash on
+-- every poll behind a passing /api/health check. schema.sql is on every
+-- release's list, so a column added here applies on the FIRST run.
+-- See .ai-codex/gotchas.md, "Upgrading a server from <=1.36.0".
+
+
 -- ── ddi_agents: readonly SELECT (non-secret) ────────────────
 -- ddi_agents holds no credential (agents auth via hub-signed JWT), so both
 -- diagnostic roles get plain table-level SELECT. Per-table grant, NOT the

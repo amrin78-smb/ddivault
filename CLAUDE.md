@@ -991,6 +991,15 @@ PowerShell heredoc corrupts JSX syntax. Always write to a temp file first then r
 ### NSSM env vars not taking effect
 - Verify vars use backtick-n separators not spaces: `nssm get DDIVault-API AppEnvironmentExtra`
 
+### A server shows "Never polled" while its data is fresh
+`poll_status`/`last_polled`/`poll_error` describe the **DHCP scope poll only** — its sole
+writer is `collector/writers.js#writeScopeStats`, and `collectScopeStats` returns early for
+a `role='dns'` server. Use `api/serverStatus.js` (`collection_status`, `collection_parts`,
+`last_collected_at`), which counts only the capabilities a server's role actually has;
+`dns_poll_status`/`dns_polled_at` carry the DNS half. ⛔ To judge whether collection is
+really happening, query the data it produces (`dns_zones.last_updated`,
+`dns_records.last_seen`) — not the field that claims to describe the collection.
+
 ### Collector crashes with column does not exist
 - A schema migration was not run — check which column is missing and run the appropriate schema file
 

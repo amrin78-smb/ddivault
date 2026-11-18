@@ -341,3 +341,18 @@ silently cached if they did need it — confirms the omission is correct, not an
 - `PUT /api/servers/:id` — rejects (400) setting a protocol platform on a server
   that currently has `agent_hub_id` set, naming the owning agent. Refused rather
   than silently clearing ownership: that is the operator's decision.
+
+## Collection status on server rows (1.40.0)
+
+`GET /api/servers`, `GET /api/dns/servers` and `GET /api/infrastructure/health` each
+add `collection_status`, `collection_parts[]` and `last_collected_at` from
+`api/serverStatus.js#describeCollection`. `GET /api/servers` and `/api/dns/servers`
+also select `dns_poll_status` + `dns_polled_at`.
+
+⛔ `GET /api/infrastructure/health`'s `overall` now tests `collection_status === 'error'`
+instead of `poll_status === 'error'`. The old test read a column that does not apply to a
+DNS-only server: production had one stuck at `'error'` since June — from a poll that
+cannot run on it — which pinned `overall` to `'warning'` indefinitely.
+
+`api/reports.js` keeps reading `srv.poll_status` directly and that is correct there: both
+uses are inside the DHCP **scope** queries, where the server is by definition a DHCP one.

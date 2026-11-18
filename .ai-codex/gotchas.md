@@ -1021,3 +1021,41 @@ tested), `PUT /api/servers/:id` (the reverse direction — platform changed on a
 already-assigned server), and `AgentsTab` (checkbox disabled, so the refusal is
 not reachable from the UI). Agent-side protocol DNS collection is Milestone F and
 is not built; until it is, these servers are central-only.
+
+## ⛔ `poll_status` and `last_polled` are the DHCP poll's, not the server's
+
+Found 2026-11-18 while verifying something unrelated on production, fixed in 1.40.0.
+`collector/writers.js#writeScopeStats` is the ONLY writer of `poll_status` /
+`last_polled` / `poll_error`, and `collectScopeStats` returns early for a
+`role='dns'` server. So for a DNS-only server nothing ever writes them and they keep
+their INSERT default forever.
+
+Every consumer read them as "is this server being collected", and got two wrong
+answers in opposite directions:
+
+- **A working server looked broken.** Production's three DNS servers showed
+  `pending` / "Never polled" while `dns_zones` held 339 rows and `dns_records`
+  257,432, last updated that same hour.
+- **A broken server looked fine.** A `role='both'` server reports the DHCP result, so
+  a total DNS collection failure still read `ok`. Nobody would have found that.
+- And a leftover `poll_status='error'` on a DNS-only server (production had one from
+  2026-06-05, with `poll_error` NULL) pinned `GET /api/infrastructure/health`'s
+  `overall` to `'warning'` indefinitely — for a poll that cannot run on that server.
+
+⛔ **I nearly reported this backwards.** Reading those two fields, the obvious
+conclusion was "production DNS collection has been dead since June". The actual data
+was an hour old. **Check the data the collection produces, not the field that claims
+to describe the collection** — `dns_zones.last_updated` / `dns_records.last_seen`
+settled it in one query. Same shape as LogVault reporting a healthy collector while
+having ingested nothing for 60 days: a liveness field is not an arrival check.
+
+The fix is the four-answer rule again (`collector/dns/capabilities.js` has it for DNS
+capabilities): a capability the server does not have is **not_applicable**, which is
+neither a pass nor a fail and must never move the verdict. `api/serverStatus.js`
+derives the combined status; `dns_poll_status`/`dns_polled_at` record the DNS half.
+
+⛔ **The status is written INSIDE `writeDnsZones`, not at its call sites.** That writer
+is called from both `collector/collector.js` and `api/ws-server.js` (agent ingest).
+Stamping it at one call site would have left agent-collected DNS servers at `pending`
+forever — the same bug, reintroduced on the other path, which is how it would have
+come back.

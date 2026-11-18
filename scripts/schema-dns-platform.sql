@@ -99,7 +99,7 @@ BEGIN
       agent_hub_id,
       dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
       dns_stats_url, dns_api_url, dns_api_server_id, dns_last_error,
-      dns_capabilities, dns_zone_list)
+      dns_capabilities, dns_zone_list, dns_poll_status, dns_polled_at)
       ON ddi_servers TO nocvault_readonly;
   END IF;
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'claude_readonly') THEN
@@ -111,7 +111,7 @@ BEGIN
       agent_hub_id,
       dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
       dns_stats_url, dns_api_url, dns_api_server_id, dns_last_error,
-      dns_capabilities, dns_zone_list)
+      dns_capabilities, dns_zone_list, dns_poll_status, dns_polled_at)
       ON ddi_servers TO claude_readonly;
   END IF;
 END

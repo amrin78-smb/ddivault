@@ -1,5 +1,6 @@
 'use strict';
 const { normaliseDnsPlatform, shouldReplaceSecret, planAgentAssignment } = require('./serverFields');
+const serverStatus = require('./serverStatus');
 const dnsProviders = require('../collector/dns');
 
 /**
@@ -32,6 +33,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.40.0': [
+    "Fixed: a DNS server showed \"Never polled\" on the Known Servers page even while its zones and records were being collected on schedule. The last-polled time and status came from the DHCP scope poll, which does not run on a DNS-only server, so those servers never had one written at all.",
+    "Fixed, and the more serious half: a server doing both DHCP and DNS reported its status from the DHCP side only. If its DNS collection failed completely it still showed as healthy, and the Infrastructure health summary agreed. Each side is now recorded separately and a failure in either one shows.",
+    "Fixed: the Infrastructure health summary could sit at \"warning\" indefinitely because of a leftover DHCP error on a DNS-only server - an error from a poll that never runs on it. Only the collection a server actually performs is now counted.",
+    "The Known Servers page now shows one line per thing the server collects - DHCP, DNS, or both - each with its own time and its own error, and shows nothing at all for a role the server does not have.",
+    "A DNS server with no host or IP configured now says so instead of sitting silently at \"not collected yet\".",
+  ],
   '1.39.1': [
     "Fixed: a BIND, PowerDNS, Knot or NSD server could be assigned to a remote collector agent, and would then be collected by nothing at all. An agent receives only the Windows remote-management details for the servers it owns, and a server owned by an agent is skipped by the central collector - so the server simply stopped being read, with no error anywhere. Those servers are now shown as central-only and cannot be assigned to an agent.",
     "The same applies in reverse: a server already assigned to an agent can no longer be switched to a Linux DNS platform without first returning it to central polling, which the message now says.",
@@ -2959,6 +2967,7 @@ app.get('/api/servers', attachSiteFilter, async (req, res) => {
     const rows = await db.query(
       `SELECT id, hostname, ip_address::text as ip_address, role, description,
               is_active, last_polled, poll_status, poll_error,
+              dns_poll_status, dns_polled_at,
               auth_mode, ps_username, winrm_port, winrm_https,
               winrm_test_ok, winrm_tested_at, notes, site_id, agent_hub_id,
               created_at, updated_at,
@@ -2987,6 +2996,12 @@ app.get('/api/servers', attachSiteFilter, async (req, res) => {
       ...r,
       ps_password: undefined, // never return password
       site_name: r.site_id ? siteMap[r.site_id] || null : null,
+      // ⛔ DERIVED SERVER-SIDE, ONCE. poll_status describes the DHCP scope poll
+      // only, so a client reading it as "is this server collecting" gets the
+      // wrong answer for a DNS-only server and a FALSE OK for a both-role
+      // server whose DNS collection is broken. api/serverStatus.js is the one
+      // place that knows which capabilities a role actually has.
+      ...serverStatus.describeCollection(r),
     }));
     res.json({ data });
   } catch (err) {
@@ -4059,12 +4074,18 @@ app.get('/api/dns/servers', attachSiteFilter, async (req, res) => {
     const siteFilter = req.allowedSiteIds !== null ? `AND site_id = ANY($1::int[])` : '';
     const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const rows = await db.query(
-      `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, last_polled,
+      `SELECT id, hostname, ip_address::text as ip_address, role, poll_status, poll_error, last_polled,
+              dns_poll_status, dns_polled_at, dns_last_error,
               health_score, winrm_test_ok, dns_platform
        FROM ddi_servers WHERE role IN ('dns','both') AND is_active=TRUE ${siteFilter} ORDER BY hostname`,
       params
     );
-    res.json({ data: rows.rows });
+    // ⛔ This route previously returned poll_status + last_polled and nothing
+    // else about collection — both of which describe the DHCP scope poll, which
+    // never runs on the DNS-only servers that make up most of this list. They
+    // are kept (a role='both' row has a real DHCP status) but the DNS half and
+    // the derived verdict are what a DNS view should read.
+    res.json({ data: rows.rows.map(r => ({ ...r, ...serverStatus.describeCollection(r) })) });
   } catch (err) {
     console.error('[API] dns servers error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -5569,6 +5590,7 @@ app.get('/api/infrastructure/health', attachSiteFilter, async (req, res) => {
     const params = req.allowedSiteIds !== null ? [req.allowedSiteIds] : [];
     const servers = await db.query(
       `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.is_active, s.poll_status,
+              s.poll_error, s.dns_poll_status, s.dns_polled_at, s.dns_last_error,
               s.last_polled, s.health_score, s.health_checked_at, s.query_ms, s.winrm_test_ok, s.site_id,
               (SELECT COUNT(*) FROM dhcp_scopes sc WHERE sc.server_id = s.id) AS scope_count,
               (SELECT COUNT(*) FROM dhcp_leases l WHERE l.server_id = s.id) AS lease_count,
@@ -5576,14 +5598,22 @@ app.get('/api/infrastructure/health', attachSiteFilter, async (req, res) => {
               (SELECT COALESCE(SUM(z.record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count
          FROM ddi_servers s WHERE s.is_active = TRUE ${siteFilter} ORDER BY s.hostname`,
       params);
+    const data = servers.rows.map(r => ({ ...r, ...serverStatus.describeCollection(r) }));
     // overall status
-    const scores = servers.rows.map(s => s.health_score).filter(v => v != null);
+    const scores = data.map(s => s.health_score).filter(v => v != null);
     const worst = scores.length ? Math.min(...scores) : null;
     let overall = 'healthy';
     if (worst != null && worst < 70) overall = 'critical';
     else if (worst != null && worst < 90) overall = 'warning';
-    else if (servers.rows.some(s => s.poll_status === 'error' || s.winrm_test_ok === false)) overall = 'warning';
-    res.json({ data: servers.rows, overall, worst_score: worst });
+    // ⛔ WAS `s.poll_status === 'error'`, WHICH READ A FIELD THAT DOES NOT APPLY.
+    // collectScopeStats returns early for a role='dns' server, so poll_status is
+    // never written for one and keeps whatever it last held. Production had a
+    // DNS-only server stuck at 'error' since June — for a poll that cannot run
+    // on it — which pinned this endpoint to 'warning' indefinitely while every
+    // server was in fact healthy. collection_status only counts the capabilities
+    // the server actually has, so a real failure in either half still shows.
+    else if (data.some(s => s.collection_status === 'error' || s.winrm_test_ok === false)) overall = 'warning';
+    res.json({ data, overall, worst_score: worst });
   } catch (err) {
     console.error('[API] infra health error:', err.message);
     res.status(500).json({ error: 'Internal server error' });

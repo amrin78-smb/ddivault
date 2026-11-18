@@ -52,8 +52,21 @@ async function syncProtocolDns(db, row, writers, ctx) {
   const server = serverContext(row);
   const provider = providerFor(server.dns_platform);
   const out = { zones: 0, transferred: 0, skipped: 0, records: 0, error: null };
-  if (!provider) { out.error = `no provider for platform "${server.dns_platform}"`; return out; }
-  if (!server.dns_host) { out.error = 'no DNS host/IP configured'; return out; }
+  // ⛔ THESE TWO RECORD THE OUTCOME BEFORE RETURNING. They used to return
+  // silently, so "this server has no DNS host configured" — an operator mistake
+  // with an obvious fix — left dns_poll_status NULL, which reads as "never
+  // collected yet" rather than "misconfigured". A config error that presents as
+  // a pending state is a config error nobody goes looking for.
+  if (!provider) {
+    out.error = `no provider for platform "${server.dns_platform}"`;
+    await recordOutcome(db, row.id, server, out);
+    return out;
+  }
+  if (!server.dns_host) {
+    out.error = 'No DNS host or IP is configured for this server';
+    await recordOutcome(db, row.id, server, out);
+    return out;
+  }
 
   let zones;
   try {
@@ -171,10 +184,22 @@ async function persistSerials(db, serverId, zones) {
 async function recordOutcome(db, serverId, server, out) {
   const verdict = {};
   for (const c of caps.CAPABILITIES) verdict[c] = caps.capabilityFor(server, c);
+  // ⛔ dns_polled_at, NOT last_polled. This used to stamp `last_polled`, which
+  // belongs to the DHCP scope poll — so a BIND server showed a fresh DHCP poll
+  // timestamp it had never had, while its own DNS status stayed at the INSERT
+  // default. Two wrong fields instead of one right one. See api/serverStatus.js.
+  //
+  // A partial zone list is 'ok' with an error recorded, not 'error': the zones
+  // that answered WERE collected, and calling the whole poll a failure would
+  // discard that fact. out.zones is 0 only when nothing was collected at all.
+  const status = out.error && !out.zones ? 'error' : 'ok';
   try {
     await db.query(
-      `UPDATE ddi_servers SET dns_capabilities = $1::jsonb, dns_last_error = $2, last_polled = NOW() WHERE id = $3`,
-      [JSON.stringify(verdict), out.error, serverId]);
+      `UPDATE ddi_servers
+          SET dns_capabilities = $1::jsonb, dns_last_error = $2,
+              dns_poll_status = $3, dns_polled_at = NOW()
+        WHERE id = $4`,
+      [JSON.stringify(verdict), out.error, status, serverId]);
   } catch (e) { /* un-migrated DB */ }
 }
 

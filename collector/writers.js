@@ -75,11 +75,41 @@ function loggers(ctx) {
   return { log, warn };
 }
 
+/**
+ * The DHCP scope poll's outcome. ⛔ THIS IS NOT "IS THE SERVER COLLECTING".
+ * `collectScopeStats` returns early for a `role='dns'` server, so these three
+ * columns are never written for one — read as a general collection status they
+ * answer "pending" about a server whose zones are collected every cycle, and
+ * 'ok' about a both-role server whose DNS collection is entirely broken.
+ * `updateDnsStatus` records the other half; `api/serverStatus.js` combines them.
+ */
 async function updateServerStatus(db, serverId, status, errorMsg) {
   await db.query(
     `UPDATE ddi_servers SET last_polled=NOW(), poll_status=$2, poll_error=$3 WHERE id=$1`,
     [serverId, status, errorMsg || null]
   );
+}
+
+/**
+ * The DNS sync's outcome. Lives here, beside the DHCP one, so the CENTRAL
+ * collector and the AGENT ingest path record it identically.
+ *
+ * ⛔ SET IT IN THE WRITER, NOT AT THE CALL SITES. `writeDnsZones` is called from
+ * both `collector/collector.js` and `api/ws-server.js`; stamping the status at
+ * one call site would have left agent-collected DNS servers stuck at 'pending'
+ * forever — the very bug this change exists to remove, reintroduced on the
+ * other path. One writer, one place that records what it did.
+ */
+async function updateDnsStatus(db, serverId, status, errorMsg) {
+  try {
+    await db.query(
+      `UPDATE ddi_servers SET dns_poll_status=$2, dns_polled_at=NOW(), dns_last_error=$3 WHERE id=$1`,
+      [serverId, status, errorMsg || null]
+    );
+  } catch (e) {
+    // An un-migrated DB must not break the poll; the columns arrive with
+    // scripts/schema.sql. Same tolerance collector/dns/sync.js already has.
+  }
 }
 
 // Classify a device and persist fingerprint columns on a dhcp_leases row.
@@ -438,6 +468,11 @@ async function writeDnsZones(db, server, data, ctx) {
   const recordsByZone = (data && data.recordsByZone) || {};
   if (!zones || !zones.length) {
     warn(`[DNS] No zones from ${ip}`);
+    // Platform-neutral on purpose: this writer serves the Windows, protocol and
+    // agent paths, and "check WinRM" is wrong advice on a BIND server. The
+    // Windows-only caller in collector/collector.js adds the WinRM hint itself,
+    // and collector/dns/sync.js only calls this writer with a non-empty list.
+    await updateDnsStatus(db, server.id, 'error', 'No DNS zones were returned by this server');
     return;
   }
 
@@ -472,6 +507,7 @@ async function writeDnsZones(db, server, data, ctx) {
     }
   }
   log(`[DNS] ${ip} — synced ${zoneCount} zones`);
+  await updateDnsStatus(db, server.id, 'ok', null);
 }
 
 /**
@@ -598,6 +634,7 @@ module.exports = {
   writeDnsZones,
   writeScanResult,
   updateServerStatus,
+  updateDnsStatus,
   classifyAndTagLease,
   // helpers re-exported for callers that need identical coercion
   scopeIdStr, parsePsDate, parsePsDuration, cleanIp,

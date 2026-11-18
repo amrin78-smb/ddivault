@@ -239,3 +239,21 @@ Two answers on purpose: an id in `explicitAssign` (the operator typed it) is
 Takes `isProtocol` as a parameter so it uses `collector/dns`'s real
 `isProtocolPlatform` rather than a second copy of the platform list — a local copy
 would have silently missed `generic`.
+
+## api/serverStatus.js (1.40.0)
+
+The one place that answers "is this server being collected", per capability.
+
+- `collectionStatus(server)` → `{ status: 'ok'|'error'|'pending'|'unknown', parts: [...] }`
+- `dhcpPart(server)` / `dnsPart(server)` → `{ capability, status, at, error }`
+- `lastCollectedAt(server)` → `Date|null` — the newest of the APPLICABLE timestamps,
+  never bare `last_polled` (which is the DHCP poll's)
+- `describeCollection(server)` → `{ collection_status, collection_parts, last_collected_at }`,
+  JSON-safe; spread onto API rows by `GET /api/servers`, `GET /api/dns/servers` and
+  `GET /api/infrastructure/health`
+- `hasDhcp(role)` / `hasDns(role)` — role defaults to `both`, matching the column
+
+⛔ **A capability the server does not have is `not_applicable`** — not a failure, not a
+success, and it never moves the overall verdict. ⛔ **Any applicable failure wins**, so a
+`both` server collecting DHCP perfectly and no DNS is `error`, not `ok`. Tested in
+`tests/serverStatus.test.js` (12 cases, both wrong answers pinned).

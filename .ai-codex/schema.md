@@ -228,3 +228,27 @@ interval across a restart cannot be computed.
 ### ddi_servers.dns_zone_list (1.39.0)
 TEXT, newline/comma separated. Zones for the `generic` platform, which cannot discover
 them. Non-secret, so it IS in the readonly column grant in schema-dns-platform.sql.
+
+### ddi_servers.dns_poll_status / dns_polled_at (1.40.0)
+
+The DNS collection outcome, recorded separately from the DHCP one.
+
+⛔ **`poll_status` / `last_polled` / `poll_error` ARE THE DHCP SCOPE POLL'S, NOT THE
+SERVER'S.** `collector/writers.js#writeScopeStats` is the only writer, and
+`collectScopeStats` returns early for `role='dns'` — so on a DNS-only server those
+three columns are never written and keep their INSERT default forever. Read as "is
+this server collecting", they gave two wrong answers at once: a DNS-only server read
+`pending`/"Never polled" while its zones were collected every cycle, and a
+`role='both'` server with totally broken DNS collection read `ok`.
+
+Written by `collector/writers.js#updateDnsStatus`, called from inside
+`writeDnsZones` so the central collector AND `api/ws-server.js` (agent ingest)
+record it identically, plus `collector/dns/sync.js#recordOutcome` for the protocol
+platforms. Derived into one verdict by `api/serverStatus.js`.
+
+⛔ **These two columns live in `scripts/schema.sql`, not `schema-dns-platform.sql`,
+and that is deliberate** — see gotchas, "Upgrading a server from <=1.36.0": the
+updater's `$schemas` list comes from the copy on disk at launch, so only a file
+already on every release's list applies on the FIRST run. They ARE added to the
+`schema-dns-platform.sql` grant lists (both roles) so the readonly roles can see
+them once that file next runs.

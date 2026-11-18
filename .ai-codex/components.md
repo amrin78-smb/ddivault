@@ -177,3 +177,16 @@ anyway; this exists so the refusal is never reached from the UI. The module-scop
 `PROTOCOL_PLATFORMS` set is a deliberate duplicate of the collector's list — the
 frontend cannot import from `collector/` — so **adding a platform means editing
 both**.
+
+## ServersTab.tsx — collection shown per capability (1.40.0)
+
+The single "Last polled / Never polled" line is gone. The card now renders one row per
+entry in `collection_parts` whose status is not `not_applicable`: a dot (green/red/grey),
+the capability, its own timestamp, and its own error. A role the server does not have is
+omitted entirely rather than shown as "never". The standalone `poll_error` box was
+likewise replaced by one box per failing applicable capability.
+
+⛔ `Server` gained `collection_status`, `collection_parts` and `last_collected_at`. **Do
+not go back to reading `poll_status`/`last_polled` in this component** — they describe the
+DHCP scope poll, which is why the card used to say "Never polled" about a DNS server whose
+zones had been read minutes earlier.

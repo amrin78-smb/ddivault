@@ -21,6 +21,13 @@ interface Server {
   last_polled: string;
   poll_status: string;
   poll_error: string;
+  // Derived server-side by api/serverStatus.js. ⛔ Do NOT go back to reading
+  // poll_status/last_polled directly here: those describe the DHCP scope poll,
+  // which never runs on a role='dns' server, so this card used to say "Never
+  // polled" about a server whose zones had been collected minutes earlier.
+  collection_status?: 'ok' | 'error' | 'pending' | 'unknown';
+  last_collected_at?: string | null;
+  collection_parts?: { capability: 'dhcp' | 'dns'; status: string; at: string | null; error: string | null }[];
   auth_mode: string;
   ps_username: string;
   winrm_port: number;
@@ -647,17 +654,22 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
         )}
       </div>
 
-      {/* Poll error */}
-      {s.poll_error && (
-        <div style={{
-          fontSize: 'var(--text-xs)', color: 'var(--red)',
-          background: 'color-mix(in srgb, var(--red) 9%, var(--bg-card))',
-          border: '1px solid color-mix(in srgb, var(--red) 25%, var(--bg-card))',
-          padding: '7px 10px', borderRadius: 'var(--radius-sm)',
-        }}>
-          ⚠ {s.poll_error}
-        </div>
-      )}
+      {/* Collection errors, in full, for the capabilities this server HAS.
+          ⛔ Was `s.poll_error` alone, which is the DHCP poll's error column — so
+          it could surface a stale DHCP message on a DNS-only server while a real
+          DNS collection failure had nowhere to appear at all. */}
+      {(s.collection_parts || [])
+        .filter(p => p.status === 'error' && p.error)
+        .map(p => (
+          <div key={p.capability} style={{
+            fontSize: 'var(--text-xs)', color: 'var(--red)',
+            background: 'color-mix(in srgb, var(--red) 9%, var(--bg-card))',
+            border: '1px solid color-mix(in srgb, var(--red) 25%, var(--bg-card))',
+            padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+          }}>
+            ⚠ {p.capability.toUpperCase()} collection: {p.error}
+          </div>
+        ))}
 
       {/* Test result (inline) */}
       {testResult && (
@@ -701,10 +713,40 @@ function ServerCard({ s, testing, testResult, onTest, onEdit, onDelete }: {
         </div>
       )}
 
-      {/* Timestamps */}
-      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-        {s.last_polled ? `Last polled: ${new Date(s.last_polled).toLocaleString()}` : 'Never polled'}
-        {s.winrm_tested_at ? ` · Last tested: ${new Date(s.winrm_tested_at).toLocaleString()}` : ''}
+      {/* Collection — one line per capability this server actually has.
+          ⛔ A capability the server does not have is omitted entirely, not shown
+          as "never": a DHCP-only server has no DNS collection to report on, and
+          printing "DNS: never" about it is the same mistake in miniature. */}
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {(s.collection_parts || [])
+          .filter(p => p.status !== 'not_applicable')
+          .map(p => (
+            <div key={p.capability} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                background: p.status === 'ok' ? 'var(--green)'
+                  : p.status === 'error' ? 'var(--red)' : 'var(--text-muted)',
+              }} />
+              <span style={{ textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600 }}>
+                {p.capability}
+              </span>
+              <span>
+                {p.status === 'pending'
+                  ? 'not collected yet'
+                  : p.at
+                    ? `collected ${new Date(p.at).toLocaleString()}`
+                    : p.status === 'ok' ? 'collected' : 'failed'}
+              </span>
+              {p.status === 'error' && p.error && (
+                <span style={{ color: 'var(--red)' }} title={p.error}>
+                  — {p.error.length > 48 ? p.error.slice(0, 48) + '…' : p.error}
+                </span>
+              )}
+            </div>
+          ))}
+        {s.winrm_tested_at && (
+          <div>WinRM last tested: {new Date(s.winrm_tested_at).toLocaleString()}</div>
+        )}
       </div>
 
       {/* Actions */}

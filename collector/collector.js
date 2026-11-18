@@ -202,12 +202,16 @@ async function seedInitialServer() {
   }
 }
 
-async function updateServerStatus(serverId, status, errorMsg) {
-  await db.query(
-    `UPDATE ddi_servers SET last_polled=NOW(), poll_status=$2, poll_error=$3 WHERE id=$1`,
-    [serverId, status, errorMsg || null]
-  );
-}
+// ⛔ There used to be a second `updateServerStatus` here, byte-identical to
+// `writers.js#updateServerStatus` and called from nowhere. Deleted rather than
+// wired up: `poll_status` has exactly one legitimate writer (the DHCP scope
+// writer), and a second one would be how the DHCP half starts reporting for a
+// server whose DHCP is never polled.
+
+// The DNS collection outcome is recorded by writers.js#updateDnsStatus, which
+// writeDnsZones calls itself — so the central collector and the agent ingest
+// path (api/ws-server.js) record it identically. Nothing to do here.
+
 
 // ── Per-type COLLECT functions (central only) ─────────────────
 // Each collects raw PowerShell/WinRM output for one server, then hands the
@@ -332,6 +336,12 @@ async function syncDns(server) {
   const zones = await ps.getDnsZones(ip, auth);
   if (!zones || !zones.length) {
     warn(`[DNS] No zones from ${ip}`);
+    // ⛔ RECORD THE FAILURE. Returning silently here is what left every Windows
+    // DNS server's collection status at its INSERT default forever: nothing on
+    // this path ever wrote one, so a server that had never returned a zone was
+    // indistinguishable from one collected successfully minutes ago.
+    await writers.updateDnsStatus(db, server.id, 'error',
+      'No zones returned — check WinRM and that the DNS Server role is installed');
     return;
   }
 
@@ -345,6 +355,7 @@ async function syncDns(server) {
     }
   }
 
+  // writeDnsZones records the outcome itself — see writers.js#updateDnsStatus.
   await writers.writeDnsZones(db, server, { zones, recordsByZone }, { log, warn });
 }
 
