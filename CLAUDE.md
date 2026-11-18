@@ -554,6 +554,58 @@ request describes. A gate that only blocks the UI is not a security control.
 2. POST to `/api/auth/signout` with CSRF token
 3. `window.location.replace(NOCVAULT_HUB_URL + '/launcher')` — clean redirect, no callbackUrl
 
+## DNS platforms: Windows (PowerShell) and Linux (protocol) — 1.37.0
+
+DDIVault collects DNS from three platforms, chosen per server by
+`ddi_servers.dns_platform`:
+
+| Platform | How | Module |
+|---|---|---|
+| `windows` (default) | `Get-DnsServer*` over WinRM | `collector/dnsMonitor.js` + `powershellRunner.js` — **unchanged** |
+| `bind` | AXFR + TSIG for records, statistics-channel for zones/stats | `collector/dns/providers/bind.js` |
+| `powerdns` | Authoritative REST API | `collector/dns/providers/powerdns.js` |
+
+The Linux path is **protocol-first**: it speaks the DNS protocol itself (AXFR, SOA, RFC 8945
+TSIG) and uses a vendor channel only for what the protocol cannot express. It never SSHes
+in, never reads `named.conf`, and needs no agent on the customer's DNS server — they grant
+`allow-transfer { key "ddivault"; };` and nothing else.
+
+⛔ **WINDOWS STAYS ON POWERSHELL AND THAT IS NOT AN OVERSIGHT.** Windows DNS speaks AXFR, so
+routing it through the new path would look like a tidy unification. It would also silently
+drop scavenging, aging and AD-integrated zone data, which only the cmdlets expose and which
+the Windows half of the product is built around. `providerFor('windows')` returns `null`,
+and that null IS the signal to use the old path.
+
+⛔ **`dns_platform` DEFAULTS TO `'windows'` AND THE DEFAULT IS LOAD-BEARING.** Every row that
+predates 1.37.0 is a Windows server. A NULL or a different default would route live
+production DNS servers down the new, unproven path on the first collector cycle after an
+upgrade. An unrecognised value is rejected with HTTP 400 rather than defaulted (see
+`api/serverFields.js`): falling back to `'windows'` would accept `"bind9"` and then poll a
+Linux host over WinRM forever, reporting the auth failures as a network fault.
+
+⛔ **FOUR ANSWERS, NOT TWO.** `collector/dns/capabilities.js` reports every capability as
+`supported` / `not_applicable` / `not_available` / `unknown`, and the UI must render them
+differently. "Scavenging: Disabled" on a BIND server is a confidently wrong answer that
+sends someone to enable a feature that does not exist; an empty forwarder list on BIND is a
+claim about the customer's config we have no basis for (forwarders live in `named.conf`,
+which we decline to read — so `not_available`, never `not_applicable`, never `[]`).
+
+⛔ **TRANSFERS ARE GATED ON THE SOA SERIAL.** Production holds 339 zones / 256,951 records.
+`collector/dns/sync.js` compares each zone's serial against the stored
+`dns_zones.soa_serial` and transfers only what moved; the steady state is one small query
+per zone and zero transfers.
+
+**Testing.** `tests/dnslab/lab.sh up` runs real BIND and PowerDNS in rootless podman;
+`tests/dnsProviders.test.js` + `tests/dnsSync.test.js` skip without it. Ports are 5354/5355,
+not 53, because rootless containers cannot bind below 1024 — which is why `dns_port` is
+configurable. See `.ai-codex/gotchas.md` for the traps (Windows `nslookup` fakes a timeout
+on a non-53 port; BIND's zone dir must be writable for RFC 2136; `dns-packet` has no real
+TSIG support despite appearing to).
+
+**Writes are NOT implemented.** `capabilities.js` reports `writes: not_applicable` for both
+Linux platforms. RFC 2136 is proven to work against the lab but nothing is wired — adding it
+is a deliberate later phase, gated behind a per-server opt-in.
+
 ## PowerShell / WinRM Integration
 
 ### Per-server auth modes

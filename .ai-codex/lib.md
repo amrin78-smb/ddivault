@@ -173,3 +173,28 @@ settingsFormStyles.ts
   FIELD_FULL — flexBasis:'100%', forces a full-row line break in a flex-wrap row
 
 (lib) frontend/src/lib/corners.ts — rounded/square corner switch. getCorners/applyCorners/toggleCorners/CORNERS_INIT_SCRIPT. Key ddivault-corners, event ddivault:corners, attribute data-corners="square" on <html> (rounded = ABSENCE of the attribute, there is no [data-corners="rounded"] rule). Works by overriding --radius/--radius-sm/--radius-pill only, so ANY hardcoded numeric borderRadius opts that component out SILENTLY — always use the token.
+
+## collector/dns/ — Linux & third-party DNS providers (1.37.0)
+Protocol-first: records come from the DNS protocol itself, vendor channels only for what the protocol cannot
+express. No SSH, no agent and no config parsing on the customer's DNS server.
+- `wire.js` — RFC 8945 TSIG (sign/verify) + canonical name encoding. ⛔ `dns-packet` has NO TSIG support;
+  `dnsPacket.record('TSIG')` returns the generic opaque-rdata fallback, which looks like support and is not.
+  Exports `nameToWire, signMessage, splitTsig, verifyEnvelope, normaliseAlgo, hmacAlgoFor`.
+- `client.js` — `querySoa()` (UDP, TCP fallback) and `axfr()` (TCP, TSIG-verified, bounded). Pure Node because
+  **DDIVault runs on Windows, where `dig` does not exist.**
+- `records.js` — `relativise/normaliseRecord/normaliseZone/isReverseZone`. ⛔ Relativises FQDNs to the zone
+  because dns_records' unique key is (zone_id, hostname, record_type, record_data): an FQDN would not collide
+  with the Windows row for the same record, it would DOUBLE it.
+- `capabilities.js` — `supported` / `not_applicable` / `not_available` / `unknown` + the per-platform MATRIX.
+- `providers/bind.js` — AXFR + statistics-channel. ⛔ Filters BIND's four builtin pseudo-zones.
+- `providers/powerdns.js` — REST API (not AXFR, deliberately: one credential, one path). ⛔ Expands rrsets.
+- `sync.js` — `syncProtocolDns()`; adapts to writers.js rather than changing it, and gates transfers on the
+  SOA serial (339 zones / 256,951 records in production — transferring all of them every cycle is the
+  difference between a feature and an outage).
+- `index.js` — `providerFor/isProtocolPlatform/serverContext`. ⛔ 'windows' returns null ON PURPOSE: that is
+  the signal to use the existing PowerShell path, which exposes scavenging/aging/AD data AXFR cannot.
+
+## api/serverFields.js (1.37.0)
+`normaliseDnsPlatform()` (unknown -> null -> HTTP 400, never defaulted) and `shouldReplaceSecret()`
+(empty/mask -> false). Extracted from server.js purely so both can be unit-tested: each fails silently and
+destructively.

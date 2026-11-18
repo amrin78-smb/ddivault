@@ -1,4 +1,5 @@
 'use strict';
+const { normaliseDnsPlatform, shouldReplaceSecret } = require('./serverFields');
 
 /**
  * server.js — DDIVault REST API
@@ -30,6 +31,13 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.37.0': [
+    "New: DDIVault can now monitor Linux DNS servers. A server can be set to BIND 9 or PowerDNS instead of Windows DNS, and its zones and records are collected into the same screens as everything else. Nothing changes for your existing Windows DNS servers - they keep working exactly as before.",
+    "Nothing is installed on the DNS server and no shell account is needed. BIND is read with a standard zone transfer protected by a TSIG key, plus its statistics channel; PowerDNS is read through its own API with an API key. Both credentials are encrypted before storage, and DDIVault only ever reads - it never writes to your DNS.",
+    "Features that only exist on Windows DNS - record scavenging, aging and Active-Directory-integrated zones - are now labelled \"not applicable on this platform\" on a BIND or PowerDNS server, rather than shown as switched off. Things that do exist but cannot be read remotely, such as BIND's forwarders, say so instead of appearing to be empty.",
+    "Zones are only re-read when they have actually changed, which is checked with a single small query per zone. A server with hundreds of zones is not transferred in full on every cycle.",
+    "Adding a DNS server now asks which platform it is, and shows the exact named.conf or pdns.conf settings that platform needs.",
+  ],
   '1.36.0': [
     "MAC address vendor lookup now comes from the NocVault intelligence hub and refreshes itself daily, instead of a file that had to be rebuilt by hand. The copy DDIVault was shipping had not been updated since 5 June and was missing 15,293 address blocks, so devices from those manufacturers showed as Unknown.",
     "Devices whose manufacturer sits in one of IEEE's smaller address blocks are now identified. IEEE hands out address ranges in three sizes and DDIVault only ever read the largest, so 13,841 smaller assignments — the ranges most small and specialist manufacturers get — could never be matched at all.",
@@ -2933,7 +2941,16 @@ app.get('/api/servers', attachSiteFilter, async (req, res) => {
               is_active, last_polled, poll_status, poll_error,
               auth_mode, ps_username, winrm_port, winrm_https,
               winrm_test_ok, winrm_tested_at, notes, site_id, agent_hub_id,
-              created_at, updated_at
+              created_at, updated_at,
+              dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
+              dns_stats_url, dns_api_url, dns_api_server_id,
+              dns_last_error, dns_capabilities,
+              -- ⛔ The SECRETS themselves are never selected. The UI needs to
+              -- know whether one is stored (to show "configured" and to leave
+              -- the field blank rather than clearing it on save), which these
+              -- booleans answer without the value ever leaving the database.
+              (tsig_secret IS NOT NULL) AS has_tsig_secret,
+              (dns_api_key IS NOT NULL) AS has_dns_api_key
        FROM ddi_servers ${siteFilter} ORDER BY created_at DESC`,
       params
     );
@@ -2964,18 +2981,33 @@ app.post('/api/servers', requireWrite, async (req, res) => {
       hostname, ip_address, role, description,
       auth_mode, ps_username, ps_password,
       winrm_port, winrm_https, notes, site_id,
+      dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm, tsig_secret,
+      dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id,
     } = req.body;
     if (!hostname && !ip_address) return res.status(400).json({ error: 'hostname or ip_address required' });
 
+    const platform = normaliseDnsPlatform(dns_platform);
+    if (platform === null) return res.status(400).json({ error: 'unsupported dns_platform' });
+
     const encryptedPass = ps_password ? encryptCred(ps_password) : null;
+    // ⛔ Encrypted with the same credStore the WinRM password uses. A TSIG
+    // shared secret and a PowerDNS API key are credentials for someone else's
+    // infrastructure; storing either in clear would be worse than the password
+    // this table already protects, because they are usable from anywhere.
+    const encryptedTsig = tsig_secret ? encryptCred(tsig_secret) : null;
+    const encryptedApiKey = dns_api_key ? encryptCred(dns_api_key) : null;
 
     const result = await db.query(
       `INSERT INTO ddi_servers
          (hostname, ip_address, role, description, auth_mode, ps_username, ps_password,
-          winrm_port, winrm_https, notes, site_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          winrm_port, winrm_https, notes, site_id,
+          dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm, tsig_secret,
+          dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING id, hostname, ip_address::text, role, description,
-                 auth_mode, ps_username, winrm_port, winrm_https, notes, site_id, is_active, created_at`,
+                 auth_mode, ps_username, winrm_port, winrm_https, notes, site_id, is_active, created_at,
+                 dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
+                 dns_stats_url, dns_api_url, dns_api_server_id`,
       [
         // hostname is NOT NULL in the schema — fall back to ip_address when a
         // server is added by IP only (validation above guarantees one is present).
@@ -2983,6 +3015,10 @@ app.post('/api/servers', requireWrite, async (req, res) => {
         auth_mode || 'kerberos', ps_username || null, encryptedPass,
         parseInt(winrm_port || '5985'), winrm_https === true,
         notes || null, site_id ? parseInt(site_id) : null,
+        platform, dns_host || null, parseInt(dns_port || '53'),
+        tsig_key_name || null, tsig_algorithm || 'hmac-sha256', encryptedTsig,
+        dns_stats_url || null, dns_api_url || null, encryptedApiKey,
+        dns_api_server_id || 'localhost',
       ]
     );
     if (req.audit) req.audit({ action: 'create', entity_type: 'server', entity_id: result.rows[0].id, entity_name: hostname || ip_address, server_id: result.rows[0].id, new_value: { hostname, ip_address, role, auth_mode } });
@@ -3002,44 +3038,69 @@ app.post('/api/servers', requireWrite, async (req, res) => {
 app.put('/api/servers/:id', requireWrite, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const {
-      hostname, ip_address, role, description, is_active,
-      auth_mode, ps_username, ps_password,
-      winrm_port, winrm_https, notes, site_id,
-    } = req.body;
+    const b = req.body || {};
 
-    // Only re-encrypt password if a new one was provided
-    let encryptedPass = undefined;
-    if (ps_password && ps_password !== '••••••••') {
-      encryptedPass = encryptCred(ps_password);
-    }
+    const platform = normaliseDnsPlatform(b.dns_platform);
+    if (platform === null) return res.status(400).json({ error: 'unsupported dns_platform' });
+
+    // ⛔ BUILT DYNAMICALLY ON PURPOSE. This used to interpolate parameter
+    // NUMBERS into the SQL string ("winrm_port=$10" or "$9" depending on whether
+    // a password was supplied) and then pass one of two hand-built argument
+    // arrays. That worked for exactly one optional secret; this row now has
+    // THREE (ps_password, tsig_secret, dns_api_key), and each extra one
+    // multiplies the hand-maintained orderings that must agree. Column names
+    // below are literals from this file, never request data — every value is
+    // parameterised.
+    const sets = [];
+    const vals = [id];
+    const set = (col, val) => { vals.push(val); sets.push(col + '=$' + vals.length); };
+
+    set('hostname', b.hostname || b.ip_address || null);
+    set('ip_address', b.ip_address || null);
+    set('role', b.role || 'both');
+    set('description', b.description || null);
+    set('is_active', b.is_active !== false);
+    set('auth_mode', b.auth_mode || 'kerberos');
+    set('ps_username', b.ps_username || null);
+    set('winrm_port', parseInt(b.winrm_port || '5985'));
+    set('winrm_https', b.winrm_https === true);
+    set('notes', b.notes || null);
+    set('site_id', b.site_id ? parseInt(b.site_id) : null);
+    set('dns_platform', platform);
+    set('dns_host', b.dns_host || null);
+    set('dns_port', parseInt(b.dns_port || '53'));
+    set('tsig_key_name', b.tsig_key_name || null);
+    set('tsig_algorithm', b.tsig_algorithm || 'hmac-sha256');
+    set('dns_stats_url', b.dns_stats_url || null);
+    set('dns_api_url', b.dns_api_url || null);
+    set('dns_api_server_id', b.dns_api_server_id || 'localhost');
+
+    // ⛔ A SECRET IS ONLY REWRITTEN WHEN A REAL NEW VALUE ARRIVES. The UI shows
+    // a mask for a stored secret, so saving any other field round-trips that
+    // mask back. Treating the mask as a value would overwrite the real
+    // credential with literal bullets; treating an EMPTY string as a value
+    // would silently wipe it. Both are only reachable by saving an unrelated
+    // field — which is exactly when nobody is looking at this one.
+    // See api/serverFields.js for why empty means "unchanged", not "clear".
+    const secret = (col, val) => { if (shouldReplaceSecret(val)) set(col, encryptCred(val)); };
+    secret('ps_password', b.ps_password);
+    secret('tsig_secret', b.tsig_secret);
+    secret('dns_api_key', b.dns_api_key);
 
     const result = await db.query(
-      `UPDATE ddi_servers SET
-         hostname=$2, ip_address=$3, role=$4, description=$5,
-         is_active=$6, auth_mode=$7, ps_username=$8,
-         ${encryptedPass !== undefined ? 'ps_password=$9,' : ''}
-         winrm_port=${encryptedPass !== undefined ? '$10' : '$9'},
-         winrm_https=${encryptedPass !== undefined ? '$11' : '$10'},
-         notes=${encryptedPass !== undefined ? '$12' : '$11'},
-         site_id=${encryptedPass !== undefined ? '$13' : '$12'},
-         updated_at=NOW()
-       WHERE id=$1
-       RETURNING id, hostname, ip_address::text, role, description,
-                 auth_mode, ps_username, winrm_port, winrm_https,
-                 winrm_test_ok, winrm_tested_at, notes, is_active, site_id`,
-      encryptedPass !== undefined
-        ? [id, hostname||ip_address||null, ip_address||null, role||'both', description||null,
-           is_active !== false, auth_mode||'kerberos', ps_username||null,
-           encryptedPass, parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
-           site_id ? parseInt(site_id) : null]
-        : [id, hostname||ip_address||null, ip_address||null, role||'both', description||null,
-           is_active !== false, auth_mode||'kerberos', ps_username||null,
-           parseInt(winrm_port||'5985'), winrm_https===true, notes||null,
-           site_id ? parseInt(site_id) : null]
+      'UPDATE ddi_servers SET ' + sets.join(', ') + ', updated_at=NOW()' +
+      ' WHERE id=$1' +
+      ' RETURNING id, hostname, ip_address::text, role, description,' +
+      ' auth_mode, ps_username, winrm_port, winrm_https,' +
+      ' winrm_test_ok, winrm_tested_at, notes, is_active, site_id,' +
+      ' dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,' +
+      ' dns_stats_url, dns_api_url, dns_api_server_id,' +
+      ' (tsig_secret IS NOT NULL) AS has_tsig_secret,' +
+      ' (dns_api_key IS NOT NULL) AS has_dns_api_key',
+      vals
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
-    if (req.audit) req.audit({ action: 'modify', entity_type: 'server', entity_id: id, entity_name: result.rows[0].hostname, server_id: id, new_value: { hostname, role, auth_mode, is_active: is_active !== false } });
+    if (req.audit) req.audit({ action: 'modify', entity_type: 'server', entity_id: id, entity_name: result.rows[0].hostname, server_id: id, new_value: { hostname: b.hostname, role: b.role, auth_mode: b.auth_mode, dns_platform: platform, is_active: b.is_active !== false } });
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('[API] server update error:', err.message);
@@ -4150,6 +4211,7 @@ app.get('/api/dns/topology', attachSiteFilter, async (req, res) => {
     const rows = await db.query(
       `SELECT s.id, s.hostname, host(s.ip_address) AS ip, s.role, s.health_score,
               s.query_ms, s.poll_status, s.winrm_test_ok, s.is_dns_primary, s.dns_forwarders,
+              s.dns_platform, s.dns_capabilities, s.dns_last_error,
               r.is_pdc_emulator, r.domain, r.replication_type,
               (SELECT COUNT(*) FROM dns_zones z WHERE z.server_id = s.id) AS zone_count,
               (SELECT COALESCE(SUM(record_count),0) FROM dns_zones z WHERE z.server_id = s.id) AS record_count

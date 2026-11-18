@@ -1329,7 +1329,7 @@ $$;
     }
 
     $env:PGPASSWORD = $dbPass
-    $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql")
+    $schemas = @("schema.sql","schema-ipam.sql","schema-server-auth.sql","schema-sites.sql","schema-dns-platform.sql")
     $schemaFailed = $false
     $schemaFailure = $null
     foreach ($schema in $schemas) {

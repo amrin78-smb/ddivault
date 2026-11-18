@@ -18,6 +18,15 @@ COMMENT ON COLUMN ddi_servers.site_id    IS 'References sites.id in netvault dat
 COMMENT ON COLUMN ipam_supernets.site_id IS 'References sites.id in netvault database';
 COMMENT ON COLUMN ipam_subnets.site_id   IS 'References sites.id in netvault database';
 
+-- ⛔ MOVED (1.37.0): the ddi_servers column-level GRANT below has been
+-- RELOCATED to scripts/schema-dns-platform.sql, which is now the LAST schema
+-- file applied. It had to move for the same reason it moved here in the first
+-- place: that file adds more ddi_servers columns (including two new SECRET
+-- ones), and this grant must be the final statement touching these roles'
+-- privileges on the table or it re-widens access to them. The block below is
+-- left in place and is harmless — the later file REVOKEs and re-GRANTs — but
+-- schema-dns-platform.sql is the one to edit. Do NOT add new columns here.
+
 -- ── ddi_servers: exclude WinRM/PowerShell credential columns from readonly roles ──
 -- (2026-07-23; RELOCATED here from scripts/schema.sql on 2026-07-25 — see the
 -- pointer comment there for the full reason.) ps_username/ps_password

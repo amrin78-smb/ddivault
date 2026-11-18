@@ -1,0 +1,4 @@
+$TTL 3600
+@   IN SOA ns1.lab.example. admin.lab.example. ( 2026111801 7200 3600 1209600 3600 )
+@   IN NS  ns1.lab.example.
+10.0.0 IN PTR web.lab.example.

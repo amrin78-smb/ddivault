@@ -79,6 +79,9 @@ interface TopologyServer {
   winrm_test_ok?: boolean | null;
   is_dns_primary: boolean;
   dns_forwarders: string[] | null;
+  dns_platform?: string | null;
+  dns_capabilities?: Record<string, string> | null;
+  dns_last_error?: string | null;
   is_pdc_emulator: boolean;
   domain: string;
   replication_type: string;
@@ -636,6 +639,62 @@ function ScoreGauge({ score }: { score: number }) {
 }
 
 // ════════════════════════════════════════════════════════════
+// ⛔ THREE DIFFERENT ANSWERS, RENDERED THREE DIFFERENT WAYS. A Windows-only
+// concept shown as "Disabled" on a BIND server is a confidently wrong statement
+// that invites someone to go and enable a feature that does not exist; shown
+// the same as "we could not read it", it hides a real misconfiguration behind a
+// cosmetic one. See collector/dns/capabilities.js for the source of these.
+const CAP_LABEL: Record<string, string> = {
+  not_applicable: 'not applicable on this platform',
+  not_available: 'not readable from this server',
+  unknown: 'unknown',
+};
+const CAP_COLOR: Record<string, string> = {
+  not_applicable: 'var(--text-muted)',
+  not_available: 'var(--amber)',
+  unknown: 'var(--text-muted)',
+};
+const CAP_TITLE: Record<string, string> = {
+  not_applicable: 'This DNS platform has no such feature — there is nothing to configure.',
+  not_available: 'The feature exists on this platform but this server does not expose it to us. Usually a configuration step was missed.',
+  unknown: 'We could not determine this.',
+};
+
+function PlatformBadge({ platform }: { platform?: string | null }) {
+  const p = (platform || 'windows').toLowerCase();
+  if (p === 'windows') return null;   // the default needs no label
+  const label = p === 'bind' ? 'BIND' : p === 'powerdns' ? 'PowerDNS' : p;
+  return <span className="badge badge-green" style={{ fontSize: 'var(--text-xs)', flexShrink: 0 }}>{label}</span>;
+}
+
+/** The capabilities this server does NOT have, stated as what they are. */
+function CapabilityNotes({ caps }: { caps?: Record<string, string> | null }) {
+  if (!caps) return null;
+  const NAMES: Record<string, string> = {
+    scavenging: 'Scavenging', forwarders: 'Forwarders', ad_integration: 'AD integration',
+    stale_records: 'Stale records', query_stats: 'Query statistics', dnssec: 'DNSSEC',
+    zones: 'Zone list', records: 'Records',
+  };
+  const gaps = Object.entries(caps)
+    .filter(([k, v]) => v !== 'supported' && NAMES[k])
+    .sort((a, b) => (a[1] === 'not_available' ? -1 : 1) - (b[1] === 'not_available' ? -1 : 1));
+  if (!gaps.length) return null;
+  return (
+    <div style={{ padding: '0 14px 12px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {gaps.map(([k, v]) => (
+        <span key={k} title={CAP_TITLE[v] || ''}
+          style={{
+            fontSize: 'var(--text-xs)', color: CAP_COLOR[v] || 'var(--text-muted)',
+            border: `1px dashed ${CAP_COLOR[v] || 'var(--border)'}`,
+            borderRadius: 'var(--radius-sm)', padding: '1px 7px',
+          }}>
+          {NAMES[k]}: {CAP_LABEL[v] || v}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // Forwarder status pill (module scope)
 // ════════════════════════════════════════════════════════════
 function ForwarderPill({ ip, status }: { ip: string; status: 'up' | 'down' | 'unknown' }) {
@@ -670,6 +729,7 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>{srv.hostname}</span>
+            <PlatformBadge platform={srv.dns_platform} />
             {srv.is_pdc_emulator && <span title="PDC Emulator" style={{ fontSize: 'var(--text-base)' }}>👑</span>}
             <span className={`badge ${srv.is_dns_primary ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 'var(--text-xs)' }}>
               {srv.is_dns_primary ? 'PRIMARY' : 'SECONDARY'}
@@ -695,6 +755,18 @@ function ServerHealthCard({ srv, zones, fwdStatus, expanded, onToggle }: {
         <div style={{ padding: '0 14px 12px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', alignSelf: 'center' }}>Forwarders:</span>
           {srv.dns_forwarders.map((ip, i) => <ForwarderPill key={i} ip={ip} status={fwdStatus(ip)} />)}
+        </div>
+      )}
+
+      {/* ⛔ An empty forwarder list is only meaningful if we could have read
+          one. On BIND we cannot (they live in named.conf), so showing nothing
+          would read as "this server forwards nowhere" — a claim about the
+          customer's configuration that we have no basis for. */}
+      <CapabilityNotes caps={srv.dns_capabilities} />
+
+      {srv.dns_last_error && (
+        <div style={{ padding: '0 14px 12px', fontSize: 'var(--text-xs)', color: 'var(--amber)' }}>
+          Last collection error: {srv.dns_last_error}
         </div>
       )}
 

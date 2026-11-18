@@ -151,3 +151,14 @@ Not counted as a violation.
 - Violations: **0**.
 
 (c) CornersToggle — Rounded/Square segmented ROW rendered inside the avatar dropdown in Header.tsx (moved out of the top bar in 1.29.2 — it looked wrong there). Deliberately NOT in Settings: that tab is gated behind canManageSystem, and this is a per-browser preference every role must be able to set. Reads its value in useEffect (never at render — the <html> attribute does not exist during SSR, so reading at render is a hydration mismatch).
+
+## DNS platform UI (1.37.0)
+- `ServersTab.tsx` — new **DNS Platform** selector (Windows DNS / BIND 9 / PowerDNS) above the auth section.
+  The PowerShell/WinRM blocks are hidden entirely for non-Windows platforms rather than greyed out (there is
+  nothing a BIND operator could usefully put in them). BIND shows TSIG key/algorithm/secret + statistics-channel
+  URL and a copyable named.conf snippet; PowerDNS shows API URL/key/server-id. Secret inputs start blank and
+  send '' when untouched, which the API reads as "unchanged".
+- `DNSTab.tsx` — `PlatformBadge` (renders nothing for Windows, the default) and `CapabilityNotes`, which states
+  gaps as what they are: *not applicable on this platform* (grey) vs *not readable from this server* (amber).
+  ⛔ These must stay visually distinct — collapsing them is how a missing config step hides behind a feature
+  that was never going to exist.

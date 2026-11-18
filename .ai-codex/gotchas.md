@@ -714,3 +714,101 @@ deployment impact overstates it. The longest-prefix and registry-block machinery
 fire once here. **It is still a precondition, not an optimisation:** it is what makes the
 richer feed safe to adopt the day a /28 or /36 device does appear. Keep both facts
 together — the safety argument is load-bearing, the impact claim is not.
+
+## ⛔ Linux / third-party DNS: protocol-first, and what that costs (1.37.0)
+
+DDIVault can now collect a **BIND 9** or **PowerDNS** server. The obvious design — SSH in
+and parse `named.conf` — was rejected. Records come from **AXFR**, serials from **SOA
+queries**, both vendor-neutral; a vendor channel is used only for what the protocol cannot
+express (BIND's statistics-channel, PowerDNS's REST API). The customer grants one thing
+(`allow-transfer { key "ddivault"; };`) and no shell account, no root and no agent lands on
+their DNS server.
+
+⛔ **THE COST IS HONEST GAPS, AND THEY MUST STAY HONEST.** Anything that lives only in
+`named.conf` — forwarders, most of all — is reported `not_available`, **not** `not_applicable`
+and never as an empty list. BIND absolutely has forwarders; we simply decline to read them.
+Rendering "no forwarders" would be a statement about the customer's configuration that we
+have no basis for. `scavenging` / `ad_integration` / `stale_records` ARE `not_applicable` —
+BIND and PowerDNS have no such concept, and showing "Scavenging: Disabled" on a BIND server
+invites an engineer to go and enable a feature that does not exist. Four answers, four
+renderings: see `collector/dns/capabilities.js`.
+
+⛔ **`dns-packet` HAS NO TSIG SUPPORT, AND LOOKS LIKE IT DOES.** `dnsPacket.record('TSIG')`
+returns a codec, so a quick check reads as "supported". It is the generic opaque-rdata
+fallback that `record()` returns for **any** unknown type — the object is identical to the
+one for a made-up type name. TSIG is implemented in `collector/dns/wire.js` to RFC 8945.
+
+⛔ **DO NOT LOCATE THE TSIG RR BY SCANNING BACKWARDS FOR SOMETHING THAT PARSES.** The first
+implementation did, and it is subtly wrong: a key name's terminating `0` byte is itself a
+valid (root) name and sits LATER in the buffer than the name's real first byte, so the scan
+matches the root interpretation first and returns a TSIG whose key name is `""`. Every other
+field decodes correctly, so it survives a smoke test and surfaces only as the server
+rejecting a signature you believe you computed over the right key. Locate it structurally:
+the TSIG is the last additional, and its encoded length is exactly name + 10 + rdlength.
+
+⛔ **SIGNING THE REQUEST ONLY AUTHENTICATES US TO THE SERVER.** Responses are verified too
+(first envelope chains over the request MAC; later ones over the previous MAC with
+timers-only variables), or anything on the path could hand us a fabricated zone that we
+would write into `dns_records` as fact.
+
+⛔ **THE SOA GATE IS NOT AN OPTIMISATION.** Production holds **339 zones / 256,951 records**.
+Transferring every zone every cycle moves hundreds of MB to learn that nothing changed, and
+spends the customer's DNS server to do it. A zone's serial must change when its contents do,
+so `sync.js` compares against the stored `dns_zones.soa_serial` and transfers only what moved.
+
+⛔ **BIND REPORTS FOUR ZONES THAT ARE NOT ZONES.** `authors.bind`, `hostname.bind`,
+`version.bind` and `id.server` are builtin CHAOS pseudo-zones on every BIND server — a
+2-zone server lists 6. Unfiltered, each BIND server grows four phantom zones that then fail
+to transfer on every cycle.
+
+⛔ **AN RRSET IS NOT A RECORD.** PowerDNS's API returns one rrset per (name, type) with an
+array of contents, so three A records on one host arrive as ONE rrset. Writing rrsets
+through under-counts every round-robin host in the estate. Both fixtures carry a
+two-address `web` for exactly this.
+
+⛔ **`dns_platform` DEFAULTS TO 'windows' AND THAT DEFAULT IS LOAD-BEARING.** Every row that
+existed before this feature is a Windows DNS server; a NULL or a different default would
+route live production servers down the new path on the first cycle after an upgrade. An
+unrecognised value is rejected with 400 rather than defaulted — falling back to 'windows'
+would poll a Linux host over WinRM forever and report the auth errors as a network fault.
+
+⛔ **WINDOWS DNS STAYS ON POWERSHELL.** It speaks AXFR, so folding it in would look like a
+tidy unification — and would silently drop scavenging, aging and AD-integration, which only
+the cmdlets expose. `providerFor('windows')` returns null on purpose.
+
+## ⛔ An empty secret means UNCHANGED, not "clear it" (1.37.0)
+
+`ServersTab` initialises every secret field to `''` and PUTs the **whole form** on save, so
+editing a description submits `ps_password: ''`. The pre-existing route handled this with
+`if (ps_password && ps_password !== '<mask>')`; the rewrite nearly lost it. Reading `''` as an
+explicit clear would silently destroy the stored WinRM credential — and now the TSIG secret
+and PowerDNS API key — of any server whose description someone tidied up, with no error, and
+discovered only at the next poll. There is deliberately **no** clear-the-secret path: the UI
+offers none, so adding one to the API would make destruction reachable without making it
+visible. The rule lives in `api/serverFields.js` with a test, precisely because it fails
+silently.
+
+## ⛔ The DNS test lab, and the tool that lies about it
+
+`tests/dnslab/lab.sh up` starts BIND 9 and PowerDNS in rootless podman; `tests/dnsProviders.test.js`
+and `tests/dnsSync.test.js` **skip** (never fail) without it, the same "could not measure here"
+rule the PowerShell checks follow.
+
+⛔ **Port 5354/5355, not 53.** Rootless podman cannot bind below
+`net.ipv4.ip_unprivileged_port_start` (1024), and on a dev box 53 is already held by
+systemd-resolved and a bridge dnsmasq. This is why `dns_port` is configurable — a hardcoded
+53 would make the feature untestable AND reject legitimate split-horizon deployments.
+
+⛔ **BIND's zone directory must be WRITABLE** or RFC 2136 updates fail `SERVFAIL` — it needs
+to write its journal. That looks exactly like a protocol problem and is not.
+
+⛔ **WINDOWS `nslookup` FAKES A NETWORK FAULT ON A NON-53 PORT.** It reported
+"DNS request timed out" three times and `Server: UnKnown` while a raw UDP query from the same
+box, same port, same second returned `rcode=0` with a valid answer — it reverse-resolves the
+server first and misbehaves off 53. Chasing it cost several rounds of blaming the firewall
+and podman, both innocent. Diagnose with a raw query or the app's own client.
+
+⛔ **A retry loop with no delay is not a wait.** A refused connection returns instantly, so
+`for i in 1..30; do probe; done` burns every attempt in milliseconds and reports a server
+"not ready" that had simply not finished booting. This bit twice. `lab.sh` paces with
+`dig +timeout=1 +tries=1`.

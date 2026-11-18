@@ -30,7 +30,40 @@ interface Server {
   notes: string;
   site_id: number | null;
   site_name: string | null;
+  // DNS platform (1.37.0). 'windows' for every pre-existing server.
+  dns_platform?: string;
+  dns_host?: string | null;
+  dns_port?: number | null;
+  tsig_key_name?: string | null;
+  tsig_algorithm?: string | null;
+  dns_stats_url?: string | null;
+  dns_api_url?: string | null;
+  dns_api_server_id?: string | null;
+  dns_last_error?: string | null;
+  dns_capabilities?: Record<string, string> | null;
+  // The secrets themselves never leave the server; these say whether one exists.
+  has_tsig_secret?: boolean;
+  has_dns_api_key?: boolean;
 }
+
+// What each platform means, and what it needs configured.
+const DNS_PLATFORM_INFO: Record<string, { label: string; color: string; desc: string }> = {
+  windows: {
+    label: 'Windows DNS',
+    color: 'var(--blue)',
+    desc: 'Collected over WinRM with the DNS Server PowerShell module. Supports scavenging, aging and AD-integrated zones.',
+  },
+  bind: {
+    label: 'BIND 9',
+    color: 'var(--green)',
+    desc: 'Zones and records over AXFR with a TSIG key; zone list and query statistics from the statistics-channel. No shell access needed.',
+  },
+  powerdns: {
+    label: 'PowerDNS',
+    color: 'var(--purple)',
+    desc: 'Zones, records and statistics over the Authoritative REST API using an API key. No zone transfer required.',
+  },
+};
 
 interface Site { id: number; name: string; code: string; city: string }
 
@@ -100,6 +133,19 @@ function ServerModal({ server, sites, onClose, onDone }: {
     winrm_https: server?.winrm_https || false,
     notes:       server?.notes       || '',
     site_id:     server?.site_id ? String(server.site_id) : '',
+    dns_platform: server?.dns_platform || 'windows',
+    dns_host:     server?.dns_host     || '',
+    dns_port:     String(server?.dns_port || 53),
+    tsig_key_name:  server?.tsig_key_name  || '',
+    tsig_algorithm: server?.tsig_algorithm || 'hmac-sha256',
+    // Secrets start blank and are only sent when actually typed. The API reads
+    // an empty value as "unchanged" (see api/serverFields.js), so saving any
+    // other field cannot wipe a stored key.
+    tsig_secret:  '',
+    dns_stats_url: server?.dns_stats_url || '',
+    dns_api_url:   server?.dns_api_url   || '',
+    dns_api_key:   '',
+    dns_api_server_id: server?.dns_api_server_id || 'localhost',
   });
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
@@ -187,6 +233,152 @@ function ServerModal({ server, sites, onClose, onDone }: {
           </div>
         </div>
 
+        {/* DNS platform */}
+        <div style={SECTION_HEADER}>DNS Platform</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+          {Object.entries(DNS_PLATFORM_INFO).map(([plat, info]) => {
+            const selected = form.dns_platform === plat;
+            return (
+              <div key={plat}
+                onClick={() => setForm(p => ({ ...p, dns_platform: plat }))}
+                style={{
+                  padding: '11px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                  border: `2px solid ${selected ? info.color : 'var(--border)'}`,
+                  background: selected ? `color-mix(in srgb, ${info.color} 8%, var(--bg-card))` : 'var(--bg-primary)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
+                  <div style={{
+                    width: 15, height: 15, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${info.color}`,
+                    background: selected ? info.color : 'transparent',
+                    boxShadow: selected ? `inset 0 0 0 2px var(--bg-card)` : 'none',
+                  }} />
+                  <div style={{ fontWeight: 600, fontSize: 'var(--text-base)', color: selected ? info.color : 'var(--text-primary)' }}>
+                    {info.label}
+                  </div>
+                </div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', paddingLeft: 24, lineHeight: 1.5 }}>{info.desc}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Linux / third-party DNS settings */}
+        {form.dns_platform !== 'windows' && (
+          <div style={{
+            padding: 14, marginBottom: 16, borderRadius: 'var(--radius-sm)',
+            background: 'color-mix(in srgb, var(--green) 7%, var(--bg-card))',
+            border: '1px solid color-mix(in srgb, var(--green) 30%, var(--bg-card))',
+          }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 10 }}>
+              <div>
+                <label style={LABEL}>DNS host / IP {form.ip_address ? '(blank = use the server IP above)' : ''}</label>
+                <input value={form.dns_host} onChange={e => setForm(p => ({ ...p, dns_host: e.target.value }))}
+                  style={INPUT} placeholder={form.ip_address || '10.0.0.53'} />
+              </div>
+              <div>
+                <label style={LABEL}>DNS port</label>
+                <input value={form.dns_port} onChange={e => setForm(p => ({ ...p, dns_port: e.target.value }))}
+                  style={INPUT} placeholder="53" />
+              </div>
+            </div>
+
+            {form.dns_platform === 'bind' && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label style={LABEL}>TSIG key name</label>
+                    <input value={form.tsig_key_name} onChange={e => setForm(p => ({ ...p, tsig_key_name: e.target.value }))}
+                      style={INPUT} placeholder="ddivault" />
+                  </div>
+                  <div>
+                    <label style={LABEL}>TSIG algorithm</label>
+                    <select value={form.tsig_algorithm} onChange={e => setForm(p => ({ ...p, tsig_algorithm: e.target.value }))} style={INPUT}>
+                      <option value="hmac-sha256">hmac-sha256</option>
+                      <option value="hmac-sha512">hmac-sha512</option>
+                      <option value="hmac-sha384">hmac-sha384</option>
+                      <option value="hmac-sha224">hmac-sha224</option>
+                      <option value="hmac-sha1">hmac-sha1</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={LABEL}>TSIG secret {server?.has_tsig_secret ? '(leave blank to keep current)' : ''}</label>
+                    <input type="password" value={form.tsig_secret}
+                      onChange={e => setForm(p => ({ ...p, tsig_secret: e.target.value }))}
+                      style={INPUT} placeholder={server?.has_tsig_secret ? '••••••••' : 'base64 secret'} />
+                  </div>
+                </div>
+                <div>
+                  <label style={LABEL}>Statistics-channel URL</label>
+                  <input value={form.dns_stats_url} onChange={e => setForm(p => ({ ...p, dns_stats_url: e.target.value }))}
+                    style={INPUT} placeholder="http://10.0.0.53:8653" />
+                </div>
+                <details style={{ marginTop: 10 }}>
+                  <summary style={{ fontSize: 'var(--text-sm)', color: 'var(--green)', cursor: 'pointer', fontWeight: 600 }}>
+                    ▶ named.conf settings this needs
+                  </summary>
+                  <pre style={{ fontSize: 'var(--text-xs)', background: 'var(--navy)', color: '#e2e8f0', padding: 12, borderRadius: 'var(--radius-sm)', marginTop: 8, overflow: 'auto', lineHeight: 1.6 }}>
+{`// Statistics channel — needed to list zones and read query stats
+statistics-channels { inet 0.0.0.0 port 8653 allow { <NOCVAULT-IP>; }; };
+
+key "${form.tsig_key_name || 'ddivault'}" {
+    algorithm ${form.tsig_algorithm};
+    secret "<the base64 secret you entered above>";
+};
+
+// Per zone you want DDIVault to read:
+zone "example.com" {
+    // ...
+    allow-transfer { key "${form.tsig_key_name || 'ddivault'}"; };
+};`}
+                  </pre>
+                </details>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginTop: 8 }}>
+                  🔒 The TSIG secret is encrypted with AES-256-GCM before storage. DDIVault only ever reads — it never writes to your DNS.
+                </div>
+              </>
+            )}
+
+            {form.dns_platform === 'powerdns' && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={LABEL}>API URL</label>
+                    <input value={form.dns_api_url} onChange={e => setForm(p => ({ ...p, dns_api_url: e.target.value }))}
+                      style={INPUT} placeholder="http://10.0.0.53:8081" />
+                  </div>
+                  <div>
+                    <label style={LABEL}>API key {server?.has_dns_api_key ? '(leave blank to keep)' : ''}</label>
+                    <input type="password" value={form.dns_api_key}
+                      onChange={e => setForm(p => ({ ...p, dns_api_key: e.target.value }))}
+                      style={INPUT} placeholder={server?.has_dns_api_key ? '••••••••' : 'X-API-Key'} />
+                  </div>
+                  <div>
+                    <label style={LABEL}>Server ID</label>
+                    <input value={form.dns_api_server_id} onChange={e => setForm(p => ({ ...p, dns_api_server_id: e.target.value }))}
+                      style={INPUT} placeholder="localhost" />
+                  </div>
+                </div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--green)', marginTop: 8 }}>
+                  🔒 The API key is encrypted with AES-256-GCM before storage. Enable the API with
+                  {' '}<code>api=yes</code>, <code>api-key=...</code> and <code>webserver=yes</code> in pdns.conf.
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: 10 }}>
+              <label style={LABEL}>Notes</label>
+              <input value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} style={INPUT} placeholder="Optional" />
+            </div>
+          </div>
+        )}
+
+        {/* PowerShell/WinRM only applies to Windows DNS — hidden entirely for the
+            others rather than shown greyed out, because there is nothing a BIND
+            operator could usefully put in these fields. */}
+        {form.dns_platform === 'windows' && (<>
         {/* Auth section */}
         <div style={SECTION_HEADER}>PowerShell / WinRM Authentication</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
@@ -293,6 +485,7 @@ Test-WSMan -ComputerName ${form.ip_address || '<SERVER-IP>'}
 Invoke-Command -ComputerName ${form.ip_address || '<SERVER-IP>'} -ScriptBlock { hostname }`}
           </pre>
         </details>
+        </>)}
 
         {/* Footer */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

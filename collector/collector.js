@@ -7,6 +7,8 @@ const ps        = require('./powershellRunner');
 const dhcp      = require('./dhcpReader');
 const ha        = require('./haMonitor');
 const dnsMonitor = require('./dnsMonitor');
+const dnsProviders = require('./dns');
+const dnsSync = require('./dns/sync');
 const ipamSync  = require('./ipamSync');
 const { decrypt } = require('./credStore');
 const writers   = require('./writers');   // shared DB-write half (also used by api/ws-server.js)
@@ -128,13 +130,20 @@ async function getActiveServers() {
   // their config and writes back their results via collector/writers.js.
   const result = await db.query(
     `SELECT id, hostname, ip_address::text as ip_address, role,
-            auth_mode, ps_username, ps_password, winrm_port, winrm_https
+            auth_mode, ps_username, ps_password, winrm_port, winrm_https,
+            dns_platform, dns_host, dns_port, tsig_key_name, tsig_algorithm,
+            tsig_secret, dns_stats_url, dns_api_url, dns_api_key, dns_api_server_id
      FROM ddi_servers WHERE is_active = TRUE AND agent_hub_id IS NULL ORDER BY id`
   );
-  // Decrypt passwords
+  // Decrypt passwords. tsig_secret and dns_api_key are stored the same way as
+  // ps_password (AES-256-GCM via credStore) and must be decrypted here too —
+  // a provider handed ciphertext fails with "BADSIG"/"401", which reads as a
+  // wrong credential rather than as a missing decrypt.
   return result.rows.map(row => ({
     ...row,
     ps_password: row.ps_password ? decrypt(row.ps_password) : null,
+    tsig_secret: row.tsig_secret ? decrypt(row.tsig_secret) : null,
+    dns_api_key: row.dns_api_key ? decrypt(row.dns_api_key) : null,
   }));
 }
 
@@ -299,6 +308,22 @@ async function tailDhcpLog(server) {
 
 async function syncDns(server) {
   if (server.role === 'dhcp') return;
+
+  // ⛔ PLATFORM ROUTING, AND WINDOWS IS THE DEFAULT FOR A REASON. Every row that
+  // existed before 1.37.0 has dns_platform='windows' (the column default), so an
+  // upgrade cannot route a live production DNS server down the new path. Only a
+  // server an operator explicitly marked as bind/powerdns takes it.
+  if (dnsProviders.isProtocolPlatform(server.dns_platform)) {
+    try {
+      await dnsSync.syncProtocolDns(db, server, writers, { log, warn });
+    } catch (e) {
+      // syncProtocolDns is already defensive; this is the last-resort guard so
+      // one misconfigured server cannot stop the poll loop for the others.
+      warn(`[DNS/${server.dns_platform}] ${server.hostname}: ${e.message}`);
+    }
+    return;
+  }
+
   const ip   = cleanIp(server.ip_address);
   const auth = serverAuth(server);
   log(`[DNS] Syncing zones from ${ip}...`);

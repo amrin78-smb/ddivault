@@ -302,3 +302,17 @@ Neither Next.js route needs an explicit `export const dynamic = 'force-dynamic'`
 Both files were read in full to verify neither currently declares `dynamic`, and that nothing
 about their behavior (session cookies, per-request hub calls, request body parsing) would be
 silently cached if they did need it — confirms the omission is correct, not an oversight.
+
+## DNS platform support (1.37.0)
+- `GET /api/servers` — now also returns `dns_platform`, `dns_host`, `dns_port`, `tsig_key_name`,
+  `tsig_algorithm`, `dns_stats_url`, `dns_api_url`, `dns_api_server_id`, `dns_last_error`, `dns_capabilities`,
+  plus booleans `has_tsig_secret` / `has_dns_api_key`. ⛔ The secrets themselves are never selected — the
+  booleans exist so the UI can show "configured" and leave the field blank without the value leaving the DB.
+- `POST /api/servers` — accepts the same fields; `tsig_secret` and `dns_api_key` are AES-256-GCM encrypted via
+  credStore before insert. An unrecognised `dns_platform` is **400, not defaulted** (api/serverFields.js).
+- `PUT /api/servers/:id` — **rewritten to build its SET clause dynamically.** It previously interpolated
+  parameter NUMBERS into the SQL string depending on whether a password was supplied; with three optional
+  secrets that pattern is unmaintainable. ⛔ An empty secret means UNCHANGED, never "clear" — ServersTab PUTs
+  the whole form with blank secret fields, so the other reading would wipe credentials during an unrelated edit.
+- `GET /api/dns/topology` — now also returns `dns_platform`, `dns_capabilities`, `dns_last_error` so the DNS tab
+  can render "not applicable" / "not readable" instead of implying a value.
