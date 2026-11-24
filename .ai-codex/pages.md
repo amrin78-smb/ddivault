@@ -44,6 +44,17 @@ Do not go looking for `/app/dashboard/page.tsx` etc — they don't exist.
   `router.replace('/')`. On any failure redirects to
   `${hub}/login?callbackUrl=%2Fapi%2Fsso%2Fddivault` after a delay.
 
+## frontend/src/app/auth/ (not a page — a route handler on a page-shaped path)
+
+[server] /auth/signin — `auth/signin/route.ts`, GET only (1.40.1) — the
+  request-aware bounce to the hub login page that `authOptions.pages.signIn`
+  points at. Returns a 307 to
+  `resolveOrigin(req, 3000, <env fallback>)/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`
+  — that callbackUrl is a constant (the hub honours only a hub-relative one), so
+  no client-supplied value enters the flow. No UI, no layout, no React. ⛔ Excluded from middleware.ts's page matcher — it must stay
+  reachable with no session, or the gate answers every sign-in and this never
+  runs. `export const dynamic = 'force-dynamic'`.
+
 ## frontend/src/app/api/ (NextAuth-related Next.js API routes — see routes.md for full detail)
 
 /api/auth/[...nextauth]/route.ts — NextAuth handler (GET+POST), config from
@@ -58,4 +69,5 @@ frontend/src/middleware.ts — verifies NextAuth JWT, strips/stamps
   `x-ddi-actor*` headers, proxies `/api/*` to Express (127.0.0.1:3007),
   enforces per-user app-access claim. See routes.md and gotchas.md.
 
-## Total: 2 real page routes (`/`, `/sso`), 1 root layout, 2 Next.js API routes.
+## Total: 2 real page routes (`/`, `/sso`), 1 root layout, 2 Next.js API routes,
+## plus 1 non-page route handler (`/auth/signin`).

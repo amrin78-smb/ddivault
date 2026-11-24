@@ -33,6 +33,24 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.40.3': [
+    "Fixed: if DDIVault could not read your session, every page bounced you to the hub to sign in, which returned you to DDIVault, which bounced you again - until the browser gave up with a \"too many redirects\" error. A session can become unreadable without anyone signing out: it happens when the sign-in secret is changed, and when the suite is reached over HTTPS while DDIVault is still configured with a plain http address.",
+    "DDIVault now asks the hub to return you straight to DDIVault only when your browser presented no session at all. If a session is present but cannot be read, you are sent to the hub sign-in page without that instruction, so you land on the suite launcher and stay there - the problem becomes visible instead of hiding behind a redirect loop.",
+    "Both session cookie names are now recognised - the plain one and the secure-prefixed one - including a session split across several cookies. The two names are exactly what diverge when this goes wrong, so checking only one would have missed the case.",
+    "Nothing changes for a normal sign-in: a browser with no session is still taken to the hub and returned straight into DDIVault afterwards.",
+  ],
+  '1.40.2': [
+    "Hardened: the step that checks your single sign-on token now contacts the NocVault hub at the address DDIVault was configured with, instead of working it out from the web address of the incoming request. That step has to work before you are signed in, so it answers anyone who can reach DDIVault, and the address carried in a request is not something DDIVault can vouch for.",
+    "The same change makes the check correct on an HTTPS installation, where the hub has to be reached on its internal address rather than through the public web address - this is already how the rest of DDIVault talks to the hub.",
+    "When the token check fails, DDIVault now returns one plain message rather than passing the hub's own reply, its status, or the underlying network error back to the browser. The full detail is written to the DDIVault application log instead, so support loses nothing.",
+    "On success only the signed-in email address is returned to the browser. The remainder of the hub's reply was never used by anything and is no longer sent.",
+    "No configuration change is needed. DDIVault uses the hub address already set at installation.",
+  ],
+  '1.40.1': [
+    "Fixed: signing in to DDIVault could send the browser to an address only the server itself can reach, which simply fails to load. The sign-in page address was fixed when the service started rather than worked out from the address you are actually using, so it pointed at the server's own internal loopback address.",
+    "DDIVault now works out where to send you from the request itself, the same way the rest of the app already did, so sign-in works whether the suite is reached by hostname or by IP address.",
+    "After signing in you are returned straight to DDIVault rather than to the suite launcher, and the sign-in redirect no longer passes on any address supplied in the link that led to it - so it cannot be used to bounce someone to an outside site.",
+  ],
   '1.40.0': [
     "Fixed: a DNS server showed \"Never polled\" on the Known Servers page even while its zones and records were being collected on schedule. The last-polled time and status came from the DHCP scope poll, which does not run on a DNS-only server, so those servers never had one written at all.",
     "Fixed, and the more serious half: a server doing both DHCP and DNS reported its status from the DHCP side only. If its DNS collection failed completely it still showed as healthy, and the Infrastructure health summary agreed. Each side is now recorded separately and a failure in either one shows.",

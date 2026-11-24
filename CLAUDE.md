@@ -167,9 +167,12 @@ ddivault/
 │   │   │   ├── layout.tsx
 │   │   │   ├── globals.css        # Design system CSS
 │   │   │   ├── sso/page.tsx       # SSO callback page
+│   │   │   ├── auth/signin/route.ts  # GET-only route handler (NOT a page): request-aware
+│   │   │   │                      # 307 to the hub's /login — what pages.signIn points at
 │   │   │   └── api/
 │   │   │       ├── auth/[...nextauth]/route.ts  # NextAuth handler
-│   │   │       └── sso/route.ts                 # SSO proxy
+│   │   │       └── sso/route.ts                 # SSO proxy — hub target is the ENV VAR,
+│   │   │                                        # never resolveOrigin (SSRF, 1.40.2)
 │   │   ├── components/
 │   │   │   ├── Header.tsx         # Top bar with global search + avatar dropdown
 │   │   │   ├── GlobalSearch.tsx   # Global search bar (press / to focus)
@@ -193,7 +196,9 @@ ddivault/
 │   │   ├── lib/
 │   │   │   ├── auth.ts            # NextAuth config + NocVault SSO
 │   │   │   ├── publicUrl.ts       # resolveOrigin() — per-request hub origin (server-side)
-│   │   │   └── hubUrl.ts          # getHubUrl() — window.location-derived hub origin (client-side)
+│   │   │   ├── hubUrl.ts          # getHubUrl() — window.location-derived hub origin (client-side)
+│   │   │   └── signInRedirect.ts  # signInRedirectTarget() — where a sessionless browser
+│   │   │                          # signs in, worked out per request
 │   │   └── middleware.ts          # Session gate for all pages + /api/*: verifies NextAuth JWT,
 │   │                              # strips/stamps x-ddi-actor* headers, rewrites to Express
 │   │                              # (127.0.0.1:3007), enforces the per-user app-access claim
@@ -293,16 +298,32 @@ NEXT_PUBLIC_NOCVAULT_HUB_URL=http://YOUR-SERVER:3000
 
 Do NOT use `NETVAULT_HUB_URL` or `NEXT_PUBLIC_NETVAULT_HUB_URL` — those are the old names and will cause SSO to fail silently by falling back to `localhost:3000`.
 
-**These vars are now the LAST-RESORT fallback only, not the primary source**
-(added 2026-07). Server-side hub-redirect call sites (`frontend/src/middleware.ts`,
-`frontend/src/app/api/sso/route.ts`, `api/server.js`'s license/hub-settings
-routes) call `resolveOrigin(req, 3000, <the env-var fallback chain>)` from
+**These vars are the LAST-RESORT fallback for a BROWSER REDIRECT and the PRIMARY
+SOURCE for a SERVER-SIDE FETCH** (redirect behaviour added 2026-07; the fetch half
+corrected in 1.40.2). Server-side hub-**redirect** call sites
+(`frontend/src/middleware.ts`, `frontend/src/app/auth/signin/route.ts` via
+`lib/signInRedirect.ts`, `api/server.js`'s license/renew links) call
+`resolveOrigin(req, 3000, <the env-var fallback chain>)` from
 `frontend/src/lib/publicUrl.ts` instead — it derives the hub's origin from the
 CURRENT request's `x-forwarded-host`/`host` + `x-forwarded-proto` (validated
 against a hostname-shape regex), so hub links keep working when the suite is
 reached via a hostname different from the install-time server IP. Client-side
 call sites use `getHubUrl()` (`frontend/src/lib/hubUrl.ts`, `window.location`-
 derived) instead of reading `NEXT_PUBLIC_NOCVAULT_HUB_URL` directly.
+
+⛔ **A `fetch()` TARGET IS THE OPPOSITE CASE AND MUST COME FROM THE ENV VAR.**
+`frontend/src/app/api/sso/route.ts` (the hub `sso-verify` proxy) and
+`api/server.js`'s `/api/hub/settings` build their hub URL from
+`NOCVAULT_HUB_URL` only — `app/api/sso/route.ts` used to use `resolveOrigin`,
+which made it an **unauthenticated SSRF with readback** (fixed 1.40.2:
+`/api/sso` is excluded from `middleware.ts`'s matcher, so it answers with no
+session, and `resolveOrigin` validates the hostname for shape only). It is also
+what the topology requires: on a TLS install the env var is the hub's
+server-side loopback, because a server-to-server hub call through the public TLS
+front door fails `ERR_TLS_CERT_ALTNAME_INVALID`. `frontend/src/lib/auth.ts`'s
+`HUB_URL` and `api/server.js`'s `configuredHubOrigin()` are the pattern; keep
+the chains byte-identical. ⛔ Never "harden" `publicUrl.ts` instead — that
+breaks the browser links it exists for. See `.ai-codex/gotchas.md`.
 
 Existing installations must update their `.env.local` manually — this is a one-time rename.
 
@@ -550,6 +571,54 @@ Any new access-control gate (a new claim, a new role check, a new per-feature en
 must be verified against BOTH paths that share the same session — the page-rendering
 branch AND the `/api/*` proxy branch in `middleware.ts` — not just the one the feature
 request describes. A gate that only blocks the UI is not a security control.
+
+### ⛔ `pages.signIn` must stay a LOCAL RELATIVE path (1.40.1)
+
+`authOptions.pages` is evaluated ONCE, at module load, so a hub URL there is frozen for
+the life of the process and can never follow the request. `auth.ts`'s `HUB_URL` is the
+hub's **server-side loopback** on purpose (the `sso-verify` fetch must not go through the
+public TLS front door — it fails `ERR_TLS_CERT_ALTNAME_INVALID`, because the certificate
+names the site, not the IP), so `pages: { signIn: `${HUB_URL}/login` }` sent BROWSERS to a
+loopback port — measured on production as
+`302 -> http://127.0.0.1:13000/login?callbackUrl=...`, which is dead from a browser.
+
+`pages.signIn` is now `'/auth/signin'`. `frontend/src/app/auth/signin/route.ts` +
+`frontend/src/lib/signInRedirect.ts` derive the hub origin from the REAL request
+(`resolveOrigin(req, 3000, <env fallback>)`) and 307 to
+`<hub>/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`. ⛔ That callbackUrl is a CONSTANT and
+no client-supplied value is carried forward: the hub's login page honours a callbackUrl
+only when it is hub-relative and otherwise falls back to `/launcher`, so sanitising
+NextAuth's absolute one would be work the hub discards — while the SSO re-entry path
+(what `middleware.ts`'s page gate already sends) returns the user straight into DDIVault
+and leaves no open-redirect surface to guard. Standardised across all three satellites.
+That route is excluded from `middleware.ts`'s page matcher: it is only ever reached with
+no session, so gating it would mean the gate answers every sign-in and the handler never
+runs. The same trap applies to any future `pages.*` entry (`signOut`, `error`,
+`verifyRequest`) — keep them local and relative.
+
+### ⛔ The page gate's `callbackUrl` is conditional (1.40.3)
+
+`middleware.ts`'s no-session page redirect attaches
+`?callbackUrl=%2Fapi%2Fsso%2Fddivault` **only when the browser presented no session
+cookie at all**. `getToken()` returns null both for "never signed in" and for
+"session cookie present but UNREADABLE" — next-auth v4 picks the cookie NAME from
+whether `NEXTAUTH_URL` starts with `https://`, so an `http://` value on an HTTPS
+deployment (what the suite installer writes at install time), or a rotated
+`NEXTAUTH_SECRET`, makes every valid session unreadable. In that state a callbackUrl
+loops hub → `/sso` → `/` → hub until `ERR_TOO_MANY_REDIRECTS`, with no hop counter
+anywhere; with no callbackUrl the hub falls back to `/launcher` and the
+misconfiguration stops somewhere visible. Both default cookie names are checked
+(`next-auth.session-token` and `__Secure-next-auth.session-token`) precisely because the
+written and expected names are what diverge — next-auth derives `secureCookie` in two
+different places from two different inputs. ⛔ The `__Secure-` prefix comes from the
+DEFAULT NAME (`defaultCookies(useSecureCookies)`), not from the `secure` flag: a custom
+`cookies.sessionToken.name` is written verbatim, which is why LogVault has no prefixed
+form. ⛔ Matching is prefix-anchored, not `cookies.has()`: next-auth splits a session
+cookie over 3933 bytes into `<name>.0`, `<name>.1`, … and writes no base name, so an
+exact-name check cannot see a chunked session that `getToken()` reads fine — and a large
+`apps` claim is what pushes ours over.
+The `/api/*` branch answers a terminal 401 and needs no guard — but inherits the bug
+if it is ever changed to redirect.
 
 ### Sign out flow
 1. Fetch CSRF token from `/api/auth/csrf`

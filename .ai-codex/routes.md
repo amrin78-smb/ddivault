@@ -1,11 +1,12 @@
 Express routes: no force-dynamic concept applies.
 
-Total routes found: 168 (165 Express + 3 Next.js route handlers)
+Total routes found: 169 (165 Express + 4 Next.js route handlers)
 - api/server.js: 128 routes (app.get/post/put/patch/delete)
 - api/v1.js: 23 routes (mounted at /api/v1)
 - api/reports.js: 3 routes (mounted at /api/reports, registered AFTER reportsScheduling.js)
 - api/reportsScheduling.js: 11 routes (mounted at /api/reports, registered BEFORE reports.js)
-- frontend Next.js route handlers: 3 (GET+POST /api/auth/[...nextauth], POST /api/sso)
+- frontend Next.js route handlers: 4 (GET+POST /api/auth/[...nextauth], POST /api/sso,
+  GET /auth/signin)
 
 Auth-tag legend: `public` = reachable with no NextAuth session per middleware.ts
 PUBLIC_API/ACK_LINK_API allowlist; `auth` = requireAuth (any signed-in role, viewer+);
@@ -279,12 +280,61 @@ ALL /api/auth/[...nextauth] public db+external — NextAuth handler (GET+POST); 
   netvaultDb.users directly with bcrypt (direct-credentials fallback path, db); excluded from
   middleware.ts's session-gate matcher entirely (NextAuth handles its own cookie/session logic)
 POST /api/sso public external — server-side proxy: forwards `{token}` to NocVault hub
-  `POST /api/auth/sso-verify`, returns the hub's JSON verbatim; exists to avoid a browser-side
-  CORS call from the SSO callback page; excluded from middleware.ts's matcher (native route handler)
+  `POST /api/auth/sso-verify`; exists to avoid a browser-side CORS call from the SSO callback
+  page; excluded from middleware.ts's matcher (`sso$` is in the negative lookahead), so it runs
+  with NO SESSION for anyone who can reach port 3006.
+  ⛔ The hub target is `NOCVAULT_HUB_URL` (configuration), NOT `resolveOrigin(req, …)` — it
+  used to be request-derived, which made this an unauthenticated SSRF with readback (1.40.2).
+  Keep the env chain byte-identical to `frontend/src/lib/auth.ts`'s HUB_URL: that module POSTs
+  the SAME hub endpoint for step 2 of this handshake.
+  ⛔ Returns `{email}` ONLY on success (200) — no longer the hub's JSON verbatim;
+  `401 {error:'SSO verification failed'}` for any upstream non-2xx or a reply with no email,
+  `400 {error:'No token provided'}` for a missing/non-string token (before any hub call),
+  `500 {error:'SSO verification unavailable'}` on a thrown error. Upstream status, upstream
+  body and `err.message` go to console.error, never to the caller. See gotchas.md.
+GET /auth/signin public — NOT under /api/*. The request-aware bounce to the hub's login page
+  that `authOptions.pages.signIn` points at (1.40.1). 307s to
+  `resolveOrigin(req, 3000, <env fallback>)/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`.
+  ⛔ That callbackUrl is a CONSTANT — the hub honours only a hub-relative one, and sending
+  the SSO re-entry path (what middleware.ts's page gate already sends) keeps the
+  client-supplied value out of the flow entirely. ⛔ Excluded from middleware.ts's PAGE
+  matcher (`auth/signin` in the negative lookahead): it is only ever reached with no
+  session, so gating it means the gate answers and the route never runs. Logic in
+  `frontend/src/lib/signInRedirect.ts` (`signInRedirectTarget`), because a route file may
+  export only the fields Next recognises. Replaced
+  `pages: { signIn: `${HUB_URL}/login` }`, which NextAuth v4 evaluates ONCE at module
+  load — see gotchas.md
+
+## Page session gate (frontend/src/middleware.ts) — the no-session redirect
+
+Page routes (matcher `'/((?!api|sso|auth/signin|_next/static|_next/image|favicon.ico).*)'`):
+- no readable session AND no session cookie present -> 307
+  `${resolveOrigin(req,3000,…)}/login?callbackUrl=%2Fapi%2Fsso%2Fddivault`
+- no readable session BUT a session cookie IS present -> 307 `${hubUrl}/login` with **NO
+  callbackUrl** (1.40.3). ⛔ `getToken()` returns null both for "no cookie" and for "cookie
+  present but unreadable" (wrong cookie name because next-auth v4 derives `secureCookie` from
+  `NEXTAUTH_URL`'s scheme; or a rotated `NEXTAUTH_SECRET`), and in the second state a
+  callbackUrl loops to ERR_TOO_MANY_REDIRECTS with no hop counter anywhere. Without one the
+  hub falls back to `/launcher`, so the misconfiguration stops visibly.
+  `hasSessionCookie()` checks BOTH `next-auth.session-token` and
+  `__Secure-next-auth.session-token` (authOptions sets neither `cookies` nor
+  `useSecureCookies`, so the defaults apply; the prefix belongs to the default NAME, not to
+  the `secure` flag), and matching is PREFIX-ANCHORED — a bare `cookies.has(name)` cannot see
+  a chunked session (`<name>.0`, `<name>.1`, … over 3933 bytes; no base name is written) that
+  `getToken()` reads fine. See gotchas.md.
+- valid session, `apps` claim excludes ddivault -> 307 `${hubUrl}/launcher?denied=ddivault`
+- The `/api/*` branch answers a terminal `401 {error:'Unauthorized'}` and needs no such guard
+  (a 401 cannot loop) — but inherits the bug if it is ever changed to redirect.
 
 ## Needs force-dynamic
 
-Neither Next.js route needs an explicit `export const dynamic = 'force-dynamic'`.
+`/auth/signin` DOES declare `export const dynamic = 'force-dynamic'` (1.40.1): it is a GET
+route handler whose entire answer is derived from the request's own Host/X-Forwarded-*
+headers, and a cached response would pin one customer's hostname into the redirect and
+serve it to every later caller.
+
+Neither of the two `/api/*` Next.js routes needs an explicit
+`export const dynamic = 'force-dynamic'`.
 
 - `frontend/src/app/api/auth/[...nextauth]/route.ts` — thin `NextAuth(authOptions)` handler
   exporting GET/POST. Next.js's App Router only attempts static optimization for GET route

@@ -240,6 +240,47 @@
 - Tabs in the frontend are NOT separate Next.js routes — `page.tsx` is a
   single page with `useState<Tab>` client-side switching. Don't look for
   `app/dashboard/page.tsx` etc.
+- ⛔ **`authOptions.pages` IS EVALUATED ONCE, AT MODULE LOAD — it can never
+  follow a request** (fixed 1.40.1). `frontend/src/lib/auth.ts` set
+  `pages: { signIn: `${HUB_URL}/login` }`, and NextAuth v4 reads that object as
+  given, so the string was frozen for the life of the process. `HUB_URL` is the
+  hub's SERVER-SIDE LOOPBACK on purpose (the `sso-verify` fetch must not go
+  through the public TLS front door — it fails `ERR_TLS_CERT_ALTNAME_INVALID`
+  because the certificate names the site, not the IP, and that broke DDIVault
+  sign-in once already), so a BROWSER was being told to go to a loopback port on
+  its own machine: measured on production as
+  `302 -> http://127.0.0.1:13000/login?callbackUrl=…`. Meanwhile the page gate
+  in `middleware.ts` produced the right host all along, because it calls
+  `resolveOrigin()` per request. The fix is NOT to change `HUB_URL` (two call
+  sites, two origins — server-to-server wants the loopback) but to make
+  `pages.signIn` the LOCAL RELATIVE path `/auth/signin`; NextAuth resolves a
+  relative value against its own origin, and
+  `frontend/src/app/auth/signin/route.ts` does the cross-origin hop per request.
+  **Any future `pages.*` entry (`signOut`, `error`, `verifyRequest`) has the same
+  trap — point it at a local path, never at another origin.**
+- ⛔ **A new non-`/api` route handler is GATED BY DEFAULT.** `middleware.ts`'s
+  page matcher is a negative lookahead (`/((?!api|sso|auth/signin|_next/…).*)`),
+  so anything new on a page-shaped path inherits the session gate. For a route
+  whose whole job is to serve the SESSIONLESS case that is fatal: the gate
+  answers first and the handler never runs. `auth/signin` is in the lookahead for
+  exactly that reason. Verify the compiled matcher rather than reading it —
+  `.next/server/middleware-manifest.json` contains the real regexp after a build.
+- ⛔ **The hub honours ONLY a hub-relative `callbackUrl`, so do not carry the
+  client's value forward — `/auth/signin` sends a CONSTANT.**
+  `net-vault/app/(auth)/login/page.tsx` accepts a `callbackUrl` only when it
+  `startsWith('/')` and is not `//`, `/sso` or `/login`; everything else falls
+  back to `/launcher`. NextAuth appends its own ABSOLUTE app URL, so sanitising
+  that value onto this app's origin (keeping path+query, discarding the host) is
+  work whose product the hub throws away — and the user stops off at the
+  launcher instead of landing back in DDIVault. The route therefore sends
+  `callbackUrl=%2Fapi%2Fsso%2Fddivault`, the documented SSO re-entry path and
+  exactly what `middleware.ts`'s page gate already sends: zero-click return, and
+  the client-supplied value is out of the flow ENTIRELY, so there is no
+  open-redirect surface to guard rather than a guarded one. Standardised across
+  all three satellites. ⛔ Don't "restore" callbackUrl preservation here: DDIVault
+  is a single-page app (`/` and `/sso` are the only routes), so there is no deep
+  path to preserve, and the hub's handoff (`/api/sso/ddivault`) always lands on
+  `/sso` → `router.replace('/')` regardless.
 
 ## PowerShell / WinRM
 - `$PID` is reserved in PowerShell — use `$procPid` instead.
@@ -1059,3 +1100,183 @@ is called from both `collector/collector.js` and `api/ws-server.js` (agent inges
 Stamping it at one call site would have left agent-collected DNS servers at `pending`
 forever — the same bug, reintroduced on the other path, which is how it would have
 come back.
+
+## ⛔ Next.js FILLS IN `x-forwarded-port` ITSELF — read the host's port first
+
+Measured on this dev box while verifying the 1.40.1 sign-in fix, and it cost a
+wrong answer on the first attempt.
+
+**When `x-forwarded-port` is absent, Next.js sets it to the port its own server
+is listening on.** So a reader that consults `x-forwarded-port` FIRST answers
+with the app's internal/local port even when `x-forwarded-host` plainly carries
+the public one: with the app started on 3016 and
+`X-Forwarded-Host: ddi.example.com:3006`, the derived origin came back as
+`…:3016`. The header is not evidence of a proxy's intent; it may be Next's own
+echo of where it happens to listen.
+
+The correct precedence (and the one netvault's canonical `lib/publicUrl.ts`
+documents at length) is:
+
+1. the port inside the host you are building the URL from (`x-forwarded-host`,
+   else `host`) — the more specific statement, so it decides;
+2. `x-forwarded-port` — ONLY as the fallback, which is the shape the TLS
+   terminator produces once `TLS_PUBLIC_HOST` is set: it pins `x-forwarded-host`
+   to a BARE hostname and sends the correct per-app public port in its own
+   header (`forwardedHeaders()` in `net-vault/installer/terminator/tlsTerminator.ts`);
+3. anything else (a configured app port) last.
+
+DDIVault's own `frontend/src/lib/publicUrl.ts` sidesteps this entirely — every
+call site passes an EXPLICIT port (`resolveOrigin(req, 3000, …)`), which wins
+over any carried source, and that is deliberate: do NOT sync it with netvault's
+richer copy. But the trap is live for any NEW code that tries to work out "which
+port was I reached on" — read the host first, `x-forwarded-port` second, and
+never trust it alone.
+
+## ⛔ `resolveOrigin` is for BROWSER REDIRECTS — a `fetch()` sink must never take its target from the request (1.40.2)
+
+`POST /api/sso` built its hub target with `resolveOrigin(req, 3000, <env>)` and
+then `fetch`ed it. That is an **unauthenticated SSRF with readback**, and all
+three preconditions were live:
+
+1. **No session.** `middleware.ts`'s matcher is
+   `'/api/((?!auth(?:/|$)|sso$).+)'`, whose negative lookahead excludes
+   `/api/sso` **exactly** — the handshake must work before a session exists. So
+   anyone who can reach port 3006 reaches this handler.
+2. **The caller picks the host.** `resolveOrigin` reads
+   `x-forwarded-host`/`host` and checks the hostname for SHAPE only;
+   `HOSTNAME_RE` in `publicUrl.ts` accepts dotted IPv4. Spoofable on a
+   plain-HTTP install (the installer's default) *and* on a TLS install with
+   `TLS_PUBLIC_HOST` unset, because the terminator then re-derives
+   `x-forwarded-host` from the client's own `Host`.
+3. **The answer came back.** The success branch returned the hub's body
+   verbatim, `!res.ok` returned `` `sso-verify failed: ${res.status} ${text}` ``
+   (status *and* body), and the catch returned `err.message` — which
+   distinguishes `ECONNREFUSED` from `ENOTFOUND` from a TLS error, i.e. a
+   port-probe oracle even when nothing useful is readable.
+
+**The three `resolveOrigin` call sites in this repo, and which kind each is:**
+
+| Call site | Kind | Verdict |
+|---|---|---|
+| `frontend/src/middleware.ts:57` | **browser redirect** (`${hubUrl}/login`, `${hubUrl}/launcher?denied=`) | CORRECT — leave it |
+| `frontend/src/app/auth/signin/route.ts` (via `lib/signInRedirect.ts`) | **browser redirect** (307 to the hub's login) | CORRECT — leave it |
+| `frontend/src/app/api/sso/route.ts` | **fetch sink** (POST to the hub's `/api/auth/sso-verify`) | **WAS THE BUG** — now pinned to `NOCVAULT_HUB_URL` |
+
+⛔ **Fix the SINK, not the helper.** Tightening `resolveOrigin` would break the
+browser links it exists for (hub links must follow the hostname the customer
+actually browses by, not the install-time IP) — there is a standing decision not
+to touch `publicUrl.ts`. A redirect the browser follows and a URL this process
+fetches are two different questions that happen to share a helper.
+
+Pinning the SSO fetch is also what the deployed topology **requires**:
+`NOCVAULT_HUB_URL` is the hub's server-side loopback on a TLS install (netvault
+1.60.1) because a server-to-server hub call through the public TLS front door
+dies with `ERR_TLS_CERT_ALTNAME_INVALID` — a real certificate names the site,
+not the IP. `frontend/src/lib/auth.ts`'s `HUB_URL` had always done it right for
+the SAME hub endpoint, one step later in the SAME handshake; the two halves had
+simply disagreed about where the hub is. **Keep the two env chains
+byte-identical.**
+
+**Reflection is a SECOND defect, fixed even once the target is pinned.** The
+route now answers `{ error: 'SSO verification failed' }` / 401 for any upstream
+non-2xx and `{ error: 'SSO verification unavailable' }` / 500 for any thrown
+error, with the real status/body/message going to `console.error`. The success
+body is narrowed to `{ email }` — `frontend/src/app/sso/page.tsx` reads
+`data.email` and nothing else (name/role/apps are re-derived from the token by
+`auth.ts`'s `authorize()`), so returning the hub's whole verify payload handed an
+anonymous caller more than any caller needed.
+
+**Where else this shape lives in this repo:** the Express half already settled
+the same question the same way — `configuredHubOrigin()` in `api/server.js`
+(pure configuration, for `/api/hub/settings`) versus `resolveHubOrigin()` for
+browser links, with a comment saying exactly this. SpanVault closed the bug class
+first and chose an allowlist instead (`pickHubFetchOrigin` in
+`spanvault/api/rbacScope.js`, `spanvault/.ai-codex/gotchas.md`) because its
+sinks had a reason to keep a request-derived origin when it matches something
+configured; DDIVault's SSO route has no such reason, so it takes the simpler
+pinned form. **Before adding any new `fetch()` whose URL is built from a
+request, assume it is this bug.** Regression suite:
+`node --test tests/ssoProxyFetchTarget.test.js`.
+
+## ⛔ A `callbackUrl` on a no-session redirect is only safe when "no session" is CERTAIN — `getToken()` cannot tell you that (1.40.3)
+
+`middleware.ts`'s page gate answered `!token` with
+`${hubUrl}/login?callbackUrl=%2Fapi%2Fsso%2Fddivault` unconditionally. Correct
+for someone who has not signed in — and an **infinite redirect loop** for
+someone whose session cookie is present but UNREADABLE, because
+`getToken({ req, secret })` returns `null` for both and the caller cannot
+distinguish them.
+
+Unreadable is not exotic. next-auth v4 derives `secureCookie` — and therefore
+the cookie NAME it looks for — from whether `NEXTAUTH_URL` starts with
+`https://` (`frontend/node_modules/next-auth/jwt/index.js`: `secureCookie =
+process.env.NEXTAUTH_URL?.startsWith("https://") ?? !!process.env.VERCEL`, then
+`cookieName = secureCookie ? '__Secure-next-auth.session-token' :
+'next-auth.session-token'`). So an `http://` `NEXTAUTH_URL` on an HTTPS
+deployment makes **every valid session** unreadable, and the suite installer
+deliberately writes `http://` at install time. A rotated `NEXTAUTH_SECRET` does
+it too.
+
+In that state: hub mints a token → `/sso` sets the cookie → `/` → the gate still
+cannot read it → hub → forever, ending at the browser's own
+`ERR_TOO_MANY_REDIRECTS`. **There is no hop counter anywhere in this flow.**
+With NO `callbackUrl` the hub's login page falls back to `/launcher` (it honours
+only a hub-relative one), so the user stops on a working page and the
+misconfiguration is VISIBLE rather than a redirect storm — which is the whole
+reason the guard prefers losing the convenience over keeping it.
+
+The gate now attaches the SSO re-entry `callbackUrl` only when
+`hasSessionCookie(req)` is false.
+
+⛔ **Do not assume the cookie name, and check BOTH forms.** Verified against the
+installed next-auth 4.24.14, not assumed: DDIVault's `authOptions` declares
+NEITHER a `cookies` block NOR `useSecureCookies` (only
+providers/callbacks/pages/session/secret), so next-auth's defaults are what is
+written — `next-auth.session-token` and `__Secure-next-auth.session-token`.
+
+⛔ **The `__Secure-` prefix belongs to the DEFAULT NAME, not to the `secure`
+FLAG.** `defaultCookies(useSecureCookies)` builds
+`` `${useSecureCookies ? '__Secure-' : ''}next-auth.session-token` ``
+(`next-auth/core/lib/cookie.js`), and that is the ONLY place a prefix is ever
+added: an override of `cookies.sessionToken.name` is written verbatim and
+`getToken` reads it verbatim, so `secure: true` by itself would never produce a
+prefixed name. LogVault overrides the name (`nexvault.session-token`) and so has
+no `__Secure-` form at all; DDIVault, on the defaults, genuinely can have
+either. Keep both listed anyway: removing such an override is an obvious future
+"simplification" that would make the prefixed name live instantly, and a dead
+entry costs nothing. If DDIVault ever ADDS a `cookies` block,
+`SESSION_COOKIE_NAMES` must follow it.
+
+Both are checked regardless of what `secureCookie` currently resolves to,
+because next-auth decides it in two DIFFERENT places from two different inputs —
+write side `authOptions.useSecureCookies ?? url.base.startsWith('https://')`
+(`core/init.js`), read side
+`process.env.NEXTAUTH_URL?.startsWith('https://') ?? !!process.env.VERCEL`
+(`jwt/index.js`) — so narrowing to "the one the config should be writing" would
+trust exactly the derivation that is broken.
+
+⛔ **A bare `cookies.has(name)` IS NOT ENOUGH — matching must be
+prefix-anchored** (`name === base || name.startsWith(base + '.')`). next-auth
+splits a session cookie whose value exceeds **3933 bytes**
+(`ALLOWED_COOKIE_SIZE 4096 - ESTIMATED_EMPTY_COOKIE_SIZE 163`) into `<name>.0`,
+`<name>.1`, … and **does not write the base name at all** (`#chunk()` in
+`next-auth/core/lib/cookie.js`), while `SessionStore` reassembles them by that
+same `startsWith` rule — so `getToken()` reads a chunked session transparently
+while an exact-name check cannot see one. A chunked-AND-unreadable session would
+fall straight back into the loop the guard exists to prevent, and a large `apps`
+claim (or group membership) is exactly what pushes a JWT past 4096 bytes.
+Reachable, not theoretical — proved by mutation: tidying the prefix match to an
+equality check turns three tests red
+(`tests/middlewareSessionRedirect.test.js`).
+
+⛔ `hasSessionCookie()` is **not** an authentication check and must never be used
+as one. It answers one narrow question — did the browser present something that
+looks like our session — so the signed-token check stays the only authority on
+identity.
+
+**The `/api/*` branch has the identical conflation and needs NO guard**, which
+was confirmed rather than assumed: it answers a terminal
+`401 {error:'Unauthorized'}` that sends the caller nowhere, so an unreadable
+session surfaces as a failed fetch instead of a redirect storm. ⛔ If that branch
+is ever changed to REDIRECT, it inherits this bug and needs `hasSessionCookie()`
+too. Regression suite: `node --test tests/middlewareSessionRedirect.test.js`.

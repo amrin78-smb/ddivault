@@ -127,7 +127,20 @@ export const authOptions: NextAuthOptions = {
   },
 
   pages: {
-    signIn: `${HUB_URL}/login`,
+    // ⛔ LOCAL AND RELATIVE ON PURPOSE — DO NOT PUT A HUB URL BACK HERE.
+    // NextAuth v4 reads `pages` ONCE, from this object, at module load: any
+    // value here is frozen for the life of the process and can never follow the
+    // request. `HUB_URL` above is the hub's server-side LOOPBACK (correct for
+    // the sso-verify fetch, see authorize()), so `${HUB_URL}/login` redirected
+    // BROWSERS to a loopback port — measured on production as
+    // `302 -> http://127.0.0.1:13000/login?callbackUrl=...`, which is dead from
+    // a browser. NextAuth resolves a relative path against its own origin, so
+    // this keeps the first hop on DDIVault; `app/auth/signin/route.ts` then
+    // derives the hub origin from the ACTUAL request via resolveOrigin() and
+    // 307s there, the same way middleware.ts already does for page routes.
+    // That route is excluded from middleware.ts's matcher — it must stay
+    // reachable with no session or the redirect loops.
+    signIn: '/auth/signin',
   },
 
   session: {

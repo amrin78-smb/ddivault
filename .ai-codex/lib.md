@@ -161,6 +161,15 @@ hubUrl.ts
 
 publicUrl.ts
   resolveOrigin(req, port, legacyFallback) — server-side hub/app origin derived from request's x-forwarded-host/host + x-forwarded-proto, validated against a hostname regex; falls back to legacyFallback
+  ⛔ Do NOT sync this with netvault's richer copy (which also reads x-forwarded-port and keeps the inbound port on port=null): every DDIVault call site passes an explicit port, which wins over the carried source, and the satellites were verified live as-is.
+  Call sites — ALL THREE ARE BROWSER REDIRECTS, and that is now the rule, not a coincidence:
+    middleware.ts (hub /login + /launcher redirects), app/auth/signin/route.ts via
+    signInRedirect.ts (307 to the hub /login). ⛔ app/api/sso/route.ts WAS a call site and is
+    NOT any more (1.40.2): it handed the result to `fetch()`, which made an unauthenticated
+    SSRF with readback. A fetch target must come from configuration — see gotchas.md.
+
+signInRedirect.ts
+  signInRedirectTarget(req) — absolute hub login URL for a sessionless browser, derived from the CURRENT request via resolveOrigin(req, 3000, <env fallback>); always `?callbackUrl=%2Fapi%2Fsso%2Fddivault` (a constant — the hub honours only a hub-relative callbackUrl, so the client's value is not carried forward at all). Called by app/auth/signin/route.ts, which cannot hold the helper itself (a Next route file may export only the fields Next recognises). 1.40.1
 
 settingsFormStyles.ts
   INPUT — shared inline-style object for Settings form text inputs
