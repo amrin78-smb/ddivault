@@ -66,6 +66,29 @@ function fakePs(maps) {
 
 const zonesOf = (...names) => names.map((zone_name, i) => ({ id: i + 1, zone_name }));
 
+/**
+ * ⛔ pollZoneSyncStatus now tries a real DNS SOA query first. Every test MUST inject a
+ * fake client or it opens sockets to a fictional address and waits out the timeout.
+ */
+const SOA_DOWN = { querySoa: () => Promise.reject(new Error('ECONNREFUSED')) };
+/** Answers every zone, with a per-zone serial from `serials` (default 100). */
+function soaUp(serials = {}) {
+  const asked = [];
+  return {
+    asked,
+    querySoa(host, port, zone) {
+      asked.push({ host, port, zone });
+      const serial = serials[zone];
+      if (serial === 'fail') return Promise.reject(new Error('no SOA in response'));
+      return Promise.resolve({
+        serial: serial == null ? 100 : serial,
+        primary: 'dc01.example', email: 'hostmaster.example',
+        refresh: 900, retry: 600, expire: 86400, minimum: 3600, ttl: 3600,
+      });
+    },
+  };
+}
+
 // Keep the collector's own logging out of the test output.
 const realLog = console.log, realWarn = console.warn, realErr = console.error;
 test.before(() => { console.log = () => {}; console.warn = () => {}; console.error = () => {}; });
@@ -85,7 +108,7 @@ test('SOA: 85 zones make ONE batch call, not 85', async () => {
   const soa = {};
   for (const z of zones) soa[z.zone_name] = SOA_OK(100);
   const ps = fakePs({ soa });
-  await dm.pollZoneSyncStatus(fakeDb(), ps, SERVER, IP, AUTH, zones);
+  await dm.pollZoneSyncStatus(fakeDb(), ps, SERVER, IP, AUTH, zones, SOA_DOWN);
   assert.strictEqual(ps.n.soa, 1, 'the whole zone list must be read in one batch call');
 });
 
@@ -97,7 +120,7 @@ test('SOA: one unreadable zone does not cost the others', async () => {
     'bad.example': { ok: false, error: 'zone not found' },
     'c.example': SOA_OK(12),
   } });
-  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zones);
+  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zones, SOA_DOWN);
   assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 2,
     'the two readable zones must still be upserted');
   const serials = db.paramsFor('INSERT INTO dns_zone_sync').map(p => p[2]);
@@ -108,14 +131,14 @@ test('SOA: a zone missing from the map is skipped, not written as null', async (
   const zones = zonesOf('present.example', 'absent.example');
   const db = fakeDb();
   await dm.pollZoneSyncStatus(db, fakePs({ soa: { 'present.example': SOA_OK(5) } }),
-    SERVER, IP, AUTH, zones);
+    SERVER, IP, AUTH, zones, SOA_DOWN);
   assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 1);
 });
 
 test('SOA: the cross-server recompute runs exactly once, after the pass', async () => {
   const db = fakeDb();
   await dm.pollZoneSyncStatus(db, fakePs({ soa: { 'a.example': SOA_OK(1) } }),
-    SERVER, IP, AUTH, zonesOf('a.example'));
+    SERVER, IP, AUTH, zonesOf('a.example'), SOA_DOWN);
   assert.strictEqual(db.count('UPDATE dns_zone_sync s SET'), 1,
     'is_in_sync / lag_seconds must be recomputed once per pass');
   const last = db.queries[db.queries.length - 1];
@@ -125,7 +148,7 @@ test('SOA: the cross-server recompute runs exactly once, after the pass', async 
 test('SOA: a thrown batch does not throw out, and still recomputes', async () => {
   const db = fakeDb();
   const ps = fakePs({ soa: new Error('WinRM unreachable') });
-  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zonesOf('a.example', 'b.example'));
+  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zonesOf('a.example', 'b.example'), SOA_DOWN);
   assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 0, 'nothing is known, so nothing is written');
   assert.strictEqual(db.count('UPDATE dns_zone_sync s SET'), 1,
     'a total batch failure must still recompute, as the old per-zone loop did');
@@ -133,7 +156,7 @@ test('SOA: a thrown batch does not throw out, and still recomputes', async () =>
 
 test('SOA: a null batch is treated as "nothing readable", not a crash', async () => {
   const db = fakeDb();
-  await dm.pollZoneSyncStatus(db, fakePs({ soa: null }), SERVER, IP, AUTH, zonesOf('a.example'));
+  await dm.pollZoneSyncStatus(db, fakePs({ soa: null }), SERVER, IP, AUTH, zonesOf('a.example'), SOA_DOWN);
   assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 0);
 });
 
@@ -141,7 +164,7 @@ test('SOA: an unparseable serial is skipped', async () => {
   const db = fakeDb();
   await dm.pollZoneSyncStatus(db, fakePs({ soa: {
     'a.example': { ok: true, Serial: 'not-a-number' },
-  } }), SERVER, IP, AUTH, zonesOf('a.example'));
+  } }), SERVER, IP, AUTH, zonesOf('a.example'), SOA_DOWN);
   assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 0);
 });
 
@@ -231,4 +254,149 @@ test('stale: records from a readable zone are inserted', async () => {
     ] },
   } }), [SERVER], () => AUTH);
   assert.strictEqual(db.count('INSERT INTO dns_stale_records'), 2);
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// 5. Protocol SOA — the pass that leaves WinRM entirely
+// ════════════════════════════════════════════════════════════════════════════
+
+test('protocol SOA: when DNS answers, ZERO WinRM calls are made', async () => {
+  const zones = zonesOf(...Array.from({ length: 50 }, (_, i) => `z${i}.example`));
+  const soa = soaUp();
+  const ps = fakePs({ soa: {} });
+  const db = fakeDb();
+  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zones, { soa });
+  assert.strictEqual(ps.n.soa, 0, 'no WinRM batch should be needed when DNS answers');
+  assert.strictEqual(soa.asked.length, 50, 'every zone should be asked over DNS');
+  assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 50, 'all 50 upserted from the DNS read');
+});
+
+test('protocol SOA: the full SOA record is mapped onto the cmdlet field names', async () => {
+  const db = fakeDb();
+  await dm.pollZoneSyncStatus(db, fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('a.example'), { soa: soaUp({ 'a.example': 4242 }) });
+  const p = db.paramsFor('INSERT INTO dns_zone_sync')[0];
+  // zone_name, server_id, serial, primary, email, refresh, retry, expire, ttl
+  assert.deepStrictEqual(p, ['a.example', 7, 4242, 'dc01.example', 'hostmaster.example',
+    900, 600, 86400, 3600]);
+});
+
+test('protocol SOA: it asks the configured dns_host and dns_port, not just the IP', async () => {
+  const soa = soaUp();
+  await dm.pollZoneSyncStatus(fakeDb(), fakePs({ soa: {} }),
+    { id: 7, ip_address: IP, dns_host: '10.9.9.9', dns_port: 5353 },
+    IP, AUTH, zonesOf('a.example'), { soa });
+  assert.strictEqual(soa.asked[0].host, '10.9.9.9');
+  assert.strictEqual(soa.asked[0].port, 5353);
+});
+
+test('protocol SOA: falls back to ip_address and 53 when no dns_host is set', async () => {
+  const soa = soaUp();
+  await dm.pollZoneSyncStatus(fakeDb(), fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('a.example'), { soa });
+  assert.strictEqual(soa.asked[0].host, IP);
+  assert.strictEqual(soa.asked[0].port, 53);
+});
+
+test('protocol SOA: circuit breaker — a dead port 53 probes 3 zones, not 339', async () => {
+  // ⛔ Without the breaker, 339 zones x one timeout each is ~17 minutes of dead waiting
+  // per tick before we learn port 53 is unusable.
+  const zones = zonesOf(...Array.from({ length: 339 }, (_, i) => `z${i}.example`));
+  let asked = 0;
+  const soa = { querySoa: () => { asked++; return Promise.reject(new Error('timeout')); } };
+  const ps = fakePs({ soa: {} });
+  await dm.pollZoneSyncStatus(fakeDb(), ps, SERVER, IP, AUTH, zones, { soa });
+  assert.strictEqual(asked, 3, `the breaker must stop after DDI_SOA_PROBE_LIMIT probes, got ${asked}`);
+  assert.strictEqual(ps.n.soa, 1, 'and hand the whole server to ONE batched WinRM read');
+});
+
+test('protocol SOA: a partial failure sends only the stragglers to WinRM', async () => {
+  const zones = zonesOf('ok1.example', 'ok2.example', 'bad.example', 'ok3.example');
+  const soa = soaUp({ 'bad.example': 'fail' });
+  const ps = fakePs({ soa: { 'bad.example': { ok: true, Serial: 77 } } });
+  const db = fakeDb();
+  await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH, zones, { soa });
+  assert.strictEqual(ps.n.soa, 1, 'one WinRM batch for the remainder');
+  assert.strictEqual(db.count('INSERT INTO dns_zone_sync'), 4, 'all four zones still land');
+  const serials = db.paramsFor('INSERT INTO dns_zone_sync').map(p => p[2]);
+  assert.deepStrictEqual(serials, [100, 100, 77, 100], 'the WinRM serial is used for the straggler');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 6. The serial gate — an unchanged zone must cost nothing
+// ════════════════════════════════════════════════════════════════════════════
+
+/** A db whose dns_zones rows report the given prior state. */
+function dbWithPrior(rows) {
+  const db = fakeDb();
+  const base = db.query;
+  db.query = (sql, params) => {
+    if (sql.includes('SELECT zone_name, soa_serial, record_count FROM dns_zones')) {
+      db.queries.push({ sql, params });
+      return Promise.resolve({ rows });
+    }
+    return base(sql, params);
+  };
+  return db;
+}
+
+test('gate: an unchanged serial with records already held is NOT reported changed', async () => {
+  const db = dbWithPrior([{ zone_name: 'same.example', soa_serial: 100, record_count: 12 }]);
+  const r = await dm.pollZoneSyncStatus(db, fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('same.example'), { soa: soaUp({ 'same.example': 100 }) });
+  assert.strictEqual(r.changed.size, 0, 'nothing moved, so nothing needs a record count');
+});
+
+test('gate: a MOVED serial is reported changed', async () => {
+  const db = dbWithPrior([{ zone_name: 'moved.example', soa_serial: 100, record_count: 12 }]);
+  const r = await dm.pollZoneSyncStatus(db, fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('moved.example'), { soa: soaUp({ 'moved.example': 101 }) });
+  assert.deepStrictEqual([...r.changed], ['moved.example']);
+});
+
+test('gate: an unchanged serial with NO records yet is still changed', async () => {
+  // Otherwise a zone we have never counted would never be counted.
+  const db = dbWithPrior([{ zone_name: 'fresh.example', soa_serial: 100, record_count: 0 }]);
+  const r = await dm.pollZoneSyncStatus(db, fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('fresh.example'), { soa: soaUp({ 'fresh.example': 100 }) });
+  assert.deepStrictEqual([...r.changed], ['fresh.example']);
+});
+
+test('gate: a zone with no prior row at all is changed', async () => {
+  const db = dbWithPrior([]);
+  const r = await dm.pollZoneSyncStatus(db, fakePs({ soa: {} }), SERVER, IP, AUTH,
+    zonesOf('new.example'), { soa: soaUp() });
+  assert.deepStrictEqual([...r.changed], ['new.example']);
+});
+
+test('gate: an unreadable zone is not reported changed (a count would fail too)', async () => {
+  const db = dbWithPrior([]);
+  const ps = fakePs({ soa: { 'dead.example': { ok: false, error: 'rpc failure' } } });
+  const r = await dm.pollZoneSyncStatus(db, ps, SERVER, IP, AUTH,
+    zonesOf('dead.example'), { soa: SOA_DOWN });
+  assert.strictEqual(r.changed.size, 0);
+});
+
+test('gate: pollZoneRecordCounts makes NO call for an empty zone list', async () => {
+  const ps = fakePs({ counts: {} });
+  await dm.pollZoneRecordCounts(fakeDb(), ps, IP, AUTH, []);
+  assert.strictEqual(ps.n.counts, 0, 'a quiet tick must cost zero WinRM calls');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 7. Scavenging is time-gated, not serial-gated
+// ════════════════════════════════════════════════════════════════════════════
+
+test('scavenging: due on first sight, not due again immediately', async () => {
+  // ⛔ Aging config is zone metadata and does NOT move the SOA serial, so it cannot be
+  // serial-gated — a slow independent interval is the only correct gate.
+  const now = Date.UTC(2026, 10, 25, 12, 0, 0);
+  assert.strictEqual(dm.scavengingDue(9001, now), true, 'never polled -> due');
+});
+
+test('scavenging: storedZoneState survives an un-migrated column', async () => {
+  const db = { query: () => Promise.reject(new Error('column "soa_serial" does not exist')) };
+  const m = await dm.storedZoneState(db, 7);
+  assert.strictEqual(m.size, 0, 'a missing column means no prior state, not a crash');
 });

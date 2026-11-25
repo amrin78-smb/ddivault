@@ -1352,3 +1352,80 @@ the regression is "N zones became N calls again") and the batch cases in
   a firewall rule that counts connections to that port. Credential hygiene, not this fix.
 - **True session reuse** (`New-PSSession` held across calls). Nothing in either repo does it;
   it needs a persistent PowerShell host and is unnecessary at a ~40x lower call count.
+
+## ⛔ Protocol SOA: the Windows DNS pass that needs no WinRM at all (1.42.0)
+
+1.41.0 cut the per-zone WinRM call count ~40x by batching. 1.42.0 removes the biggest
+pass from WinRM **entirely**: a plain DNS **SOA query over port 53** returns the same
+seven fields the cmdlet does, needs no authentication, and opens no WinRM session.
+`collector/dns/client.js` `querySoa()` already existed for the Linux/third-party path —
+this reuses it from the Windows path.
+
+**What a quiet 20-minute tick now costs per server**, with 339 zones:
+
+| pass | before 1.41.0 | 1.41.0 | 1.42.0 (quiet tick) |
+|---|---|---|---|
+| SOA | 339 WinRM | ~9 WinRM | **0 WinRM** (339 plain DNS queries) |
+| record counts | 339 WinRM | ~9 WinRM | **0 WinRM** (serial-gated) |
+| scavenging | 339 WinRM | ~9 WinRM | **0 WinRM** (6h interval) |
+| **total** | **~1,017** | **~26** | **~0** |
+
+⛔ **THIS IS NOT "registering Windows as a protocol platform".** `collector/dns/index.js`
+refuses that ON PURPOSE, because AXFR silently drops scavenging, aging and AD-integration
+data that only the cmdlets expose. 1.42.0 borrows ONE primitive — `querySoa`, which is not
+AXFR — and leaves every Windows-only read on PowerShell. **`providerFor('windows')` must
+keep returning null.** Do not "finish the job" by adding `providers/windows.js`.
+
+⛔ **AXFR is deliberately NOT used for records.** Windows DNS ships with zone transfers
+**disabled**, so it would fail on a default install, and enabling it per zone is a
+security decision for the operator — not something a collector may assume. Record data
+therefore still comes from the cmdlets, which is why the serial gate matters so much.
+
+### The three mechanisms, and why each is shaped the way it is
+
+**1. Protocol-first with a per-zone WinRM fallback.** `readZoneSoa()` asks over DNS and
+hands only the zones that did not answer to ONE batched `getDnsZoneSoaDetailBatch`. So a
+server with port 53 blocked still works exactly as it did in 1.41.0 — there is no new
+hard dependency, which is what made this safe to ship without a Windows DNS server to
+test against.
+
+**2. ⛔ A circuit breaker, and it is not optional.** If port 53 is unreachable, trying
+every zone burns one full timeout EACH before we learn that: 339 zones x 3s is **17
+minutes of dead waiting per tick**. `readZoneSoa` probes `DDI_SOA_PROBE_LIMIT` (3) zones
+and, if none answers, hands the whole server to WinRM in one call. Removing the breaker
+in a mutation test did not fail an assertion — it made the suite **hang past 120s**,
+which is the production symptom exactly.
+
+**3. The serial gate, transplanted from `collector/dns/sync.js`.** A zone's SOA serial is
+REQUIRED to change when its contents do, so `prior.serial === serial && prior.count > 0`
+means nothing can have changed and no record count is needed. `pollZoneSyncStatus` now
+returns `{ changed: Set }` and `runDnsMonitor` passes only those zones on.
+⛔ The `count > 0` half is load-bearing: without it a zone that has never been counted is
+skipped **forever**, because its serial never moves.
+
+⛔ **Scavenging is NOT serial-gated — it is time-gated (6h).** Aging/scavenging config is
+zone METADATA and does **not** move the SOA serial, so serial-gating it would mean an
+operator's change is never noticed. That is why it gets its own slow interval
+(`DDI_SCAVENGING_INTERVAL_MS`) instead.
+
+**`soa_ttl` may start getting values.** The protocol read maps the SOA **MINIMUM** field,
+which is what the column name means. The cmdlet read it off `RecordData`, whose SOA shape
+exposes `MinimumTimeToLive` rather than `TimeToLive`, so this column may have been null on
+the WinRM path.
+
+Env knobs, all with working defaults so there is **no schema or installer change**:
+`DDI_SOA_QUERY_TIMEOUT_MS` (3000), `DDI_SOA_QUERY_CONCURRENCY` (8),
+`DDI_SOA_PROBE_LIMIT` (3), `DDI_SCAVENGING_INTERVAL_MS` (6h).
+
+⛔ **`pollZoneSyncStatus` now takes an optional 7th `deps` argument** purely so tests can
+inject a fake SOA client. Without it a test opens real sockets to a fictional address and
+waits out the timeout — which is how the first run of this suite went from 0.1s to minutes.
+
+Still on WinRM, and correctly so: every write, `detectStaleRecords` (needs AD aging
+timestamps, which AXFR does not carry), `getDnsZoneScavenging`, `getDnsForwarders`,
+`getDnsServerRole` and the query-stats readers. The last three are per-SERVER, not
+per-zone — about three calls a tick, which was never the problem.
+
+Regression suite: `node --test tests/dnsMonitorBatch.test.js` (26 tests). Four mutations
+were confirmed to break it: breaker removed (hang), gate always-changed, gate ignoring
+`record_count`, and the WinRM fallback removed.

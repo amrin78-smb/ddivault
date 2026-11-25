@@ -39,6 +39,161 @@ function toInt(v) {
 }
 
 // ── 1. Server roles + forwarders ──────────────────────────────
+// ════════════════════════════════════════════════════════════
+// PROTOCOL SOA — reading the serial without WinRM at all
+// ════════════════════════════════════════════════════════════
+// A plain DNS SOA query over port 53 returns the same seven fields the PowerShell
+// cmdlet does (serial, primary, email, refresh, retry, expire, minimum), needs no
+// authentication, and opens no WinRM session — so the largest of the per-zone passes
+// costs ZERO domain logons. That matters because 1.41.0 only reduced the WinRM call
+// count; this removes the SOA pass from WinRM entirely.
+//
+// ⛔ THIS IS NOT "registering Windows as a protocol platform", which
+// collector/dns/index.js refuses ON PURPOSE because AXFR silently drops scavenging,
+// aging and AD-integration data that only the cmdlets expose. We borrow ONE protocol
+// primitive (querySoa, which is not AXFR) and keep every Windows-only read on
+// PowerShell. providerFor('windows') must keep returning null.
+//
+// ⛔ AXFR is deliberately NOT used for records here: Windows DNS ships with zone
+// transfers DISABLED, so it would fail on a default install, and enabling it per zone
+// is a security decision for the operator, not something a collector should assume.
+const soaClient = require('./dns/client');
+
+// Per-query budget. Short on purpose: a DNS query that is going to answer answers in
+// milliseconds, and the fallback below is cheap.
+const SOA_QUERY_TIMEOUT_MS = parseInt(process.env.DDI_SOA_QUERY_TIMEOUT_MS || '3000', 10);
+// Hundreds of zones sequentially would be latency-bound, so fan out — but modestly:
+// these are unauthenticated UDP queries, not the thing we are trying to stop.
+const SOA_QUERY_CONCURRENCY = parseInt(process.env.DDI_SOA_QUERY_CONCURRENCY || '8', 10);
+// ⛔ Circuit breaker. If port 53 is not reachable from the collector, trying every zone
+// burns one full timeout EACH before we learn it — 339 zones x 3s is 17 minutes of dead
+// waiting per tick. Probe a few, and if none answers, hand the whole server to the
+// batched WinRM reader in one go.
+const SOA_PROBE_LIMIT = parseInt(process.env.DDI_SOA_PROBE_LIMIT || '3', 10);
+
+// Scavenging/aging is zone METADATA, so changing it does NOT bump the SOA serial —
+// serial-gating it would mean an operator's change is never noticed. A slow independent
+// interval instead: this config changes about never, and it is the only per-zone pass
+// left on WinRM during a normal tick.
+const SCAVENGING_MIN_INTERVAL_MS = parseInt(
+  process.env.DDI_SCAVENGING_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
+const lastScavengingAt = new Map(); // server.id -> epoch ms
+
+/** Map querySoa's output onto the field names the cmdlet path already produced. */
+function soaFields(s) {
+  return {
+    ok: true,
+    via: 'dns',
+    Serial: s.serial,
+    PrimaryServer: s.primary,
+    AdminEmail: s.email,
+    Refresh: s.refresh,
+    Retry: s.retry,
+    Expire: s.expire,
+    // The SOA MINIMUM field, which is what the soa_ttl column means. The cmdlet read
+    // this off RecordData, whose SOA shape exposes MinimumTimeToLive rather than
+    // TimeToLive, so values may start appearing here where they were previously null.
+    MinTTL: s.minimum == null ? s.ttl : s.minimum,
+  };
+}
+
+/**
+ * SOA for every zone, protocol-first, WinRM only for what protocol could not answer.
+ *
+ * Returns the same { '<zone>': { ok, Serial, ... } } map the batched WinRM reader does,
+ * plus a `via` field ('dns' | 'winrm') so the log can show how much WinRM was avoided.
+ */
+async function readZoneSoa(ps, server, ip, auth, zones, deps) {
+  const client = (deps && deps.soa) || soaClient;
+  const host = (server.dns_host && String(server.dns_host).replace(/\/\d+$/, '').trim()) || ip;
+  const port = Number(server.dns_port) || 53;
+  const got = {};
+  const failed = [];
+  if (!zones.length) return got;
+
+  const ask = async (z) => {
+    try {
+      got[z.zone_name] = soaFields(
+        await client.querySoa(host, port, z.zone_name, { timeoutMs: SOA_QUERY_TIMEOUT_MS }));
+      return true;
+    } catch (e) {
+      failed.push(z);
+      return false;
+    }
+  };
+
+  // Probe first — see SOA_PROBE_LIMIT.
+  const probe = zones.slice(0, SOA_PROBE_LIMIT);
+  let anyAnswered = false;
+  for (const z of probe) { if (await ask(z)) anyAnswered = true; }
+
+  if (!anyAnswered) {
+    // Port 53 is unusable from here for this server. Do not probe the rest.
+    log(`[SOA] ${ip}: no DNS answer on ${host}:${port} after ${probe.length} probe(s) — using WinRM for all ${zones.length} zone(s)`);
+    return await soaViaWinrm(ps, ip, auth, zones, {});
+  }
+
+  const rest = zones.slice(SOA_PROBE_LIMIT);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, SOA_QUERY_CONCURRENCY) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= rest.length) return;
+      await ask(rest[i]);
+    }
+  }));
+
+  const viaDns = Object.keys(got).length;
+  if (!failed.length) {
+    log(`[SOA] ${ip}: ${viaDns} zone(s) read over DNS — no WinRM call made`);
+    return got;
+  }
+  log(`[SOA] ${ip}: ${viaDns} zone(s) over DNS, ${failed.length} falling back to WinRM`);
+  return await soaViaWinrm(ps, ip, auth, failed, got);
+}
+
+/** ONE batched WinRM read for the zones protocol could not answer, merged into `into`. */
+async function soaViaWinrm(ps, ip, auth, zones, into) {
+  let batch = {};
+  try { batch = (await ps.getDnsZoneSoaDetailBatch(ip, auth, zones)) || {}; }
+  catch (e) { log(`[SOA] ${ip}: WinRM fallback failed: ${e.message}`); }
+  for (const z of zones) {
+    const e = batch[z.zone_name];
+    into[z.zone_name] = (e && e.ok)
+      ? Object.assign({}, e, { via: 'winrm' })
+      : (e || { ok: false, error: 'not read by DNS or WinRM' });
+  }
+  return into;
+}
+
+/**
+ * Serial and record count we already hold, so an unchanged zone costs nothing.
+ *
+ * Mirrors collector/dns/sync.js storedSerials, including its deliberate swallow: on a
+ * first run or an un-migrated column there is simply no prior state, which is not an
+ * error — it just means every zone looks changed and gets read once.
+ */
+async function storedZoneState(db, serverId) {
+  const m = new Map();
+  try {
+    const r = await db.query(
+      'SELECT zone_name, soa_serial, record_count FROM dns_zones WHERE server_id = $1', [serverId]);
+    for (const row of r.rows) {
+      m.set(row.zone_name, {
+        serial: row.soa_serial == null ? null : Number(row.soa_serial),
+        count: row.record_count == null ? 0 : Number(row.record_count),
+      });
+    }
+  } catch (e) { /* first run, or the column is missing on an un-migrated DB */ }
+  return m;
+}
+
+/** True when this server's scavenging pass is due (see SCAVENGING_MIN_INTERVAL_MS). */
+function scavengingDue(serverId, now) {
+  const last = lastScavengingAt.get(serverId);
+  return last == null || (now - last) >= SCAVENGING_MIN_INTERVAL_MS;
+}
+
 async function detectDnsRoles(db, ps, server, ip, auth) {
   let role;
   try { role = await ps.getDnsServerRole(ip, auth); } catch (e) { log(`[Roles] ${ip}: ${e.message}`); return; }
@@ -79,18 +234,26 @@ async function detectDnsRoles(db, ps, server, ip, auth) {
 }
 
 // ── 2. Zone SOA / sync status ─────────────────────────────────
-async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
-  // ONE batched WinRM read for every zone instead of one call per zone — see
-  // DNS_ZONE_BATCH in powershellRunner.js for why (a firewall read the old per-zone
-  // rate as a brute-force attack). Per-zone failure isolation is PRESERVED: a zone
-  // whose entry is ok:false is logged and skipped, exactly as the old `continue` did.
-  //
-  // A total batch failure deliberately does NOT return early — it leaves `batch`
-  // empty so every zone is skipped and the cross-server recompute below still runs,
-  // which is what the old per-zone loop did when every call failed.
+/**
+ * SOA pass. Reads over DNS where it can, WinRM only for the remainder.
+ *
+ * @returns {{changed:Set<string>}} the zones whose serial MOVED (or that we hold no
+ *   records for yet). pollZoneRecordCounts takes only those, so an unchanged zone
+ *   costs no WinRM call at all — the same gate collector/dns/sync.js applies to the
+ *   protocol platforms.
+ *
+ * Per-zone failure isolation is preserved: a zone whose entry is ok:false is logged
+ * and skipped, exactly as the original per-zone `continue` did. A total read failure
+ * deliberately does NOT return early — it leaves the map empty so every zone is
+ * skipped and the cross-server recompute below still runs.
+ */
+async function pollZoneSyncStatus(db, ps, server, ip, auth, zones, deps) {
+  const prior = await storedZoneState(db, server.id);
+  const changed = new Set();
+
   let batch = {};
-  try { batch = (await ps.getDnsZoneSoaDetailBatch(ip, auth, zones)) || {}; }
-  catch (e) { log(`[SOA] ${ip}: batch read failed: ${e.message}`); }
+  try { batch = (await readZoneSoa(ps, server, ip, auth, zones, deps)) || {}; }
+  catch (e) { log(`[SOA] ${ip}: SOA pass failed: ${e.message}`); }
 
   for (const z of zones) {
     const soa = batch[z.zone_name];
@@ -101,6 +264,13 @@ async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
     if (soa.Serial == null) continue;
     const serial = parseInt(soa.Serial);
     if (!Number.isFinite(serial)) continue;
+
+    // The gate. A zone whose serial is unchanged AND whose records we already hold
+    // cannot have changed — the SOA serial is REQUIRED to move when zone contents do.
+    // Anything else (new zone, serial moved, no records yet) needs a record count.
+    const p = prior.get(z.zone_name);
+    const unchanged = p && p.serial != null && p.serial === serial && p.count > 0;
+    if (!unchanged) changed.add(z.zone_name);
 
     await db.query(
       `INSERT INTO dns_zone_sync
@@ -136,10 +306,15 @@ async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
      ) m
      WHERE s.zone_name = m.zone_name`
   ).catch(e => log(`[SOA] ${ip} sync recompute failed: ${e.message}`));
+
+  return { changed };
 }
 
 // ── 3. Zone record counts ─────────────────────────────────────
 async function pollZoneRecordCounts(db, ps, ip, auth, zones) {
+  // A quiet tick passes an EMPTY list (every zone's serial unchanged), and that must
+  // cost nothing at all — not even an async hop into the reader.
+  if (!zones || !zones.length) return;
   // Batched — see pollZoneSyncStatus above.
   let batch = {};
   try { batch = (await ps.getDnsZoneRecordCountsBatch(ip, auth, zones)) || {}; }
@@ -213,6 +388,7 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
 
 // ── 5. Scavenging / aging config ──────────────────────────────
 async function pollScavenging(db, ps, ip, auth, zones) {
+  if (!zones || !zones.length) return;
   // Batched — see pollZoneSyncStatus above.
   let batch = {};
   try { batch = (await ps.getDnsZoneScavengingBatch(ip, auth, zones)) || {}; }
@@ -263,10 +439,32 @@ async function runDnsMonitor(db, ps, servers, serverAuth) {
     } catch (e) { log(`[Zones] ${ip}: ${e.message}`); }
 
     try { await detectDnsRoles(db, ps, server, ip, auth); } catch (e) { log(`[Roles] ${ip} failed: ${e.message}`); }
-    try { await pollZoneSyncStatus(db, ps, server, ip, auth, zones); } catch (e) { log(`[SOA] ${ip} failed: ${e.message}`); }
-    try { await pollZoneRecordCounts(db, ps, ip, auth, zones); } catch (e) { log(`[Counts] ${ip} failed: ${e.message}`); }
+    // SOA first — it reads over DNS where it can and tells us which zones MOVED.
+    let changed = new Set();
+    try {
+      const r = await pollZoneSyncStatus(db, ps, server, ip, auth, zones);
+      if (r && r.changed) changed = r.changed;
+    } catch (e) { log(`[SOA] ${ip} failed: ${e.message}`); }
+
+    // Only the moved zones need a record count. On a quiet tick this is an EMPTY list,
+    // which makes zero WinRM calls — the whole point of the serial gate.
+    const changedZones = zones.filter(z => changed.has(z.zone_name));
+    if (changedZones.length) {
+      log(`[Counts] ${ip}: ${changedZones.length} of ${zones.length} zone(s) changed`);
+      try { await pollZoneRecordCounts(db, ps, ip, auth, changedZones); } catch (e) { log(`[Counts] ${ip} failed: ${e.message}`); }
+    }
+
     try { await checkForwarderHealth(db, ps, server, ip, auth); } catch (e) { log(`[Forwarders] ${ip} failed: ${e.message}`); }
-    try { await pollScavenging(db, ps, ip, auth, zones); } catch (e) { log(`[Scavenging] ${ip} failed: ${e.message}`); }
+
+    // ⛔ Scavenging is NOT serial-gated: aging config is zone metadata and does not move
+    // the SOA serial, so gating it would mean an operator's change is never seen. Slow
+    // independent interval instead — see SCAVENGING_MIN_INTERVAL_MS.
+    if (scavengingDue(server.id, Date.now())) {
+      try {
+        await pollScavenging(db, ps, ip, auth, zones);
+        lastScavengingAt.set(server.id, Date.now());
+      } catch (e) { log(`[Scavenging] ${ip} failed: ${e.message}`); }
+    }
 
     return true;
   }
@@ -379,4 +577,7 @@ module.exports = {
   pollZoneSyncStatus,
   pollZoneRecordCounts,
   pollScavenging,
+  readZoneSoa,
+  storedZoneState,
+  scavengingDue,
 };
