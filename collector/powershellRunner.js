@@ -137,6 +137,32 @@ const DNS_PS_TIMEOUT = parseInt(process.env.PS_DNS_TIMEOUT_MS || '60000');
 // WinRM is genuinely broken; lower DHCP_LOG_TAIL_LINES rather than trimming this.
 const DHCP_LOG_PS_TIMEOUT = parseInt(process.env.PS_DHCP_LOG_TIMEOUT_MS || '120000');
 
+// ════════════════════════════════════════════════════════════
+// BATCHED PER-ZONE READS — why these exist
+// ════════════════════════════════════════════════════════════
+// On 2026-11-25 a firewall flagged a BRUTE-FORCE ATTEMPT from this server on port
+// 5985. It was this collector. dnsMonitor.js had four per-zone loops, each calling
+// one of the single-zone readers below once per zone, and every runPS is a fresh
+// powershell.exe running a fresh `Invoke-Command -ComputerName -Credential`, i.e. a
+// complete credential presentation (~4 Security 4648 events apiece). Production has
+// 339 zones, so a 20-minute tick was ~1,017 WinRM calls per server with four servers
+// polled in parallel — a measured 95-173 domain logons PER MINUTE against four DCs.
+// Stopping the services took it to 0 within five minutes, which is what proved it.
+//
+// The fix is to ask for many zones in ONE Invoke-Command, looping INSIDE PowerShell.
+// The per-zone data is unchanged; only the number of authentications drops.
+//
+// ⛔ Chunks are issued SEQUENTIALLY, deliberately. Running them concurrently (as
+// ipamScanner does for its local ping sweep) would push the instantaneous connection
+// rate back up, which is the exact thing being fixed. ~9 chunks per loop is cheap.
+const DNS_ZONE_BATCH = parseInt(process.env.PS_DNS_ZONE_BATCH || '40');
+// One chunk of 40 zones cannot fit DNS_PS_TIMEOUT's 60s: a full DNS sweep against
+// BKKDC01 was measured at 7-8 minutes, and record-count reads enumerate every record
+// in the zone server-side. 240s is deliberate headroom in the same spirit as
+// DHCP_LOG_PS_TIMEOUT above, not a tuned value — if this ever times out for real,
+// lower PS_DNS_ZONE_BATCH rather than trimming this.
+const DNS_BATCH_PS_TIMEOUT = parseInt(process.env.PS_DNS_BATCH_TIMEOUT_MS || '240000');
+
 // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
@@ -494,6 +520,123 @@ async function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
   return await runPS(cleanIp(serverIp), script, auth, false, DNS_PS_TIMEOUT);
 }
 
+// ════════════════════════════════════════════════════════════
+// DNS — BATCHED PER-ZONE READS (see DNS_ZONE_BATCH above for why)
+// ════════════════════════════════════════════════════════════
+//
+// Each returns an object keyed by zone name:
+//     { '<zone>': { ok: true,  ...fields }, '<zone>': { ok: false, error } }
+//
+// ⛔ FIVE TRAPS, all of them load-bearing. Read before editing any script below.
+//
+// 1. A try/catch statement CANNOT be the left side of a pipeline. `try{}catch{}|
+//    ConvertTo-Json` is a PARSE ERROR that fails the whole Invoke-Command scriptblock,
+//    so runPS returns null and every zone in the chunk is lost. Accumulate into $out
+//    inside the loop and convert AFTER it (same shape as testDnsForwarder below).
+// 2. `-Depth 5` is mandatory. The single-zone readers use a bare `ConvertTo-Json
+//    -Compress`, i.e. the DEFAULT DEPTH OF 2. Wrapping N objects in an array adds a
+//    nesting level, and getDnsStaleRecordsBatch nests one deeper again
+//    (array > object > Records array > record > scalar = exactly 5). Too shallow and
+//    the inner objects silently serialise as type-name strings.
+// 3. `ConvertTo-Json -InputObject $out` with `$out = @()`, never a pipe. Piping an
+//    EMPTY pipeline emits NOTHING, and empty stdout is indistinguishable from a
+//    genuine failure — the same trap documented at getDnsStaleRecords.
+// 4. Every zone name goes through psq(). The array literal is N new interpolation
+//    sites; inside the loop PowerShell holds the name in $z, so the use site needs
+//    no further escaping.
+// 5. PowerShell 5.1 only — `foreach`, never `ForEach-Object -Parallel` (PS7).
+//
+// One deliberate improvement over the single-zone readers: these use
+// `-ErrorAction Stop` inside try/catch instead of `SilentlyContinue`, so an
+// unreadable zone reports ok:false with a reason rather than masquerading as a zone
+// with no data. That distinction is what lets callers keep their old `continue`.
+
+/** Build the `@('a','b',...)` literal. psq() per element — trap 4. */
+function zoneArrayLiteral(zoneNames) {
+  return '@(' + zoneNames.map(z => "'" + psq(z) + "'").join(',') + ')';
+}
+
+/**
+ * Index a chunk's rows by zone name.
+ *
+ * `rows === null` means the whole chunk failed (runPS swallowed it), so every zone in
+ * the chunk is marked unreadable — the per-batch fallback ipamScanner uses. A zone
+ * absent from a SUCCESSFUL response is also marked unreadable rather than silently
+ * dropped, because a caller must never read "missing" as "empty".
+ */
+function indexZoneBatch(rows, chunk, chunkFailed) {
+  const out = {};
+  for (const z of chunk) {
+    out[z] = { ok: false, error: chunkFailed ? 'batch read failed' : 'zone missing from batch response' };
+  }
+  if (chunkFailed) return out;
+  const list = Array.isArray(rows) ? rows : (rows ? [rows] : []);
+  for (const r of list) {
+    if (!r || typeof r.Zone !== 'string') continue;
+    out[r.Zone] = r.Ok
+      ? Object.assign({}, r, { ok: true })
+      : { ok: false, error: String(r.Error == null ? 'unknown error' : r.Error) };
+  }
+  return out;
+}
+
+/**
+ * Run `buildScript(chunk)` over zoneNames in DNS_ZONE_BATCH-sized chunks, sequentially.
+ * Accepts either strings or dns_zones rows ({ zone_name }).
+ */
+async function runZoneBatches(serverIp, auth, zoneNames, buildScript) {
+  const names = [];
+  for (const z of (zoneNames || [])) {
+    const n = (z && typeof z === 'object') ? z.zone_name : z;
+    if (typeof n === 'string' && n) names.push(n);
+  }
+  const result = {};
+  for (let i = 0; i < names.length; i += DNS_ZONE_BATCH) {
+    const chunk = names.slice(i, i + DNS_ZONE_BATCH);
+    const rows = await runPS(cleanIp(serverIp), buildScript(chunk), auth, false, DNS_BATCH_PS_TIMEOUT);
+    Object.assign(result, indexZoneBatch(rows, chunk, rows === null || rows === undefined));
+  }
+  return result;
+}
+
+// Batched SOA detail — replaces N x getDnsZoneSoaDetail
+async function getDnsZoneSoaDetailBatch(serverIp, auth, zoneNames) {
+  return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
+    `$zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $rec = Get-DnsServerResourceRecord -ZoneName $z -RRType Soa -ErrorAction Stop | Select-Object -First 1; if ($rec) { $soa = $rec.RecordData; $out += [PSCustomObject]@{ Zone=$z; Ok=$true; Serial=$soa.SerialNumber; PrimaryServer=$soa.PrimaryServer; AdminEmail=$soa.ResponsiblePerson; Refresh=$soa.RefreshInterval.TotalSeconds; Retry=$soa.RetryDelay.TotalSeconds; Expire=$soa.ExpireLimit.TotalSeconds; MinTTL=$soa.TimeToLive.TotalSeconds } } else { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error='no SOA record returned' } } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`);
+}
+
+// Batched record counts — replaces N x getDnsZoneRecordCounts.
+// @(...) around each Where-Object is deliberate: an unwrapped pipeline that matches
+// nothing yields $null, whose .Count is $null and serialises as JSON null, so a zone
+// with no A records was indistinguishable from one that failed to report.
+async function getDnsZoneRecordCountsBatch(serverIp, auth, zoneNames) {
+  return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
+    `$zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $recs = @(Get-DnsServerResourceRecord -ZoneName $z -ErrorAction Stop); $out += [PSCustomObject]@{ Zone=$z; Ok=$true; Total=$recs.Count; A=@($recs | Where-Object RecordType -eq 'A').Count; PTR=@($recs | Where-Object RecordType -eq 'PTR').Count; CNAME=@($recs | Where-Object RecordType -eq 'CNAME').Count; MX=@($recs | Where-Object RecordType -eq 'MX').Count; TXT=@($recs | Where-Object RecordType -eq 'TXT').Count; SRV=@($recs | Where-Object RecordType -eq 'SRV').Count; AAAA=@($recs | Where-Object RecordType -eq 'AAAA').Count } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`);
+}
+
+// Batched scavenging/aging — replaces N x getDnsZoneScavenging.
+// ScavengeServers is flattened to a comma-joined string: it is an IP array that would
+// cost a nesting level, and no caller reads it (pollScavenging uses AgingEnabled only).
+async function getDnsZoneScavengingBatch(serverIp, auth, zoneNames) {
+  return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
+    `$zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $a = Get-DnsServerZoneAging -ZoneName $z -ErrorAction Stop; $out += [PSCustomObject]@{ Zone=$z; Ok=$true; AgingEnabled=[bool]$a.AgingEnabled; ScavengeServers=(@($a.ScavengeServers) -join ','); NoRefreshInterval=$a.NoRefreshInterval.TotalHours; RefreshInterval=$a.RefreshInterval.TotalHours } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`);
+}
+
+// Batched stale records — replaces N x getDnsStaleRecords.
+//
+// ⛔ The ok/Records split here carries the SAME contract the single-zone reader's
+// forced array established, and detectStaleRecords DELETES a zone's prior snapshot
+// before inserting, so getting it wrong wipes real data:
+//     ok:true  + Records: []      -> the zone genuinely has no stale records
+//     ok:false                    -> the zone COULD NOT BE READ; keep the old snapshot
+// Never collapse those two into one empty value.
+async function getDnsStaleRecordsBatch(serverIp, auth, zoneNames, staleDays) {
+  // UNQUOTED numeric position inside AddDays(-N) — psNum, min 1, 36500 days = 100y.
+  const cutoff = psNum(staleDays || 90, 90, 1, 36500);
+  return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
+    `$cutoff = (Get-Date).AddDays(-${cutoff}); $zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $r = @(Get-DnsServerResourceRecord -ZoneName $z -ErrorAction Stop | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp); $out += [PSCustomObject]@{ Zone=$z; Ok=$true; Records=$r } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`);
+}
+
 // Test forwarder reachability (resolves a name via the forwarder, measures ms)
 async function testDnsForwarder(serverIp, auth, forwarderIp) {
   const f = psq(forwarderIp);
@@ -744,6 +887,11 @@ module.exports = {
   getDnsForwarders,
   getDnsZoneScavenging,
   getDnsStaleRecords,
+  // batched per-zone readers (see DNS_ZONE_BATCH)
+  getDnsZoneSoaDetailBatch,
+  getDnsZoneRecordCountsBatch,
+  getDnsZoneScavengingBatch,
+  getDnsStaleRecordsBatch,
   testDnsForwarder,
   getDnsQueryStats,
   // DNS write

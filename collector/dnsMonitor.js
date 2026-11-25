@@ -80,11 +80,25 @@ async function detectDnsRoles(db, ps, server, ip, auth) {
 
 // ── 2. Zone SOA / sync status ─────────────────────────────────
 async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
+  // ONE batched WinRM read for every zone instead of one call per zone — see
+  // DNS_ZONE_BATCH in powershellRunner.js for why (a firewall read the old per-zone
+  // rate as a brute-force attack). Per-zone failure isolation is PRESERVED: a zone
+  // whose entry is ok:false is logged and skipped, exactly as the old `continue` did.
+  //
+  // A total batch failure deliberately does NOT return early — it leaves `batch`
+  // empty so every zone is skipped and the cross-server recompute below still runs,
+  // which is what the old per-zone loop did when every call failed.
+  let batch = {};
+  try { batch = (await ps.getDnsZoneSoaDetailBatch(ip, auth, zones)) || {}; }
+  catch (e) { log(`[SOA] ${ip}: batch read failed: ${e.message}`); }
+
   for (const z of zones) {
-    let soa;
-    try { soa = await ps.getDnsZoneSoaDetail(ip, auth, z.zone_name); }
-    catch (e) { log(`[SOA] ${ip}/${z.zone_name}: ${e.message}`); continue; }
-    if (!soa || soa.Serial == null) continue;
+    const soa = batch[z.zone_name];
+    if (!soa || !soa.ok) {
+      if (soa && soa.error) log(`[SOA] ${ip}/${z.zone_name}: ${soa.error}`);
+      continue;
+    }
+    if (soa.Serial == null) continue;
     const serial = parseInt(soa.Serial);
     if (!Number.isFinite(serial)) continue;
 
@@ -126,11 +140,17 @@ async function pollZoneSyncStatus(db, ps, server, ip, auth, zones) {
 
 // ── 3. Zone record counts ─────────────────────────────────────
 async function pollZoneRecordCounts(db, ps, ip, auth, zones) {
+  // Batched — see pollZoneSyncStatus above.
+  let batch = {};
+  try { batch = (await ps.getDnsZoneRecordCountsBatch(ip, auth, zones)) || {}; }
+  catch (e) { log(`[Counts] ${ip}: batch read failed: ${e.message}`); }
+
   for (const z of zones) {
-    let counts;
-    try { counts = await ps.getDnsZoneRecordCounts(ip, auth, z.zone_name); }
-    catch (e) { log(`[Counts] ${ip}/${z.zone_name}: ${e.message}`); continue; }
-    if (!counts) continue;
+    const counts = batch[z.zone_name];
+    if (!counts || !counts.ok) {
+      if (counts && counts.error) log(`[Counts] ${ip}/${z.zone_name}: ${counts.error}`);
+      continue;
+    }
     await db.query(
       `UPDATE dns_zones SET record_count_a=$2, record_count_ptr=$3, record_count_cname=$4,
          record_count_mx=$5, record_count=$6 WHERE id=$1`,
@@ -193,11 +213,17 @@ async function checkForwarderHealth(db, ps, server, ip, auth) {
 
 // ── 5. Scavenging / aging config ──────────────────────────────
 async function pollScavenging(db, ps, ip, auth, zones) {
+  // Batched — see pollZoneSyncStatus above.
+  let batch = {};
+  try { batch = (await ps.getDnsZoneScavengingBatch(ip, auth, zones)) || {}; }
+  catch (e) { log(`[Scavenging] ${ip}: batch read failed: ${e.message}`); }
+
   for (const z of zones) {
-    let sc;
-    try { sc = await ps.getDnsZoneScavenging(ip, auth, z.zone_name); }
-    catch (e) { log(`[Scavenging] ${ip}/${z.zone_name}: ${e.message}`); continue; }
-    if (!sc) continue;
+    const sc = batch[z.zone_name];
+    if (!sc || !sc.ok) {
+      if (sc && sc.error) log(`[Scavenging] ${ip}/${z.zone_name}: ${sc.error}`);
+      continue;
+    }
     const aging = sc.AgingEnabled === true;
     await db.query(
       `UPDATE dns_zones SET scavenging_enabled=$2, aging_enabled=$3 WHERE id=$1`,
@@ -284,14 +310,26 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
       zones = r.rows;
     } catch (e) { log(`[Stale] ${ip} zones: ${e.message}`); continue; }
 
+    // Batched — see pollZoneSyncStatus. ⛔ The ok flag carries the SAME contract the
+    // single-zone reader's forced array established, and it matters more here than
+    // anywhere else because this function DELETEs a zone's prior snapshot before
+    // inserting: ok:true with Records []  = "genuinely no stale records, clear it",
+    // while ok:false or a missing entry   = "could not read, LEAVE THE SNAPSHOT".
+    let staleBatch = {};
+    try { staleBatch = (await ps.getDnsStaleRecordsBatch(ip, auth, zones, 90)) || {}; }
+    catch (e) { log(`[Stale] ${ip}: batch read failed: ${e.message}`); }
+
     for (const z of zones) {
       zonesChecked++;
-      let raw;
-      try { raw = await ps.getDnsStaleRecords(ip, auth, z.zone_name, 90); }
-      catch (e) { log(`[Stale] ${ip}/${z.zone_name}: ${e.message}`); continue; }
+      const entry = staleBatch[z.zone_name];
+      const raw = (entry && entry.ok)
+        ? (Array.isArray(entry.Records) ? entry.Records : (entry.Records ? [entry.Records] : []))
+        : null;
+      if (entry && !entry.ok && entry.error) log(`[Stale] ${ip}/${z.zone_name}: ${entry.error}`);
       // null is now UNAMBIGUOUS: the reader forces an array, so a zone with no stale
       // records returns `[]` and only a genuine read failure yields null (see
-      // powershellRunner.getDnsStaleRecords). Previously both produced null, which
+      // powershellRunner.getDnsStaleRecordsBatch, which carries the same contract via
+      // its ok flag). Previously both produced null, which
       // made this counter meaningless — on the live server it reported "242 zone(s)
       // returned no result" when every one of those 242 was simply a zone with zero
       // stale records and not a single PowerShell call had failed.
@@ -333,4 +371,12 @@ async function detectStaleRecords(db, ps, servers, serverAuth) {
       (zonesNullResult ? `; ${zonesNullResult} zone(s) COULD NOT BE READ (PowerShell failure — previous snapshot left untouched)` : ''));
 }
 
-module.exports = { runDnsMonitor, detectStaleRecords };
+module.exports = {
+  runDnsMonitor,
+  detectStaleRecords,
+  // Exported for tests — these take (db, ps, ...) explicitly so a fake db/ps can
+  // drive them. Nothing in src calls them from outside this module.
+  pollZoneSyncStatus,
+  pollZoneRecordCounts,
+  pollScavenging,
+};

@@ -403,3 +403,189 @@ test('runPS parses JSON stdout, and returns null on unparseable output', async (
     assert.strictEqual(await ps.runPS('10.0.0.1', 'x', KERB, true), 'not json');
   } finally { impl = okImpl; }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Batched per-zone readers (DNS_ZONE_BATCH)
+//
+// These exist because the old per-zone loops produced ~1,017 WinRM calls per server
+// per 20-minute tick against four DCs, which a firewall read as a brute-force attack
+// on 5985. The regression these tests exist to prevent is "N zones became N calls
+// again", so the call COUNT is asserted, not just the script text.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Run `fn` with a canned stdout, then restore the default child behaviour. */
+async function withStdout(stdout, fn) {
+  const prev = impl;
+  impl = (file, args, opts, cb) => { process.nextTick(() => cb(null, stdout, '')); };
+  try { return await fn(); } finally { impl = prev; }
+}
+
+/** The captures made during `fn`. */
+async function capture(fn) {
+  const from = calls.length;
+  await fn();
+  return calls.slice(from);
+}
+
+const BATCH_READERS = [
+  ['getDnsZoneSoaDetailBatch', (names) => ps.getDnsZoneSoaDetailBatch('10.0.0.1', KERB, names)],
+  ['getDnsZoneRecordCountsBatch', (names) => ps.getDnsZoneRecordCountsBatch('10.0.0.1', KERB, names)],
+  ['getDnsZoneScavengingBatch', (names) => ps.getDnsZoneScavengingBatch('10.0.0.1', KERB, names)],
+  ['getDnsStaleRecordsBatch', (names) => ps.getDnsStaleRecordsBatch('10.0.0.1', KERB, names, 90)],
+];
+
+for (const [name, run] of BATCH_READERS) {
+  test(`batch: ${name} — a malicious zone name stays inert`, async () => {
+    await run([ATTACK, 'ok.example']);
+    assertInert(lastCmd(), ATTACK, MARKER);
+  });
+
+  test(`batch: ${name} — EVERY zone name survives as its own literal`, async () => {
+    const names = [ATTACK, "o'brien.example", 'plain.example'];
+    await run(names);
+    const cmd = lastCmd();
+    const { literals, balanced } = psScan(cmd);
+    assert.ok(balanced, 'unbalanced single quote in batched script');
+    for (const n of names) {
+      assert.ok(literals.includes(n), `zone ${JSON.stringify(n)} did not survive as an intact literal`);
+    }
+  });
+
+  test(`batch: ${name} — forces an array and uses -Depth 5`, async () => {
+    await run(['a.example']);
+    const cmd = lastCmd();
+    // -InputObject, never a pipe: piping an EMPTY pipeline to ConvertTo-Json emits
+    // nothing, and empty stdout is indistinguishable from a genuine failure.
+    assert.ok(cmd.includes('ConvertTo-Json -InputObject $out'),
+      `${name} must convert $out via -InputObject, not a pipeline:\n${cmd}`);
+    assert.ok(cmd.includes('$out = @()'), `${name} must seed $out as an array`);
+    // Default depth is 2. Wrapping N objects in an array adds a level, and the stale
+    // reader nests one deeper again (array > object > Records > record > scalar).
+    assert.ok(cmd.includes('-Depth 5'), `${name} must pass -Depth 5:\n${cmd}`);
+  });
+
+  test(`batch: ${name} — a try/catch never heads a pipeline`, async () => {
+    await run(['a.example']);
+    const cmd = lastCmd();
+    // `try{}catch{}|ConvertTo-Json` is a PARSE ERROR that fails the whole
+    // Invoke-Command scriptblock, losing every zone in the chunk silently.
+    assert.ok(!/\}\s*\|\s*ConvertTo-Json/.test(cmd),
+      `a catch block is piped directly into ConvertTo-Json (parse error):\n${cmd}`);
+  });
+
+  test(`batch: ${name} — uses the batch timeout, not the single-zone one`, async () => {
+    await run(['a.example']);
+    assert.strictEqual(lastOpts().timeout, 240000,
+      'batched reads need their own larger timeout (PS_DNS_BATCH_TIMEOUT_MS)');
+  });
+
+  test(`batch: ${name} — PS 5.1 only: foreach, never ForEach-Object -Parallel`, async () => {
+    await run(['a.example']);
+    const cmd = lastCmd();
+    assert.ok(!cmd.includes('-Parallel'), 'ForEach-Object -Parallel is PowerShell 7 only');
+    assert.ok(cmd.includes('foreach ($z in $zones)'), 'expected an in-script foreach over the zone array');
+  });
+
+  test(`batch: ${name} — 85 zones become 3 calls, not 85`, async () => {
+    const names = Array.from({ length: 85 }, (_, i) => `z${i}.example`);
+    const made = await capture(() => run(names));
+    assert.strictEqual(made.length, 3,
+      `85 zones must chunk into 3 calls at DNS_ZONE_BATCH=40, got ${made.length}`);
+    // Every zone must appear exactly once across the chunks — none dropped, none repeated.
+    const seen = new Map();
+    for (const c of made) {
+      const cmd = c.args[c.args.indexOf('-Command') + 1];
+      for (const n of names) {
+        if (cmd.includes(`'${n}'`)) seen.set(n, (seen.get(n) || 0) + 1);
+      }
+    }
+    assert.strictEqual(seen.size, 85, 'some zones were dropped from the chunking');
+    for (const [n, count] of seen) {
+      assert.strictEqual(count, 1, `zone ${n} appeared in ${count} chunks`);
+    }
+  });
+
+  test(`batch: ${name} — zero zones makes no call at all`, async () => {
+    const made = await capture(() => run([]));
+    assert.strictEqual(made.length, 0, 'an empty zone list must not spawn PowerShell');
+  });
+
+  test(`batch: ${name} — a failed chunk marks every zone unreadable, never empty`, async () => {
+    // Empty stdout is what runPS turns into null. Each zone must come back ok:false
+    // so the caller keeps its "could not read" branch rather than reading it as "no data".
+    const out = await run(['a.example', 'b.example']);
+    for (const z of ['a.example', 'b.example']) {
+      assert.ok(out[z], `${z} missing from the result map`);
+      assert.strictEqual(out[z].ok, false, `${z} must be ok:false when the chunk fails`);
+      assert.match(out[z].error, /batch read failed/);
+    }
+  });
+
+  test(`batch: ${name} — accepts dns_zones rows as well as strings`, async () => {
+    await run([{ id: 1, zone_name: 'row.example' }]);
+    assert.ok(lastCmd().includes("'row.example'"), 'a { zone_name } row must be accepted');
+  });
+}
+
+test('batch: one bad zone does not cost the others', async () => {
+  const stdout = JSON.stringify([
+    { Zone: 'good.example', Ok: true, Serial: 42 },
+    { Zone: 'bad.example', Ok: false, Error: 'zone not found' },
+  ]);
+  const out = await withStdout(stdout, () =>
+    ps.getDnsZoneSoaDetailBatch('10.0.0.1', KERB, ['good.example', 'bad.example']));
+  assert.strictEqual(out['good.example'].ok, true);
+  assert.strictEqual(out['good.example'].Serial, 42);
+  assert.strictEqual(out['bad.example'].ok, false);
+  assert.strictEqual(out['bad.example'].error, 'zone not found');
+});
+
+test('batch: a zone absent from a successful response is unreadable, not empty', async () => {
+  const stdout = JSON.stringify([{ Zone: 'present.example', Ok: true, Serial: 1 }]);
+  const out = await withStdout(stdout, () =>
+    ps.getDnsZoneSoaDetailBatch('10.0.0.1', KERB, ['present.example', 'absent.example']));
+  assert.strictEqual(out['present.example'].ok, true);
+  assert.strictEqual(out['absent.example'].ok, false,
+    'a missing zone must never read as a zone with no data');
+  assert.match(out['absent.example'].error, /missing from batch response/);
+});
+
+test('batch: a single-object response (PS un-arrays one item) still indexes', async () => {
+  const stdout = JSON.stringify({ Zone: 'only.example', Ok: true, Serial: 7 });
+  const out = await withStdout(stdout, () =>
+    ps.getDnsZoneSoaDetailBatch('10.0.0.1', KERB, ['only.example']));
+  assert.strictEqual(out['only.example'].ok, true);
+  assert.strictEqual(out['only.example'].Serial, 7);
+});
+
+test('batch: stale records — Ok with NO records is ok:true, never conflated with failure', async () => {
+  // ⛔ detectStaleRecords DELETEs a zone's prior snapshot before inserting, so
+  // "read fine, nothing stale" and "could not read" must stay distinguishable.
+  const stdout = JSON.stringify([
+    { Zone: 'empty.example', Ok: true, Records: [] },
+    { Zone: 'broken.example', Ok: false, Error: 'access denied' },
+  ]);
+  const out = await withStdout(stdout, () =>
+    ps.getDnsStaleRecordsBatch('10.0.0.1', KERB, ['empty.example', 'broken.example'], 90));
+  assert.strictEqual(out['empty.example'].ok, true, 'an empty zone read successfully is ok:true');
+  assert.deepStrictEqual(out['empty.example'].Records, []);
+  assert.strictEqual(out['broken.example'].ok, false);
+});
+
+test('batch: stale records — staleDays goes through psNum (unquoted AddDays position)', async () => {
+  await ps.getDnsStaleRecordsBatch('10.0.0.1', KERB, ['a.example'], '9; calc');
+  const cmd = lastCmd();
+  assert.ok(cmd.includes('AddDays(-90)'), `unusable staleDays must fall back to 90:\n${cmd}`);
+  assert.ok(!cmd.includes('calc'), 'staleDays payload leaked into the script');
+});
+
+test('batch: credential mode keeps the password out of the command line', async () => {
+  const before = process.env.DDI_PS_PASSWORD;
+  await ps.getDnsZoneSoaDetailBatch('10.0.0.1',
+    { auth_mode: 'credential', ps_username: 'd\\u', ps_password: 's3cr3t' }, ['a.example']);
+  const cmd = lastCmd();
+  assert.ok(!cmd.includes('s3cr3t'), 'password must never appear in the -Command string');
+  assert.ok(cmd.includes('$env:DDI_PS_PASSWORD'), 'script must read the password from the child env');
+  assert.strictEqual(lastOpts().env.DDI_PS_PASSWORD, 's3cr3t');
+  assert.strictEqual(process.env.DDI_PS_PASSWORD, before, 'must not leak into this process');
+});

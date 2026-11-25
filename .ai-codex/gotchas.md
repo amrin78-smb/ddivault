@@ -1280,3 +1280,75 @@ was confirmed rather than assumed: it answers a terminal
 session surfaces as a failed fetch instead of a redirect storm. ⛔ If that branch
 is ever changed to REDIRECT, it inherits this bug and needs `hasSessionCookie()`
 too. Regression suite: `node --test tests/middlewareSessionRedirect.test.js`.
+
+## ⛔ The per-zone WinRM loops read as a BRUTE-FORCE ATTACK on 5985 (1.41.0)
+
+A firewall flagged a brute-force attempt **from** the NocVault server on 2026-11-25. It was
+this collector. Measured on the box, not inferred:
+
+```
+4688:  2841x powershell.exe   (parent: C:\Program Files\nodejs\node.exe)
+4648: 11455x "explicit credential logon" as the WinRM account -> four domain controllers
+rate:  ~173/min with the services running  ->  0 within 5 min of stopping them
+```
+
+`dnsMonitor.js` had **four per-zone loops** (`pollZoneSyncStatus`, `pollZoneRecordCounts`,
+`pollScavenging`, and nightly `detectStaleRecords`), each calling a single-zone reader once
+per zone. ⛔ **Every `runPS` is a fresh `powershell.exe` running a fresh
+`Invoke-Command -ComputerName -Credential`, i.e. a complete credential presentation — about
+FOUR Security 4648 events each.** Production holds 339 zones, so a 20-minute tick was
+~1,017 WinRM calls per server, with all four servers polled in parallel
+(`dnsMonitor.js` `Promise.allSettled`, added as a *latency* fix — it traded instantaneous
+auth rate for wall-clock time and is what made the burst spiky enough to trip a signature).
+
+Fixed by asking for many zones in ONE `Invoke-Command`, looping inside PowerShell:
+`getDnsZoneSoaDetailBatch`, `getDnsZoneRecordCountsBatch`, `getDnsZoneScavengingBatch`,
+`getDnsStaleRecordsBatch`. `DNS_ZONE_BATCH` (40) and `DNS_BATCH_PS_TIMEOUT` (240s) are both
+env-overridable, so there is no schema or installer change and the two-run rule stays dormant.
+
+**Five traps, every one of them load-bearing — read before touching a batch script:**
+
+1. ⛔ **A `try/catch` statement cannot be the LEFT side of a pipeline.**
+   `try{}catch{}|ConvertTo-Json` is a *parse error* that fails the whole `Invoke-Command`
+   scriptblock, so `runPS` returns null and every zone in the chunk vanishes silently.
+   Accumulate into `$out` inside the loop and convert after it. `testDnsForwarder` already
+   documented this; the batch readers are the second place it bites.
+2. ⛔ **`-Depth 5`, always.** The single-zone readers use a bare `ConvertTo-Json -Compress`,
+   i.e. the DEFAULT DEPTH OF 2. Wrapping N objects in an array adds a level, and
+   `getDnsStaleRecordsBatch` nests one deeper again (array > object > Records > record >
+   scalar = exactly 5). Too shallow and the inner objects silently serialise as type-name
+   strings — valid JSON that parses to garbage.
+3. ⛔ **`ConvertTo-Json -InputObject $out` on a seeded `@()`, never a pipe.** An empty
+   pipeline emits NOTHING, and empty stdout is what `runPS` turns into null — identical to a
+   genuine failure. Same trap `getDnsStaleRecords` was fixed for.
+4. ⛔ **Every zone name goes through `psq()`.** The array literal is N new interpolation
+   sites. Inside the loop PowerShell holds the name in `$z`, so the use site needs nothing.
+5. ⛔ **PowerShell 5.1.** `foreach`, never `ForEach-Object -Parallel` (PS7 only).
+
+**And the contract that destroys data if you get it wrong:** `detectStaleRecords` DELETEs a
+zone's prior snapshot before inserting the fresh set. So `ok:true` with `Records: []` ("read
+fine, nothing stale", clear it) and `ok:false` ("could not read", KEEP it) must never be
+collapsed into one empty value. A zone absent from an otherwise-successful batch response is
+also `ok:false`, not empty — "missing" must never read as "no data".
+
+Chunks are issued **sequentially on purpose**. Running them concurrently, as
+`ipamScanner.js` does for its local ping sweep, would push the instantaneous connection rate
+back up — the exact thing being fixed.
+
+Regression suite: `node --test tests/dnsMonitorBatch.test.js` (call COUNTS, not just data —
+the regression is "N zones became N calls again") and the batch cases in
+`node --test tests/powershellRunner.escaping.test.js`.
+
+**Not fixed here, deliberately:**
+- **Protocol SOA.** `collector/dns/client.js` `querySoa()` already returns
+  `{serial, primary, email, refresh, retry, expire, minimum, ttl}` over port 53 — full field
+  parity with `getDnsZoneSoaDetail`, no auth, no WinRM, and testable against the podman lab.
+  That would take the SOA loop to **zero** WinRM calls. ⛔ It is NOT the same as registering
+  Windows as a protocol platform, which `collector/dns/index.js` refuses on purpose because
+  AXFR drops scavenging/aging/AD-integration data. `querySoa` is not AXFR.
+- **`auth_mode` -> `kerberos`.** `DEFAULT_AUTH_MODE` is already `'kerberos'`, so these
+  servers were explicitly set to `credential` per-server in the DB. Switching would cut the
+  4648 *credential presentations* but NOT the 5985 connection count — so it does not address
+  a firewall rule that counts connections to that port. Credential hygiene, not this fix.
+- **True session reuse** (`New-PSSession` held across calls). Nothing in either repo does it;
+  it needs a persistent PowerShell host and is unnecessary at a ~40x lower call count.
