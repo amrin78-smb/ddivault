@@ -33,6 +33,21 @@ const { version } = require('../package.json');
 // entry here with 3-5 bullets describing what changed. There is no CHANGELOG.md —
 // release notes live here and are surfaced by the update-status endpoint.
 const releaseNotes = {
+  '1.43.0': [
+    "Fixed: DNS collection made far fewer logons to your domain controllers. Two collection passes still contacted each DNS zone separately - one every 15 minutes and one every hour - so a site with 339 zones produced hundreds of logons an hour. Both now ask for every zone in a single request.",
+    "Zone serial numbers are now read over ordinary DNS on port 53, which needs no account and no remote-management session at all. If port 53 cannot be reached, DDIVault automatically falls back to one batched remote request, so nothing stops working on a network that blocks it.",
+    "This completes the work started in 1.41.0 and 1.42.0, which covered only part of the collector. A routine collection cycle now makes effectively no remote-management logons.",
+    "No change to the data collected: the same zone serials, record counts and records are gathered and stored exactly as before, and a zone that cannot be read is left untouched rather than being recorded as empty.",
+  ],
+  '1.42.0': [
+    "Zone serial numbers are now read over ordinary DNS on port 53 instead of a remote-management session, removing the account logon that each read used to require.",
+    "Record counts are only re-read for zones whose serial number has actually changed, and scavenging settings are checked every few hours rather than every cycle.",
+    "If port 53 is unreachable, DDIVault tries a few zones, then falls back to the batched remote-management path for that server rather than waiting out a timeout on every zone.",
+  ],
+  '1.41.0': [
+    "DNS collection now asks each server about many zones in a single request instead of one request per zone, which sharply reduces the number of logons DDIVault makes to your domain controllers.",
+    "A zone that cannot be read is reported with the reason and skipped, leaving the other zones in the same request unaffected.",
+  ],
   '1.40.3': [
     "Fixed: if DDIVault could not read your session, every page bounced you to the hub to sign in, which returned you to DDIVault, which bounced you again - until the browser gave up with a \"too many redirects\" error. A session can become unreadable without anyone signing out: it happens when the sign-in secret is changed, and when the suite is reached over HTTPS while DDIVault is still configured with a plain http address.",
     "DDIVault now asks the hub to return you straight to DDIVault only when your browser presented no session at all. If a session is present but cannot be read, you are sent to the hub sign-in page without that instruction, so you land on the suite launcher and stay there - the problem becomes visible instead of hiding behind a redirect loop.",
@@ -214,7 +229,7 @@ const releaseNotes = {
   '1.28.4': [
     'The nightly stale-DNS-record scan no longer reports healthy zones as unread. It could not tell a zone with no stale records apart from a zone it failed to read — both looked identical — so it flagged both the same way. Last night that read "242 zones returned no result" when all 242 simply had nothing stale and not one read had actually failed. Zones now return an explicit empty answer, so the figure means what it says and only ever counts genuine read failures.',
     'That also fixes what happens when a zone genuinely cannot be read. The summary claimed the previous results were kept, but they were in fact cleared and replaced with nothing — so a zone that could not be reached was reported as having zero stale records rather than as unknown. Its last known results are now genuinely left in place until it can be read again.',
-    'No change to which records count as stale, or to the 450 stale records currently found in _msdcs.thaiunion.co.th.',
+    'No change to which records count as stale, or to the stale records currently found in the forest _msdcs zone.',
   ],
   '1.28.3': [
     'Fixed duplicated lease history. Each poll re-reads the recent portion of the DHCP log, and after any restart it re-reads all of it — the events table correctly ignored anything it had already stored, but the per-address lease history did not, and recorded another copy every time. On this server that left 2,056 surplus rows out of 5,561 (37%), with some lease events stored six times over, inflating any per-address history or count built on them. Only genuinely new events are recorded now.',

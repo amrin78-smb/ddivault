@@ -25,7 +25,7 @@ const path = require('path');
 // 192.168.x.x token for that server's IP) AFTER this module is required — a
 // captured const silently ignores every one of those rewrites, which is why the
 // override path only ever tried the literal token and never worked on any
-// install. Proven 2026-08-04: env correctly became \\172.24.0.10\DHCPLogs while
+// install. Proven 2026-08-04: env correctly became \\<dhcp-server>\DHCPLogs while
 // the reader still used \\192.168.x.x\.
 const dhcpLogUnc   = () => (process.env.DHCP_LOG_UNC   || '').trim();
 const dhcpLogLocal = () => (process.env.DHCP_LOG_LOCAL || '').trim();

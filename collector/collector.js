@@ -76,7 +76,7 @@ const lastLogEventTime = {};
 function log(msg)  { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function warn(msg) { console.warn(`[${new Date().toISOString()}] WARN: ${msg}`); }
 
-// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
@@ -347,11 +347,26 @@ async function syncDns(server) {
 
   // Collect records for the eligible primary zones (same filter the writer
   // re-applies), keyed by zone name, then write zones + records in one call.
-  const recordsByZone = {};
+  // ⛔ ONE batched call per chunk, not one per zone. This loop issued ~214 WinRM
+  // logons an hour across the estate and was the second per-zone loop the 1.41/1.42
+  // batching work missed — that work only covered dnsMonitor.js. The eligibility
+  // filter is unchanged and still mirrors the one writeDnsZones re-applies.
+  const eligible = [];
   for (const zone of zones) {
-    if (!zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary') {
-      const records = await ps.getDnsRecords(ip, zone.ZoneName, auth);
-      if (records && records.length) recordsByZone[zone.ZoneName] = records;
+    if (!zone.IsReverseLookupZone && !zone.IsAutoCreated && zone.ZoneType === 'Primary'
+        && typeof zone.ZoneName === 'string' && zone.ZoneName) {
+      eligible.push(zone.ZoneName);
+    }
+  }
+  // The map-building rule lives in writers.js beside writeDnsZones, which is what
+  // depends on it — see recordsByZoneFromBatch for why omission, not [], is correct.
+  let recordsByZone = {};
+  if (eligible.length) {
+    const batch = (await ps.getDnsRecordsBatch(ip, auth, eligible)) || {};
+    const built = writers.recordsByZoneFromBatch(batch, eligible);
+    recordsByZone = built.recordsByZone;
+    if (built.unread) {
+      warn(`[DNS] ${ip} — ${built.unread} of ${eligible.length} zone(s) could not be read; their stored records are left untouched`);
     }
   }
 

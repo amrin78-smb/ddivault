@@ -157,13 +157,24 @@ const DHCP_LOG_PS_TIMEOUT = parseInt(process.env.PS_DHCP_LOG_TIMEOUT_MS || '1200
 // rate back up, which is the exact thing being fixed. ~9 chunks per loop is cheap.
 const DNS_ZONE_BATCH = parseInt(process.env.PS_DNS_ZONE_BATCH || '40');
 // One chunk of 40 zones cannot fit DNS_PS_TIMEOUT's 60s: a full DNS sweep against
-// BKKDC01 was measured at 7-8 minutes, and record-count reads enumerate every record
+// a full sweep against one production DC was measured at 7-8 minutes, and record-count reads enumerate every record
 // in the zone server-side. 240s is deliberate headroom in the same spirit as
 // DHCP_LOG_PS_TIMEOUT above, not a tuned value — if this ever times out for real,
 // lower PS_DNS_ZONE_BATCH rather than trimming this.
 const DNS_BATCH_PS_TIMEOUT = parseInt(process.env.PS_DNS_BATCH_TIMEOUT_MS || '240000');
 
-// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// ⛔ RECORDS ARE NOT AGGREGATES — this batch is deliberately SMALLER than
+// DNS_ZONE_BATCH. The other batched readers return one summary row per zone; this one
+// returns every resource record. Measured on production 2026-11-27: one zone holds
+// 65,610 of one production DC's 66,683 records (98%), so a chunk's size is dominated by whichever
+// chunk contains that zone — roughly 8 MB of JSON against MAX_BUFFER. That is already
+// today's worst case, because the single-zone reader it replaces fetches that same zone
+// in one call; keeping the chunk at 20 means batching adds the other 19 zones' ~1,000
+// records to it and nothing more. Raising this does not spread that zone's cost, it
+// only adds to whichever chunk already carries it.
+const DNS_RECORD_BATCH = parseInt(process.env.PS_DNS_RECORD_BATCH || '20');
+
+// PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
@@ -186,7 +197,7 @@ const DEFAULT_PASSWORD  = process.env.PS_PASSWORD  || '';
  * @returns {Promise<string|object|null>}
  */
 async function runPS(serverIp, script, auth, returnRaw, timeoutMs) {
-  // PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which
+  // PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which
   // Invoke-Command -ComputerName rejects. Strip it before any remote use.
   const cleanIp = (serverIp || '').replace(/\/\d+$/, '').trim();
   if (!cleanIp) {
@@ -511,7 +522,7 @@ async function getDnsStaleRecords(serverIp, auth, zoneName, staleDays) {
   // empty output and returned null — identical to what it returns when the command
   // genuinely FAILS. The caller could not tell "this zone has no stale records" from
   // "this zone could not be read", and had to guess. Forcing an array makes an empty
-  // result a real `[]` (live-verified on 172.24.0.44), so null now unambiguously
+  // result a real `[]` (live-verified against a production DC), so null now unambiguously
   // means failure. A single record also serialises as a 1-element array rather than
   // a bare object, which the caller already handles.
   // Caveat unchanged: -ErrorAction SilentlyContinue still swallows a per-zone read
@@ -584,15 +595,16 @@ function indexZoneBatch(rows, chunk, chunkFailed) {
  * Run `buildScript(chunk)` over zoneNames in DNS_ZONE_BATCH-sized chunks, sequentially.
  * Accepts either strings or dns_zones rows ({ zone_name }).
  */
-async function runZoneBatches(serverIp, auth, zoneNames, buildScript) {
+async function runZoneBatches(serverIp, auth, zoneNames, buildScript, batchSize) {
   const names = [];
   for (const z of (zoneNames || [])) {
     const n = (z && typeof z === 'object') ? z.zone_name : z;
     if (typeof n === 'string' && n) names.push(n);
   }
   const result = {};
-  for (let i = 0; i < names.length; i += DNS_ZONE_BATCH) {
-    const chunk = names.slice(i, i + DNS_ZONE_BATCH);
+  const size = Math.max(1, batchSize || DNS_ZONE_BATCH);
+  for (let i = 0; i < names.length; i += size) {
+    const chunk = names.slice(i, i + size);
     const rows = await runPS(cleanIp(serverIp), buildScript(chunk), auth, false, DNS_BATCH_PS_TIMEOUT);
     Object.assign(result, indexZoneBatch(rows, chunk, rows === null || rows === undefined));
   }
@@ -635,6 +647,21 @@ async function getDnsStaleRecordsBatch(serverIp, auth, zoneNames, staleDays) {
   const cutoff = psNum(staleDays || 90, 90, 1, 36500);
   return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
     `$cutoff = (Get-Date).AddDays(-${cutoff}); $zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $r = @(Get-DnsServerResourceRecord -ZoneName $z -ErrorAction Stop | Where-Object { $_.TimeStamp -and $_.TimeStamp -lt $cutoff -and $_.RecordType -ne 'SOA' -and $_.RecordType -ne 'NS' } | Select-Object HostName,RecordType,TimeStamp); $out += [PSCustomObject]@{ Zone=$z; Ok=$true; Records=$r } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`);
+}
+
+// Batched resource records — replaces N x getDnsRecords (collector.js's syncDns loop).
+//
+// Field-for-field identical to getDnsRecords above, including the inner RecordData
+// if/elseif ladder: this REPLACES that call, so any divergence silently changes what is
+// stored. The inner try/catch sits inside the ForEach-Object block as a statement, not
+// at the head of a pipeline — trap 1 still applies and is still respected.
+//
+// Depth 5 is exactly right and not a round number: array > zone object > Records array
+// > record object > scalar, the same nesting getDnsStaleRecordsBatch has.
+async function getDnsRecordsBatch(serverIp, auth, zoneNames) {
+  return await runZoneBatches(serverIp, auth, zoneNames, (chunk) =>
+    `$zones = ${zoneArrayLiteral(chunk)}; $out = @(); foreach ($z in $zones) { try { $recs = @(Get-DnsServerResourceRecord -ZoneName $z -ErrorAction Stop | ForEach-Object { $r = $_; $data = ''; try { if ($r.RecordData.IPv4Address) { $data = $r.RecordData.IPv4Address.IPAddressToString } elseif ($r.RecordData.IPv6Address) { $data = $r.RecordData.IPv6Address.IPAddressToString } elseif ($r.RecordData.HostNameAlias) { $data = $r.RecordData.HostNameAlias } elseif ($r.RecordData.MailExchange) { $data = $r.RecordData.MailExchange + ' ' + $r.RecordData.Preference } elseif ($r.RecordData.NameServer) { $data = $r.RecordData.NameServer } elseif ($r.RecordData.DescriptiveText) { $data = $r.RecordData.DescriptiveText } else { $data = '' } } catch {}; [PSCustomObject]@{ HostName=$r.HostName; RecordType=$r.RecordType; TTL=[int]$r.TimeToLive.TotalSeconds; RecordData=$data } }); $out += [PSCustomObject]@{ Zone=$z; Ok=$true; Records=$recs } } catch { $out += [PSCustomObject]@{ Zone=$z; Ok=$false; Error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $out -Depth 5 -Compress`,
+    DNS_RECORD_BATCH);
 }
 
 // Test forwarder reachability (resolves a name via the forwarder, measures ms)
@@ -892,6 +919,7 @@ module.exports = {
   getDnsZoneRecordCountsBatch,
   getDnsZoneScavengingBatch,
   getDnsStaleRecordsBatch,
+  getDnsRecordsBatch,
   testDnsForwarder,
   getDnsQueryStats,
   // DNS write

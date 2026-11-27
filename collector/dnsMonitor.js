@@ -14,7 +14,7 @@
 
 function log(msg) { console.log(`[${new Date().toISOString()}] [DNS-Monitor] ${msg}`); }
 
-// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
@@ -469,7 +469,7 @@ async function runDnsMonitor(db, ps, servers, serverAuth) {
     return true;
   }
 
-  // Poll all DNS servers in parallel so a slow server (e.g. BKKDC01 at 7–8 min)
+  // Poll all DNS servers in parallel so a slow server (one production DC measured at 7–8 min)
   // no longer blocks the others — total time is max(per-server) not the sum.
   const results = await Promise.allSettled(
     servers.map(server => pollServer(server).catch(err =>

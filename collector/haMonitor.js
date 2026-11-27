@@ -1,6 +1,10 @@
 'use strict';
 
 const dnsProviders = require('./dns');
+// readZoneSoa is reused rather than reimplemented: it already carries the port-53
+// probe, the circuit breaker and the batched WinRM fallback. No cycle — dnsMonitor
+// requires anomalyDetector and dns/client, neither of which reaches back here.
+const dnsMonitor = require('./dnsMonitor');
 
 /**
  * haMonitor.js — HA & infrastructure health collection for DDIVault
@@ -28,7 +32,7 @@ function formatDuration(seconds) {
   return `${d}d`;
 }
 
-// PostgreSQL inet values include CIDR (e.g. 172.24.0.10/32) which the
+// PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which the
 // PowerShell remoting functions reject — strip it before any PS use.
 const cleanIp = ip => (ip || '').replace(/\/\d+$/, '').trim();
 
@@ -165,7 +169,7 @@ async function pollFailover(db, ps, server, auth) {
 }
 
 // ── DNS SOA / replication lag ─────────────────────────────────
-async function pollDnsSoa(db, ps, server, auth) {
+async function pollDnsSoa(db, ps, server, auth, deps) {
   // ⛔ PowerShell cannot read a BIND server's SOA. collector/dns/sync.js
   // already records the serial for these from the protocol path, so running
   // this pass against them would only produce WinRM failures for data we have.
@@ -174,12 +178,21 @@ async function pollDnsSoa(db, ps, server, auth) {
   const ip = cleanIp(server.ip_address);
   const zones = await db.query(
     `SELECT id, zone_name FROM dns_zones WHERE server_id=$1 AND is_reverse=FALSE`, [server.id]).catch(() => ({ rows: [] }));
+  // ⛔ PROTOCOL FIRST — this loop used to issue one WinRM logon PER ZONE, every 15
+  // minutes: 258 across the estate, the largest surviving source after 1.42.0 and one
+  // of the two per-zone loops the 1.41/1.42 batching work missed (it only fixed
+  // dnsMonitor.js). readZoneSoa reads the same serial over port 53 with NO credential,
+  // and falls back to ONE batched WinRM call for whatever port 53 could not answer.
+  // Same data, same per-zone isolation, ~0 logons.
+  if (!zones.rows.length) return;
+  const soaMap = (await dnsMonitor.readZoneSoa(ps, server, ip, auth, zones.rows, deps)) || {};
   let checked = 0;
   for (const z of zones.rows) {
-    let soa;
-    try { soa = await ps.getDnsZoneSoa(ip, z.zone_name, auth); } catch { continue; }
-    if (!soa || soa.Serial == null) continue;
-    const serial = parseInt(soa.Serial);
+    // An unreadable zone is SKIPPED, never written — identical to the `continue` the
+    // per-zone try/catch did. Writing a null serial would read as "this zone reset".
+    const entry = soaMap[z.zone_name];
+    if (!entry || !entry.ok || entry.Serial == null) continue;
+    const serial = parseInt(entry.Serial);
 
     // Compare with the max serial seen for the same zone name on OTHER servers.
     const others = await db.query(

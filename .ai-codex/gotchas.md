@@ -1429,3 +1429,75 @@ per-zone — about three calls a tick, which was never the problem.
 Regression suite: `node --test tests/dnsMonitorBatch.test.js` (26 tests). Four mutations
 were confirmed to break it: breaker removed (hang), gate always-changed, gate ignoring
 `record_count`, and the WinRM fallback removed.
+
+## 1.43.0 - the 1.41/1.42 batching fix was INCOMPLETE, and why that happened
+
+(All figures below are from a live production measurement; no site-specific
+identifiers are recorded here on purpose - see the standing rule on production
+identifiers in source, tests and documentation.)
+
+**Fixing one pass is not fixing the class - and fixing one FILE is not either.**
+1.41.0/1.42.0 batched the four per-zone loops in `collector/dnsMonitor.js` and were
+believed to have closed the DC auth flood. Measured before restarting production, two
+loops of the same shape had survived in two *other* files:
+
+| file | pass | interval | per-zone calls (estate) |
+|---|---|---|---|
+| `collector/haMonitor.js` | `pollDnsSoa` -> `ps.getDnsZoneSoa` | 15 min | 258 |
+| `collector/collector.js` | `syncDns` -> `ps.getDnsRecords` | 60 min | 214 |
+
+Together ~472 credentialed WinRM calls an hour, delivered as a 258-call burst every
+quarter hour - comparable to the instantaneous rate that tripped the firewall in the
+first place. The earlier work quoted this very gotcha at itself and still scoped to one
+file. **When you fix a per-zone loop, grep the whole `collector/` directory for
+`ps.getDns`/`ps.getDhcp` inside a `for`, not just the file you are in.**
+
+**The incident arithmetic was also wrong, and the wrong number is in the 1.41/1.42
+commit messages.** The zone total is an ESTATE total, not per server - it is spread
+across four DNS servers, and a fifth configured server carries no zones at all (it is
+DHCP-only). The old dnsMonitor cost was ~1,020 calls per 20-minute tick *across all
+four*, ~51/min, which matches the measured 2,841 `powershell.exe` spawns in 53 minutes.
+The improvement ratio stands; the per-server figures do not.
+
+### Why the records batch is smaller than the others
+
+**One zone holds 98% of a DC's records** (65,610 of 66,683 measured). So
+`DNS_RECORD_BATCH` is 20, not `DNS_ZONE_BATCH`'s 40: a chunk's size is dominated by
+whichever chunk contains that zone. This is not a new risk - the single-zone reader it
+replaces already fetched that zone in one call, so batching only adds the other 19
+zones' ~1,000 records to it. Raising the number does not spread that zone's cost, it
+only piles onto the chunk that already carries it.
+
+### Omission is the contract (`writers.recordsByZoneFromBatch`)
+
+`writeDnsZones` only INSERTs for a zone **present** in `recordsByZone` and never deletes.
+The old per-zone loop preserved a failed zone's records by accident - `if (records &&
+records.length)` simply skipped it. Batching changes the failure mode (a whole chunk can
+fail at once), so that accident is now a named, tested rule living next to the writer
+that depends on it. **`ok:true` + `Records: []` means "read, genuinely empty" and is
+omitted; `ok:false` or missing means "could not read" and is omitted AND counted.**
+Writing `[]` for an unread zone would silently empty a 65,000-record zone.
+
+### pollDnsSoa reuses readZoneSoa rather than reimplementing it
+
+`haMonitor.js` now requires `dnsMonitor` for `readZoneSoa`, inheriting the port-53 probe,
+the circuit breaker and the batched WinRM fallback. No cycle: `dnsMonitor` requires
+`anomalyDetector` and `dns/client`, neither of which reaches back. `pollDnsSoa` and
+`pollZoneSyncStatus` both read SOA and both write `dns_zones.soa_serial`; they are kept
+separate because only `pollDnsSoa` computes `replication_lag` and fires the lag alert.
+Over port 53 the duplication is free - that is what makes keeping them separate cheap.
+
+**Verified on production before deploying:** port 53 answers SOA from all four DCs, so
+the protocol path is real on this network and the SOA passes cost zero logons rather
+than silently falling back to WinRM.
+
+Tests: `tests/dnsCollectionBatch.test.js` (20). The fake `ps` objects deliberately OMIT
+`getDnsZoneSoa` and `getDnsRecords`, so reverting either loop throws instead of passing.
+Three mutations confirmed red: records chunk 20->40, unread zone written as `[]`, and
+`pollDnsSoa` bypassing the protocol path.
+
+**A test asserting escaping must DECODE the literal, not substring-match it.** The first
+version of the injection test asserted there was no `'; Remove-Item` in the command -
+which fails on *correctly* escaped output, because `''; Remove-Item` contains
+`'; Remove-Item`. Parse the single-quoted literals (a doubled quote is the only escape)
+and assert the payload round-trips as exactly one literal.

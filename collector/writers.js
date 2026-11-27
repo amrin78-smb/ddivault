@@ -626,7 +626,35 @@ async function writeScanResult(db, subnet, results, ctx) {
   }
 }
 
+/**
+ * Turn a getDnsRecordsBatch response into the `recordsByZone` map writeDnsZones expects.
+ *
+ * ⛔ OMISSION IS THE CONTRACT, and it lives here next to the writer that depends on it.
+ * writeDnsZones only INSERTs for a zone PRESENT in this map and never deletes, so a zone
+ * left out keeps whatever records are already stored. That is what the old per-zone loop
+ * did by accident (it skipped an empty result); here it is done on purpose, because the
+ * failure modes are no longer the same: a batched read can lose a whole chunk at once,
+ * and one production zone holds ~65,000 records. Writing `[]` for an unread zone would
+ * be indistinguishable from "this zone was emptied".
+ *
+ * Returns { recordsByZone, unread } — `unread` counts zones the server could not read,
+ * which is NOT the same as zones that are genuinely empty.
+ */
+function recordsByZoneFromBatch(batch, eligible) {
+  const recordsByZone = {};
+  let unread = 0;
+  const b = batch || {};
+  for (const name of (eligible || [])) {
+    const e = b[name];
+    if (!e || !e.ok) { unread++; continue; }
+    const recs = Array.isArray(e.Records) ? e.Records : (e.Records ? [e.Records] : []);
+    if (recs.length) recordsByZone[name] = recs;
+  }
+  return { recordsByZone, unread };
+}
+
 module.exports = {
+  recordsByZoneFromBatch,
   writeScopeStats,
   writeLeases,
   writeReservations,
