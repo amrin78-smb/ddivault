@@ -165,13 +165,16 @@ const DNS_BATCH_PS_TIMEOUT = parseInt(process.env.PS_DNS_BATCH_TIMEOUT_MS || '24
 
 // ⛔ RECORDS ARE NOT AGGREGATES — this batch is deliberately SMALLER than
 // DNS_ZONE_BATCH. The other batched readers return one summary row per zone; this one
-// returns every resource record. Measured on production 2026-11-27: one zone holds
-// 65,610 of one production DC's 66,683 records (98%), so a chunk's size is dominated by whichever
-// chunk contains that zone — roughly 8 MB of JSON against MAX_BUFFER. That is already
-// today's worst case, because the single-zone reader it replaces fetches that same zone
-// in one call; keeping the chunk at 20 means batching adds the other 19 zones' ~1,000
-// records to it and nothing more. Raising this does not spread that zone's cost, it
-// only adds to whichever chunk already carries it.
+// returns every resource record, so a chunk's payload scales with zone CONTENT.
+//
+// ⛔ SIZE IT FROM LIVE RECORDS, NOT FROM `SELECT count(*) FROM dns_records`. That
+// table is append-and-refresh and is NEVER pruned: measured 2026-11-27, it held 266,902
+// rows of which only 19,573 had been seen in the last hour, the oldest dating from five
+// months earlier. Reading the raw row count suggests a zone of ~66,000 records and a
+// multi-megabyte chunk; the live figure is ~4,200 records for the largest zone, so a
+// 20-zone chunk is a few hundred KB against a 32MB MAX_BUFFER. 20 is therefore
+// comfortable headroom rather than a tight fit — but the distinction matters, because
+// the raw count is the number a maintainer will reach for first and it is ~13x wrong.
 const DNS_RECORD_BATCH = parseInt(process.env.PS_DNS_RECORD_BATCH || '20');
 
 // PostgreSQL inet values include CIDR (e.g. 10.0.0.10/32) which the

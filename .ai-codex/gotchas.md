@@ -1459,14 +1459,27 @@ DHCP-only). The old dnsMonitor cost was ~1,020 calls per 20-minute tick *across 
 four*, ~51/min, which matches the measured 2,841 `powershell.exe` spawns in 53 minutes.
 The improvement ratio stands; the per-server figures do not.
 
-### Why the records batch is smaller than the others
+### Why the records batch is smaller than the others - and the number that misled me
 
-**One zone holds 98% of a DC's records** (65,610 of 66,683 measured). So
-`DNS_RECORD_BATCH` is 20, not `DNS_ZONE_BATCH`'s 40: a chunk's size is dominated by
-whichever chunk contains that zone. This is not a new risk - the single-zone reader it
-replaces already fetched that zone in one call, so batching only adds the other 19
-zones' ~1,000 records to it. Raising the number does not spread that zone's cost, it
-only piles onto the chunk that already carries it.
+`DNS_RECORD_BATCH` is 20, not `DNS_ZONE_BATCH`'s 40, because records scale with zone
+CONTENT while the other readers return one summary row per zone.
+
+**But size it from LIVE records, not from `SELECT count(*) FROM dns_records`.** I sized
+it from the raw row count and wrote the wrong reason into the 1.43.0 commit message:
+"one zone holds 65,610 records". It does not.
+
+**`dns_records` is append-and-refresh and is NEVER pruned.** `writeDnsZones` upserts
+what it finds and touches `last_seen`; a record deleted from DNS simply stops being
+refreshed and its row stays forever. Measured right after the 1.43.0 deploy: **266,902
+rows, of which 19,573 had been seen in the last hour, 182,835 were older than 30 days,
+and the oldest dated from five months earlier.** The largest zone shows 66,020 rows and
+only ~4,231 live ones. So the raw count overstates a zone's real payload by ~13x, a
+20-zone chunk is a few hundred KB rather than ~8MB, and 20 is comfortable headroom
+rather than the tight fit I described.
+
+⛔ **Consequence beyond sizing:** anything that reads `dns_records` without a
+`last_seen` filter is reporting records that no longer exist in DNS. Worth a proper
+retention pass; `RETENTION_DAYS` does not cover this table.
 
 ### Omission is the contract (`writers.recordsByZoneFromBatch`)
 
